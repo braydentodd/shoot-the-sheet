@@ -74,6 +74,9 @@ def _matches(col_meta: Dict[str, Any], scope: str, entity: str) -> bool:
     # Check if column scope includes target scope
     if scope not in col_scope:
         return False
+    # If entity is None, skip entity_types check (for junction/operational tables)
+    if entity is None:
+        return True
     return entity in col_meta.get('entity_types', [])
 
 
@@ -182,7 +185,10 @@ def _create_profile_table(cur, table_name: str, meta: Dict[str, Any]) -> int:
     columns = _data_columns_for(scope='entities', entity=entity)
     source_id_cols = _get_source_id_columns_for_entity(entity)
 
-    fragments: List[str] = [_the_glass_id_pk_clause()]
+    fragments: List[str] = [
+        _the_glass_id_pk_clause(),
+        f"key VARCHAR(20) UNIQUE NOT NULL"
+    ]
     fragments.extend(_column_ddl(name, m) for name, m in columns)
     for src_col, pg_type in source_id_cols:
         fragments.append(f"{quote_col(src_col)} {pg_type}")
@@ -198,10 +204,10 @@ def _create_profile_table(cur, table_name: str, meta: Dict[str, Any]) -> int:
 def _create_junction_table(cur, table_name: str, meta: Dict[str, Any]) -> int:
     """CREATE TABLE for a junction table.  Returns column count."""
     qualified = f'{CORE_SCHEMA}.{table_name}'
-    col_list = meta['columns']  # List of column names
+    # Get columns from DB_COLUMNS with scope='junction'
+    columns = _data_columns_for(scope='junction', entity=None)
     fragments: List[str] = []
-    for col_name in col_list:
-        col_def = DB_COLUMNS[col_name]
+    for col_name, col_def in columns:
         ddl = f"{quote_col(col_name)} {col_def['type']}"
         # For junction tables, we use table-level composite PRIMARY KEY
         # Don't add column-level PRIMARY KEY here
@@ -222,8 +228,7 @@ def _create_junction_table(cur, table_name: str, meta: Dict[str, Any]) -> int:
         idx_name = f"idx_{table_name}_{idx['name']}"
         idx_cols = ', '.join(quote_col(c) for c in idx['columns'])
         cur.execute(f"CREATE INDEX IF NOT EXISTS {idx_name} ON {qualified} ({idx_cols})")
-
-    return len(col_list)
+    return len(fragments)
 
 
 def _create_stats_table(cur, league_key: str, table_name: str, meta: Dict[str, Any]) -> int:
@@ -261,12 +266,14 @@ def _create_stats_table(cur, league_key: str, table_name: str, meta: Dict[str, A
 def _create_operational_table(cur, league_key: str, table_name: str, meta: Dict[str, Any]) -> int:
     """CREATE TABLE for an operational table (runs / tasks)."""
     qualified = f'{league_key}.{table_name}'
-    col_list = meta['columns']  # List of column names
+    # Determine scope based on table name
+    scope = 'runs' if table_name == 'runs' else 'tasks'
+    columns = _data_columns_for(scope=scope, entity=None)
+    
     fragments: List[str] = []
     # Auto-generate 'id' as SERIAL PRIMARY KEY
     fragments.append(f'{quote_col("id")} SERIAL PRIMARY KEY')
-    for col_name in col_list:
-        col_def = DB_COLUMNS[col_name]
+    for col_name, col_def in columns:
         parts = [quote_col(col_name), col_def['type']]
         if not col_def.get('nullable', True):
             parts.append('NOT NULL')
@@ -332,11 +339,14 @@ def _sync_profile_table(cur, table_name: str, meta: Dict[str, Any]) -> List[str]
         actions.append(f'created ({n} fragments)')
         return actions
 
-    expected: List[Tuple[str, str]] = []
-    expected.append((THE_GLASS_ID_COLUMN, THE_GLASS_ID_TYPE))
+    expected: List[Tuple[str, str]] = [
+        (THE_GLASS_ID_COLUMN, THE_GLASS_ID_TYPE),
+        ('key', 'VARCHAR(20)')
+    ]
     for name, m in _data_columns_for(scope='entities', entity=meta['entity']):
         expected.append((name, m['type']))
-    expected.extend(_get_source_id_columns_for_entity(meta['entity']))
+    for src_col, pg_type in _get_source_id_columns_for_entity(meta['entity']):
+        expected.append((src_col, pg_type))
 
     _add_missing_columns(cur, CORE_SCHEMA, table_name, expected, actions)
     return actions
@@ -349,7 +359,9 @@ def _sync_junction_table(cur, table_name: str, meta: Dict[str, Any]) -> List[str
         actions.append(f'created ({n} columns)')
         return actions
 
-    expected = [(c, DB_COLUMNS[c]['type']) for c in meta['columns']]
+    # Get columns from DB_COLUMNS with scope='junction'
+    columns = _data_columns_for(scope='junction', entity=None)
+    expected = [(name, meta['type']) for name, meta in columns]
     _add_missing_columns(cur, CORE_SCHEMA, table_name, expected, actions)
     return actions
 
@@ -380,8 +392,12 @@ def _sync_operational_table(cur, league_key: str, table_name: str,
         actions.append(f'created ({n} columns)')
         return actions
 
+    # Determine scope based on table name
+    scope = 'runs' if table_name == 'runs' else 'tasks'
+    columns = _data_columns_for(scope=scope, entity=None)
+    
     # 'id' is auto-generated, not in DB_COLUMNS
-    expected = [('id', 'SERIAL')] + [(c, DB_COLUMNS[c]['type']) for c in meta['columns']]
+    expected = [('id', 'SERIAL')] + [(name, meta['type']) for name, meta in columns]
     _add_missing_columns(cur, league_key, table_name, expected, actions)
     return actions
 

@@ -53,8 +53,10 @@ def _validate_source_structure(
 ) -> List[str]:
     """Validate the nested sources structure in DB_COLUMNS.
 
-    Each provider key must exist in SOURCES, and each entity key must be in
-    VALID_ENTITY_TYPES and in the provider's ``applies_to`` list.
+    DB_COLUMNS uses a nested structure: {league: {source: {entity: {...}}}}
+    where league is the league key (e.g., 'nba') and source is the actual
+    source key (e.g., 'nba_api'). The validation checks that the source
+    keys exist in SOURCES.
     """
     from src.core.definitions.tables import VALID_ENTITY_TYPES
     errors = []
@@ -68,25 +70,31 @@ def _validate_source_structure(
             errors.append(f"{prefix}: 'sources' must be dict or None")
             continue
 
-        for provider, entities in col_sources.items():
-            if provider not in sources:
-                errors.append(f"{prefix}: sources['{provider}'] not registered in SOURCES")
+        # col_sources is {league: {source: {entity: {...}}}}
+        for league, source_dict in col_sources.items():
+            if not isinstance(source_dict, dict):
+                errors.append(f"{prefix}: sources['{league}'] must be dict")
                 continue
-            applies_to = sources[provider].get('applies_to', [])
-            if not isinstance(entities, dict):
-                errors.append(f"{prefix}: sources['{provider}'] must be dict")
-                continue
-            for entity_name, source_def in entities.items():
-                if entity_name not in VALID_ENTITY_TYPES:
-                    errors.append(
-                        f"{prefix}: sources.{provider} has "
-                        f"invalid entity '{entity_name}'"
-                    )
-                elif entity_name not in applies_to and entity_name != 'opponent':
-                    errors.append(
-                        f"{prefix}: sources.{provider}.{entity_name} - "
-                        f"source '{provider}' does not declare applies_to {entity_name!r}"
-                    )
+
+            for provider, entities in source_dict.items():
+                if provider not in sources:
+                    errors.append(f"{prefix}: sources['{league}']['{provider}'] not registered in SOURCES")
+                    continue
+                applies_to = sources[provider].get('applies_to', [])
+                if not isinstance(entities, dict):
+                    errors.append(f"{prefix}: sources['{league}']['{provider}'] must be dict")
+                    continue
+                for entity_name, source_def in entities.items():
+                    if entity_name not in VALID_ENTITY_TYPES:
+                        errors.append(
+                            f"{prefix}: sources['{league}']['{provider}'] has "
+                            f"invalid entity '{entity_name}'"
+                        )
+                    elif entity_name not in applies_to and entity_name != 'opponent':
+                        errors.append(
+                            f"{prefix}: sources['{league}']['{provider}']['{entity_name}'] - "
+                            f"source '{provider}' does not declare applies_to {entity_name!r}"
+                        )
                 if not isinstance(source_def, dict):
                     errors.append(
                         f"{prefix}: sources.{provider}.{entity_name} must be dict"
@@ -148,7 +156,7 @@ def _validate_league_primary_sources(
     sources: Dict[str, Dict],
 ) -> List[str]:
     """Each league.primary_source must exist in SOURCES with
-    role=authoritative and list the league in its leagues array."""
+    external=True and list the league in its leagues array."""
     errors = []
     for league_key, meta in leagues.items():
         rs = meta.get('primary_source')
@@ -161,10 +169,9 @@ def _validate_league_primary_sources(
             )
             continue
         src = sources[rs]
-        if src.get('role') != 'authoritative':
+        if not src.get('external'):
             errors.append(
-                f"LEAGUES['{league_key}']: primary_source '{rs}' has role "
-                f"{src.get('role')!r}, expected 'authoritative'"
+                f"LEAGUES['{league_key}']: primary_source '{rs}' has external=False"
             )
         if league_key not in src.get('leagues', []):
             errors.append(
@@ -309,7 +316,7 @@ def validate_all() -> List[str]:
     Raises:
         RuntimeError: if any layer reports validation errors.
     """
-    from src.core.definitions.sources import SOURCES
+    from src.etl.definitions.sources import SOURCES
 
     # Cross-cuts ETL definitions + per-source DATASETS (no league required).
     validate_config()
@@ -320,14 +327,14 @@ def validate_all() -> List[str]:
     aggregated: List[str] = []
     for source_key in sorted(SOURCES):
         source_meta = SOURCES[source_key]
-        if source_meta.get('role') != 'authoritative':
+        if not source_meta.get('external'):
             continue
 
         try:
             cfg_mod = __import__(f'src.etl.sources.{source_key}.config', fromlist=['config'])
         except ModuleNotFoundError:
             logger.warning(
-                'Authoritative source %r is missing config module; '
+                'External source %r is missing config module; '
                 'skipping source-specific validation.', source_key,
             )
             continue

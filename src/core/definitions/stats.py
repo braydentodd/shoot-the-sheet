@@ -44,7 +44,7 @@ STAT_DOMAINS: Dict[str, Dict[str, Any]] = {
 # Codes are grouped into "regular_season" vs "postseason"; queries use the
 # groups to decide which season_type values to aggregate.
 SEASON_TYPE_GROUPS: Dict[str, tuple] = {
-    'regular_season': ('rs'),
+    'regular_season': ('rs',),
     'postseason':     ('po', 'pi', 'ct')
 }
 

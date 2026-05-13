@@ -19,8 +19,7 @@ def get_primary_source(league_key: str) -> str:
 
     Raises:
         ValueError: if the league has no primary_source configured, the
-                    key is not registered, or the registered source is not an
-                    authoritative role.
+                    key is not registered, or the registered source is not external.
     """
     if league_key not in LEAGUES:
         raise ValueError(f"Unknown league: {league_key!r}")
@@ -33,10 +32,10 @@ def get_primary_source(league_key: str) -> str:
         raise ValueError(
             f"League {league_key!r} primary_source {source_key!r} is not in SOURCES"
         )
-    if SOURCES[source_key]['role'] != 'authoritative':
+    if not SOURCES[source_key]['external']:
         raise ValueError(
             f"Source {source_key!r} configured as primary_source for "
-            f"{league_key!r} has role={SOURCES[source_key]['role']!r}"
+            f"{league_key!r} has external=False"
         )
     return source_key
 

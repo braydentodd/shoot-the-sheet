@@ -402,13 +402,18 @@ def seed_empty_stats(
         from src.core.lib.postgres import get_db_connection
         conn = get_db_connection()
 
+    # Get the source ID column for the league's primary source
+    from src.etl.lib.sources_resolver import get_primary_source, get_source_id_column
+    source_key = get_primary_source(league_key)
+    src_id_col = get_source_id_column(source_key)
+
     try:
         with conn.cursor() as cur:
             if entity == 'team':
                 cur.execute(
                     f"""
-                    INSERT INTO {stats_table} ({quote_col(THE_GLASS_ID_COLUMN)}, season, season_type)
-                    SELECT lr.team_id, %s, %s
+                    INSERT INTO {stats_table} ({quote_col(THE_GLASS_ID_COLUMN)}, team_id, season, season_type)
+                    SELECT lr.team_id, lr.team_id, %s, %s
                     FROM core.league_rosters lr
                     JOIN core.league_profiles lp ON lp.{quote_col(THE_GLASS_ID_COLUMN)} = lr.league_id
                     WHERE lp.key = %s AND lr.is_active = TRUE
@@ -420,9 +425,10 @@ def seed_empty_stats(
                 cur.execute(
                     f"""
                     INSERT INTO {stats_table}
-                        ({quote_col(THE_GLASS_ID_COLUMN)}, team_id, season, season_type)
-                    SELECT tr.player_id, tr.team_id, %s, %s
+                        ({quote_col(THE_GLASS_ID_COLUMN)}, team_id, player_id, season, season_type)
+                    SELECT tr.player_id, tr.team_id, pp.{quote_col(src_id_col)}, %s, %s
                     FROM core.team_rosters tr
+                    JOIN core.player_profiles pp ON pp.{quote_col(THE_GLASS_ID_COLUMN)} = tr.player_id
                     JOIN core.league_rosters lr ON lr.team_id = tr.team_id
                     JOIN core.league_profiles lp ON lp.{quote_col(THE_GLASS_ID_COLUMN)} = lr.league_id
                     WHERE lp.key = %s

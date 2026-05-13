@@ -27,7 +27,7 @@ from functools import partial
 from pathlib import Path
 from typing import Optional
 
-from src.core.lib.cli import progress
+from src.core.lib.terminal import progress
 from src.core.lib.logging import phase_marker
 from src.core.lib.postgres import get_db_connection
 from src.core.lib.tables_resolver import get_table_name
@@ -239,7 +239,7 @@ def run_publish(
     # Bind format_season_label to the league's season_format so downstream
     # consumers (queries, header formatters) can call it with just an end-year.
     season_format_fn = partial(
-        format_season_label, season_format=LEAGUES[league]['season_format'],
+        format_season_label, league_season_format=LEAGUES[league]['season_format'],
     )
 
     stats_sections = frozenset(

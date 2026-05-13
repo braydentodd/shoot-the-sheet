@@ -28,7 +28,7 @@ import importlib
 import logging
 from typing import Any, Callable, Dict, List, Optional
 
-from src.core.lib.cli import progress
+from src.core.lib.terminal import progress
 from src.core.lib.ddl import ensure_all, ensure_league_profile
 from src.core.lib.logging import phase_marker
 from src.core.lib.postgres import db_connection, quote_col
@@ -352,7 +352,7 @@ def run_etl(
     season = season or get_current_season(league_key)
 
     # Discover / rosters always use the league's canonical regular-season type.
-    regular_st = league_cfg['regular_season_type']
+    regular_st = league_cfg['regular_season_types'][0]
     regular_st_info = season_types.get(regular_st, season_types['rs'])
     regular_st_name = regular_st_info['name']
 

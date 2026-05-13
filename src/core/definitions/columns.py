@@ -36,10 +36,10 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
     'updated_at': {
         'type': 'TIMESTAMP',
         'scope': ['entities', 'stats'],
-        'nullable': True,
+        'nullable': False,
         'default': 'CURRENT_TIMESTAMP',
         'entity_types': ['league', 'player', 'team'],
-        'update_frequency': None,
+        'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
         'sources': None,
@@ -57,7 +57,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
     },
     'season': {
         'type': 'VARCHAR(7)',
-        'scope': ['entities', 'stats'],
+        'scope': ['entities', 'stats', 'runs'],
         'nullable': True,
         'default': None,
         'entity_types': ['player', 'team'],
@@ -73,17 +73,6 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'per_execution',
-        'domain': None,
-        'comment': None,
-        'sources': None,
-    },
-    'backfilled': {
-        'type': 'BOOLEAN',
-        'scope': ['entities'],
-        'nullable': False,
-        'default': 'FALSE',
-        'entity_types': ['player', 'team'],
-        'update_frequency': None,
         'domain': None,
         'comment': None,
         'sources': None,
@@ -111,10 +100,10 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
     # ------------------------------------------------------------------
     'team_id': {
         'type': 'BIGINT',
-        'scope': ['entities', 'stats'],
+        'scope': ['stats'],
         'nullable': False,
         'default': None,
-        'entity_types': ['player', 'team'],
+        'entity_types': ['player'],
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
@@ -131,10 +120,10 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
     },
     'player_id': {
         'type': 'BIGINT',
-        'scope': ['entities', 'stats'],
+        'scope': ['stats'],
         'nullable': False,
         'default': None,
-        'entity_types': ['player', 'team'],
+        'entity_types': ['player'],
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
@@ -1905,7 +1894,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'scope': ['stats'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
+        'entity_types': ['player', 'team', 'opponent'],
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
@@ -1913,7 +1902,12 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
             'nba': {
                 'nba_api': {
                     'player': {'dataset': 'leaguedashplayerstats', 'field': 'PF'},
-                    'team': {'dataset': 'leaguedashteamstats', 'field': 'PF'}
+                    'team': {'dataset': 'leaguedashteamstats', 'field': 'PF'},
+                    'opponent': {
+                        'dataset': 'leaguedashteamstats',
+                        'field': 'OPP_PF',
+                        'params': {'measure_type_detailed_defense': 'Opponent'},
+                    },
                 },
             },
         },

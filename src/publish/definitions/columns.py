@@ -2201,14 +2201,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'emphasis': None,
         'font_size': 9,
         'inputs': {
-            'player': {'fields': ('id',)},
-            'team': {'fields': ('id',)},
-            'all_teams': {'fields': ('id',)},
+            'player': {'fields': ('the_glass_id',)},
+            'team': {'fields': ('the_glass_id',)},
+            'all_teams': {'fields': ('the_glass_id',)},
         },
         'values': {
-            'player': lambda row, ctx: row.get('id'),
-            'team': lambda row, ctx: row.get('id'),
-            'all_teams': lambda row, ctx: row.get('id')
+            'player': lambda row, ctx: row.get('the_glass_id'),
+            'team': lambda row, ctx: row.get('the_glass_id'),
+            'all_teams': lambda row, ctx: row.get('the_glass_id')
         }
     }
 }

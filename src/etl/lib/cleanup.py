@@ -52,7 +52,8 @@ def _collect_domain_columns(entity: str) -> Dict[str, List[str]]:
     """
     out: Dict[str, List[str]] = {}
     for col_name, col_meta in DB_COLUMNS.items():
-        if entity not in col_meta.get('entity_types', []):
+        entity_types = col_meta.get('entity_types') or []
+        if entity not in entity_types:
             continue
         domain = col_meta.get('domain')
         if not domain or domain not in STAT_DOMAINS:

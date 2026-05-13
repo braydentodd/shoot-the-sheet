@@ -397,6 +397,10 @@ def resolve_work(
 
     # Create fresh run
     item_keys = [item_key_fn(item) for item in items]
-    run_id = create_run(conn, db_schema, pipeline, items[0].get('entity_type', 'unknown') if items else 'unknown', len(items), **filters)
+    # Handle both dict items (ETL) and string items (publish)
+    entity_type = items[0].get('entity_type', 'unknown') if items and isinstance(items[0], dict) else 'unknown'
+    # Extract entity_type from filters if provided (e.g., from publish)
+    entity_type = filters.pop('entity_type', entity_type)
+    run_id = create_run(conn, db_schema, pipeline, entity_type, len(items), **filters)
     task_ids = register_tasks(conn, db_schema, run_id, pipeline, item_keys)
     return run_id, list(zip(items, task_ids))

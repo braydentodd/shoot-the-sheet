@@ -26,7 +26,7 @@ from typing import Any, Dict, Iterable, List, Set, Tuple
 from src.core.lib.ddl import ensure_league_profile
 from src.core.lib.postgres import db_connection, quote_col
 from src.etl.lib.sources_resolver import get_source_id_column
-from src.core.lib.tables_resolver import CORE_SCHEMA, THE_GLASS_ID_COLUMN
+from src.core.definitions.tables import CORE_SCHEMA, THE_GLASS_ID_COLUMN
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,44 @@ def _resolve_glass_ids(
             (ids,),
         )
         return {str(row[0]): int(row[1]) for row in cur.fetchall()}
+
+
+def _create_missing_profiles(
+    conn: Any,
+    profile_table: str,
+    source_id_col: str,
+    source_ids: Set[Any],
+) -> Dict[str, int]:
+    """Create profile entries for unresolved source IDs.
+
+    Returns ``{str(source_id): new_the_glass_id}`` for the created profiles.
+    """
+    if not source_ids:
+        return {}
+    
+    created: Dict[str, int] = {}
+    with conn.cursor() as cur:
+        for source_id in source_ids:
+            # Generate a placeholder key using the source ID
+            key = f"{source_id}"
+            
+            # Insert new profile row with just key and source ID
+            # Use ON CONFLICT DO NOTHING to handle existing profiles
+            cur.execute(
+                f"""
+                INSERT INTO {profile_table} (key, {quote_col(source_id_col)})
+                VALUES (%s, %s)
+                ON CONFLICT (key) DO NOTHING
+                RETURNING {quote_col(THE_GLASS_ID_COLUMN)}
+                """,
+                (key, source_id),
+            )
+            result = cur.fetchone()
+            if result:
+                glass_id = result[0]
+                created[str(source_id)] = int(glass_id)
+    
+    return created
 
 
 # ---------------------------------------------------------------------------
@@ -162,16 +200,16 @@ def sync_rosters(
 
         teams_unresolved = team_source_ids - set(team_map)
         players_unresolved = player_source_ids - set(player_map)
+        
+        # Create profiles for unresolved source IDs
         if teams_unresolved:
-            logger.warning(
-                '%d unknown team source_ids (skipping): %s',
-                len(teams_unresolved), sorted(teams_unresolved)[:10],
-            )
+            logger.info('Creating %d new team profiles', len(teams_unresolved))
+            new_team_map = _create_missing_profiles(conn, teams_table, src_col, teams_unresolved)
+            team_map.update(new_team_map)
         if players_unresolved:
-            logger.warning(
-                '%d unknown player source_ids (skipping): %s',
-                len(players_unresolved), sorted(players_unresolved)[:10],
-            )
+            logger.info('Creating %d new player profiles', len(players_unresolved))
+            new_player_map = _create_missing_profiles(conn, players_table, src_col, players_unresolved)
+            player_map.update(new_player_map)
 
         # ---- league_rosters: (league_glass_id, team_glass_id) -----------------
         league_team_pairs: Set[Tuple[int, int]] = {
@@ -216,16 +254,16 @@ def sync_rosters(
     counts = {
         'teams_active': teams_active,
         'teams_deactivated': teams_deactivated,
-        'teams_unresolved': len(teams_unresolved),
+        'teams_created': len(teams_unresolved),
         'players_active': players_active,
         'players_deactivated': players_deactivated,
-        'players_unresolved': len(players_unresolved),
+        'players_created': len(players_unresolved),
     }
     logger.info(
-        'Roster sync %s/%s: teams active=%d deactivated=%d unresolved=%d | '
-        'players active=%d deactivated=%d unresolved=%d',
+        'Roster sync %s/%s: teams active=%d deactivated=%d created=%d | '
+        'players active=%d deactivated=%d created=%d',
         league_key, source_key,
-        counts['teams_active'], counts['teams_deactivated'], counts['teams_unresolved'],
-        counts['players_active'], counts['players_deactivated'], counts['players_unresolved'],
+        counts['teams_active'], counts['teams_deactivated'], counts['teams_created'],
+        counts['players_active'], counts['players_deactivated'], counts['players_created'],
     )
     return counts

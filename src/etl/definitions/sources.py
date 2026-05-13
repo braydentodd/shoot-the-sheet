@@ -1,13 +1,11 @@
 """
 The Glass - Source Registry
 
-Declarative registry of every external data source.  Roles describe each
-source's relationship to the data model, *not* the I/O direction:
+Declarative registry of every external data source.  The ``external``
+field describes whether a source brings its own external IDs.
 
-  - ``authoritative``: owns its own external IDs (e.g. NBA Stats PERSON_ID)
-                       and is the canonical origin of stats data.
-  - ``editable``:      no external IDs of its own; surfaces user-edited
-                       overlays on canonical profiles via ``the_glass_id``.
+  - ``external=True``: source brings its own IDs (e.g. nba_api_id for player/team/league)
+  - ``external=False``: source uses the_glass_id only (e.g. user-edited overlays)
 
 ``season_format`` describes the source's *wire* format -- how it expects /
 emits season labels in API requests and responses.  ``shape`` is one of
@@ -25,7 +23,6 @@ from typing import Any, Dict
 # VALIDATION CONSTANTS
 # ============================================================================
 
-VALID_SOURCE_ROLES = frozenset({'authoritative', 'editable'})
 
 VALID_SHAPES = frozenset({
     'YYYY', 'YY',
@@ -42,19 +39,19 @@ SOURCE_SEASON_FORMAT_SCHEMA: Dict[str, Dict[str, Any]] = {
 
 SOURCES_SCHEMA: Dict[str, Dict[str, Any]] = {
     'leagues':        {'required': True, 'types': (list,)},
-    'role':           {'required': True, 'types': (str,), 'allowed_values': VALID_SOURCE_ROLES},
+    'external':       {'required': True, 'types': (bool,)},
     'entity_id_type': {'required': True, 'types': (str, type(None))},
     'applies_to':     {'required': True, 'types': (list,)},
     'season_format':  {'required': True, 'types': (dict, type(None))},
-    'rate_limits':    {'required': False, 'types': (dict, type(None))},
+    'rate_limits':    {'required': True, 'types': (dict,)},
 }
 
 SOURCES: Dict[str, Dict[str, Any]] = {
     'nba_api': {
         'leagues':        ['nba'],
-        'role':           'authoritative',
+        'external':       True,
         'entity_id_type': 'BIGINT',
-        'applies_to':     ['team', 'player'],
+        'applies_to':     ['team', 'player', 'league'],
         'season_format':  {'shape': 'YYYY-YY', 'anchor': None},
         'rate_limits': {
             'requests_per_second': 0.8,
@@ -66,7 +63,7 @@ SOURCES: Dict[str, Dict[str, Any]] = {
     },
     'the_glass_sheets': {
         'leagues':        ['nba'],
-        'role':           'editable',
+        'external':       False,
         'entity_id_type': None,
         'applies_to':     ['team', 'player'],
         'season_format':  None,
