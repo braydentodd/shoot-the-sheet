@@ -29,39 +29,43 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': None,
         'update_frequency': 'per_execution',
+        'managed_by': 'execution_context',
         'domain': None,
         'comment': None,
         'sources': None,
     },
     'updated_at': {
         'type': 'TIMESTAMP',
-        'scope': ['entities', 'stats'],
+        'scope': ['entities', 'stats', 'junction'],
         'nullable': False,
         'default': 'CURRENT_TIMESTAMP',
         'entity_types': ['league', 'player', 'team'],
         'update_frequency': 'per_execution',
+        'managed_by': 'db',
         'domain': None,
         'comment': None,
         'sources': None,
     },
     'created_at': {
         'type': 'TIMESTAMP',
-        'scope': ['entities', 'stats'],
+        'scope': ['entities', 'stats', 'junction'],
         'nullable': True,
         'default': 'CURRENT_TIMESTAMP',
         'entity_types': ['league', 'player', 'team'],
         'update_frequency': None,
+        'managed_by': 'db',
         'domain': None,
         'comment': None,
         'sources': None,
     },
     'season': {
         'type': 'VARCHAR(7)',
-        'scope': ['entities', 'stats', 'runs'],
+        'scope': ['entities', 'stats', 'runs', 'junction'],
         'nullable': True,
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'per_execution',
+        'managed_by': 'execution_context',
         'domain': None,
         'comment': None,
         'sources': None,
@@ -73,6 +77,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': 'per_execution',
+        'managed_by': 'execution_context',
         'domain': None,
         'comment': None,
         'sources': None,
@@ -125,6 +130,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': None,
         'entity_types': ['player'],
         'update_frequency': 'per_execution',
+        'managed_by': 'execution_context',
         'domain': None,
         'comment': None,
         'sources': None,
@@ -155,7 +161,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
             },
         },
     },
-    'height_ins': {
+    'height_ins_no_shoes': {
         'type': 'SMALLINT',
         'scope': ['entities'],
         'nullable': True,
@@ -168,12 +174,34 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
             'nba': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'commonallplayers',
-                        'field': 'HEIGHT',
+                        'dataset': 'draftcombineplayeranthro',
+                        'field': 'HEIGHT_WO_SHOES',
+                        'transform': 'parse_height',
+                    },
+                },
+            },
+        },
+    },
+    'height_ins_with_shoes': {
+        'type': 'SMALLINT',
+        'scope': ['entities'],
+        'nullable': True,
+        'default': None,
+        'entity_types': ['player'],
+        'update_frequency': 'annual',
+        'domain': None,
+        'comment': None,
+        'sources': {
+            'nba': {
+                'nba_api': {
+                    'player': {
+                        'dataset': 'draftcombineplayeranthro',
+                        'field': 'HEIGHT_W_SHOES',
                         'transform': 'parse_height',
                     },
                 },
                 'the_glass_sheets': {
+                    'update_frequency': 'per_execution',
                     'player': {'dataset': 'players', 'field': 'Height'},
                 },
             },
@@ -194,6 +222,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
                     'player': {'dataset': 'commonallplayers', 'field': 'WEIGHT'},
                 },
                 'the_glass_sheets': {
+                    'update_frequency': 'per_execution',
                     'player': {'dataset': 'players', 'field': 'Weight'},
                 },
             },
@@ -205,12 +234,13 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'nullable': True,
         'default': None,
         'entity_types': ['player'],
-        'update_frequency': None,
+        'update_frequency': 'annual',
         'domain': None,
         'comment': None,
         'sources': {
             'nba': {
                 'nba_api': {
+                    'update_frequency': 'annual',
                     'player': {
                         'dataset': 'draftcombineplayeranthro',
                         'field': 'WINGSPAN',
@@ -218,6 +248,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
                     },
                 },
                 'the_glass_sheets': {
+                    'update_frequency': 'per_execution',
                     'player': {'dataset': 'players', 'field': 'Wingspan'},
                 },
             },
@@ -229,30 +260,13 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'nullable': True,
         'default': None,
         'entity_types': ['player'],
-        'update_frequency': 'annual',
+        'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
         'sources': {
             'nba': {
                 'the_glass_sheets': {
                     'player': {'dataset': 'players', 'field': 'Handedness'},
-                },
-            },
-        },
-    },
-    'jersey_num': {
-        'type': 'VARCHAR(3)',
-        'scope': ['entities'],
-        'nullable': True,
-        'default': None,
-        'entity_types': ['player'],
-        'update_frequency': 'per_execution',
-        'domain': None,
-        'comment': None,
-        'sources': {
-            'nba': {
-                'nba_api': {
-                    'player': {'dataset': 'commonallplayers', 'field': 'JERSEY'},
                 },
             },
         },
@@ -278,17 +292,6 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
             },
         },
     },
-    'hand': {
-        'type': 'CHAR',
-        'scope': ['entities'],
-        'nullable': True,
-        'default': None,
-        'entity_types': ['player'],
-        'update_frequency': None,
-        'domain': None,
-        'comment': None,
-        'sources': None,
-    },
     'seasons_exp': {
         'type': 'SMALLINT',
         'scope': ['entities'],
@@ -302,27 +305,6 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
             'nba': {
                 'nba_api': {
                     'player': {'dataset': 'commonallplayers', 'field': 'SEASON_EXP'},
-                },
-            },
-        },
-    },
-    'rookie_season': {
-        'type': 'VARCHAR(10)',
-        'scope': ['entities'],
-        'nullable': True,
-        'default': None,
-        'entity_types': ['player'],
-        'update_frequency': 'annual',
-        'domain': None,
-        'comment': None,
-        'sources': {
-            'nba': {
-                'nba_api': {
-                    'player': {
-                        'dataset': 'commonallplayers',
-                        'field': 'FROM_YEAR',
-                        'transform': 'format_season',
-                    },
                 },
             },
         },
@@ -360,6 +342,31 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
                 },
             },
         },
+    },
+    'league_key': {
+        'type': 'VARCHAR(10)',
+        'scope': ['entities'],
+        'nullable': False,
+        'default': None,
+        'entity_types': ['league'],
+        'update_frequency': None,
+        'managed_by': 'execution_context',
+        'domain': None,
+        'comment': None,
+        'sources': None,
+        'unique': True,
+    },
+    'gender': {
+        'type': 'CHAR(1)',
+        'scope': ['entities'],
+        'nullable': True,
+        'default': None,
+        'entity_types': ['league', 'team', 'player'],
+        'update_frequency': None,
+        'managed_by': 'execution_context',
+        'domain': None,
+        'comment': None,
+        'sources': None,
     },
     # ------------------------------------------------------------------
     # GAMES & MINUTES
@@ -2358,7 +2365,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
     # ------------------------------------------------------------------
     'pipeline': {
         'type': 'VARCHAR(10)',
-        'scope': ['runs'],
+        'scope': ['runs', 'tasks'],
         'nullable': False,
         'default': None,
         'entity_types': None,
@@ -2495,18 +2502,10 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
 
     # ------------------------------------------------------------------
     # JUNCTION COLUMNS (league_rosters, team_rosters)
+    # Shared operational/data columns only.  FK columns (league_id, team_id,
+    # player_id) are derived directly from JUNCTION_TABLES.foreign_keys by
+    # the DDL generator, so they do not belong here.
     # ------------------------------------------------------------------
-    'league_id': {
-        'type': 'BIGINT',
-        'scope': ['junction'],
-        'nullable': False,
-        'default': None,
-        'entity_types': None,
-        'update_frequency': 'per_execution',
-        'domain': None,
-        'comment': None,
-        'sources': None,
-    },
     'is_active': {
         'type': 'BOOLEAN',
         'scope': ['junction'],
@@ -2514,6 +2513,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'default': 'TRUE',
         'entity_types': None,
         'update_frequency': 'per_execution',
+        'managed_by': 'execution_context',
         'domain': None,
         'comment': None,
         'sources': None,

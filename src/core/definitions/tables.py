@@ -39,11 +39,12 @@ VALID_PG_TYPES = {
     'BOOLEAN', 'TIMESTAMP', 'DATE', 'NUMERIC', 'REAL', 'DOUBLE PRECISION',
 }
 VALID_ENTITY_TYPES = {'league', 'player', 'team', 'opponent'}
-VALID_SCOPES = {'entity', 'stats', 'both', 'runs', 'tasks', 'entities'}
+VALID_SCOPES = {'entity', 'stats', 'both', 'runs', 'tasks', 'entities', 'junction'}
 VALID_UPDATE_FREQUENCIES = {'daily', 'annual', None, 'per_execution'}
 VALID_REFRESH_MODES = {'null_only', 'always'}
 VALID_SCHEMA_KINDS = {'core', 'league'}
 VALID_FK_ACTIONS = {'CASCADE', 'RESTRICT', 'SET NULL', 'NO ACTION'}
+VALID_MANAGED_BY = frozenset({'db', 'execution_context', 'source'})
 
 
 # ============================================================================
@@ -57,9 +58,11 @@ DB_COLUMNS_SCHEMA: Dict[str, Dict[str, Any]] = {
     'default':              {'required': True,  'types': (str, int, type(None))},
     'entity_types':         {'required': True,  'types': (list, type(None))},
     'update_frequency':     {'required': True,  'types': (str, type(None)), 'allowed_values': VALID_UPDATE_FREQUENCIES},
+    'managed_by':           {'required': False, 'types': (str,), 'allowed_values': VALID_MANAGED_BY},
     'domain':               {'required': True,  'types': (str, type(None))},
     'comment':              {'required': True,  'types': (str, type(None))},
     'sources':              {'required': True,  'types': (dict, type(None))},
+    'unique':               {'required': False, 'types': (bool,)},
     'removed_refresh_mode': {'required': False, 'types': (str,), 'allowed_values': VALID_REFRESH_MODES}
 }
 
@@ -86,11 +89,14 @@ STATS_TABLES_SCHEMA: Dict[str, Dict[str, Any]] = {
 }
 
 JUNCTION_TABLES_SCHEMA: Dict[str, Dict[str, Any]] = {
-    'kind':       {'required': True, 'types': (str,), 'allowed_values': {'junction'}},
-    'used_by':    {'required': False, 'types': (list,)},
-    'schema':     {'required': True, 'types': (str,), 'allowed_values': {'core'}},
-    'primary_key': {'required': True, 'types': (list,)},
-    'foreign_keys': {'required': True, 'types': (list,)},
+    'kind':          {'required': True,  'types': (str,), 'allowed_values': {'junction'}},
+    'used_by':       {'required': False, 'types': (list,)},
+    'schema':        {'required': True,  'types': (str,), 'allowed_values': {'core'}},
+    'primary_key':   {'required': True,  'types': (list,)},
+    'foreign_keys':  {'required': True,  'types': (list,)},
+    # extra_columns: table-specific columns not in the shared DB_COLUMNS junction scope.
+    # Each entry: {'name': str, 'type': str, 'nullable': bool, 'default': str|None}
+    'extra_columns': {'required': False, 'types': (list,)},
 }
 
 OPERATIONAL_TABLES_SCHEMA: Dict[str, Dict[str, Any]] = {
@@ -181,7 +187,7 @@ TABLES: Dict[str, Dict[str, Any]] = {
         'kind': 'junction',
         'used_by': ['etl', 'publish'],
         'schema': 'core',
-        'primary_key': ['league_id', 'team_id'],
+        'primary_key': ['league_id', 'team_id', 'season'],
         'foreign_keys': [
             {
                 'column':     'league_id',
@@ -209,7 +215,7 @@ TABLES: Dict[str, Dict[str, Any]] = {
         'kind': 'junction',
         'used_by': ['etl', 'publish'],
         'schema': 'core',
-        'primary_key': ['team_id', 'player_id'],
+        'primary_key': ['team_id', 'player_id', 'season'],
         'foreign_keys': [
             {
                 'column':     'team_id',
@@ -227,6 +233,11 @@ TABLES: Dict[str, Dict[str, Any]] = {
                 'on_update':  'CASCADE',
                 'on_delete':  'CASCADE',
             },
+        ],
+        'extra_columns': [
+            # Jersey number is team-specific: a player may wear different numbers
+            # on different teams. Populated by the roster sync (not ETL entity stages).
+            {'name': 'jersey_num', 'type': 'VARCHAR(3)', 'nullable': True, 'default': None},
         ],
         'indexes': [
             {'name': 'team_id', 'columns': ['team_id']},

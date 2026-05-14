@@ -185,38 +185,63 @@ def _create_profile_table(cur, table_name: str, meta: Dict[str, Any]) -> int:
     columns = _data_columns_for(scope='entities', entity=entity)
     source_id_cols = _get_source_id_columns_for_entity(entity)
 
-    fragments: List[str] = [
-        _the_glass_id_pk_clause(),
-        f"key VARCHAR(20) UNIQUE NOT NULL"
-    ]
+    fragments: List[str] = [_the_glass_id_pk_clause()]
     fragments.extend(_column_ddl(name, m) for name, m in columns)
     for src_col, pg_type in source_id_cols:
         fragments.append(f"{quote_col(src_col)} {pg_type}")
 
-    # Each source-id column gets a UNIQUE constraint (one row per source-id).
+    # UNIQUE constraints: source ID columns and DB_COLUMNS entries marked unique.
     for src_col, _ in source_id_cols:
         fragments.append(f"UNIQUE ({quote_col(src_col)})")
+    for name, m in columns:
+        if m.get('unique'):
+            fragments.append(f"UNIQUE ({quote_col(name)})")
 
     cur.execute(f"CREATE TABLE {qualified} (\n  " + ",\n  ".join(fragments) + "\n)")
     return len(fragments)
 
 
 def _create_junction_table(cur, table_name: str, meta: Dict[str, Any]) -> int:
-    """CREATE TABLE for a junction table.  Returns column count."""
+    """CREATE TABLE for a junction table.  Returns column count.
+
+    FK columns are derived from ``meta['foreign_keys']`` (BIGINT NOT NULL).
+    Shared operational columns (is_active, season, timestamps) come from
+    DB_COLUMNS with scope='junction'.
+    """
     qualified = f'{CORE_SCHEMA}.{table_name}'
-    # Get columns from DB_COLUMNS with scope='junction'
-    columns = _data_columns_for(scope='junction', entity=None)
+    # Emit FK columns first, in declaration order
+    fk_col_names = [fk['column'] for fk in meta['foreign_keys']]
+    # Deduplicate while preserving order (a column may appear in multiple FKs)
+    seen: set = set()
+    unique_fk_cols = [c for c in fk_col_names if not (c in seen or seen.add(c))]
+
     fragments: List[str] = []
-    for col_name, col_def in columns:
+    for col in unique_fk_cols:
+        fragments.append(f"{quote_col(col)} BIGINT NOT NULL")
+
+    # Operational data columns
+    data_columns = _data_columns_for(scope='junction', entity=None)
+    fk_set = set(unique_fk_cols)
+    for col_name, col_def in data_columns:
+        if col_name in fk_set:
+            continue  # already emitted above
         ddl = f"{quote_col(col_name)} {col_def['type']}"
-        # For junction tables, we use table-level composite PRIMARY KEY
-        # Don't add column-level PRIMARY KEY here
         if not col_def.get('nullable', True):
             ddl += ' NOT NULL'
         default_val = col_def.get('default')
         if default_val is not None:
             ddl += f' DEFAULT {default_val}'
         fragments.append(ddl)
+
+    # Table-specific extra columns (e.g. jersey_num on team_rosters)
+    for extra in meta.get('extra_columns', []):
+        ddl = f"{quote_col(extra['name'])} {extra['type']}"
+        if not extra.get('nullable', True):
+            ddl += ' NOT NULL'
+        if extra.get('default') is not None:
+            ddl += f" DEFAULT {extra['default']}"
+        fragments.append(ddl)
+
     pk_cols = ', '.join(quote_col(c) for c in meta['primary_key'])
     fragments.append(f"PRIMARY KEY ({pk_cols})")
     for fk in meta['foreign_keys']:
@@ -304,7 +329,7 @@ def _create_operational_table(cur, league_key: str, table_name: str, meta: Dict[
         idx_cols = ', '.join(quote_col(c) for c in idx['columns'])
         cur.execute(f"CREATE INDEX IF NOT EXISTS {idx_name} ON {qualified} ({idx_cols})")
 
-    return len(col_list) + 1  # +1 for id
+    return len(fragments)
 
 
 # ---------------------------------------------------------------------------
@@ -339,10 +364,7 @@ def _sync_profile_table(cur, table_name: str, meta: Dict[str, Any]) -> List[str]
         actions.append(f'created ({n} fragments)')
         return actions
 
-    expected: List[Tuple[str, str]] = [
-        (THE_GLASS_ID_COLUMN, THE_GLASS_ID_TYPE),
-        ('key', 'VARCHAR(20)')
-    ]
+    expected: List[Tuple[str, str]] = [(THE_GLASS_ID_COLUMN, THE_GLASS_ID_TYPE)]
     for name, m in _data_columns_for(scope='entities', entity=meta['entity']):
         expected.append((name, m['type']))
     for src_col, pg_type in _get_source_id_columns_for_entity(meta['entity']):
@@ -359,9 +381,27 @@ def _sync_junction_table(cur, table_name: str, meta: Dict[str, Any]) -> List[str
         actions.append(f'created ({n} columns)')
         return actions
 
-    # Get columns from DB_COLUMNS with scope='junction'
-    columns = _data_columns_for(scope='junction', entity=None)
-    expected = [(name, meta['type']) for name, meta in columns]
+    # FK columns (BIGINT NOT NULL) derived from foreign_keys metadata
+    seen: set = set()
+    fk_expected = [
+        (fk['column'], 'BIGINT')
+        for fk in meta['foreign_keys']
+        if not (fk['column'] in seen or seen.add(fk['column']))
+    ]
+    # Operational data columns from DB_COLUMNS
+    op_columns = _data_columns_for(scope='junction', entity=None)
+    fk_names = {c for c, _ in fk_expected}
+    op_expected = [
+        (name, col_meta['type'])
+        for name, col_meta in op_columns
+        if name not in fk_names
+    ]
+    # Table-specific extra columns
+    extra_expected = [
+        (col['name'], col['type'])
+        for col in meta.get('extra_columns', [])
+    ]
+    expected = fk_expected + op_expected + extra_expected
     _add_missing_columns(cur, CORE_SCHEMA, table_name, expected, actions)
     return actions
 
@@ -493,9 +533,16 @@ def ensure_all(league_key: str, conn=None) -> Dict[str, List[str]]:
 def ensure_league_profile(league_key: str, conn) -> int:
     """Ensure ``core.league_profiles`` has a row for ``league_key``.
 
-    The ``key`` column anchors the league_key -> the_glass_id mapping and is
-    the only stable reference between config and database.  Idempotent: if
-    a row already exists its the_glass_id is returned unchanged.
+    ``league_key`` is the pipeline's canonical identifier for the league
+    (e.g. ``'nba'``) and is stored in the ``league_key`` column, which
+    carries a UNIQUE constraint.  Idempotent: if a row already exists its
+    the_glass_id is returned unchanged.
+
+    Columns to populate are auto-derived from DB_COLUMNS: any column whose
+    scope includes 'entities', entity_types includes 'league', sources is None,
+    and whose name appears as a key in the LEAGUES config entry.  This means
+    adding a new league-level field only requires updating DB_COLUMNS and
+    LEAGUES — this function never needs to change.
     """
     if league_key not in LEAGUES:
         raise ValueError(f"Unknown league: {league_key!r}")
@@ -504,17 +551,33 @@ def ensure_league_profile(league_key: str, conn) -> int:
     with conn.cursor() as cur:
         cur.execute(
             f"SELECT {quote_col(THE_GLASS_ID_COLUMN)} "
-            f"FROM {CORE_SCHEMA}.league_profiles WHERE key = %s",
+            f"FROM {CORE_SCHEMA}.league_profiles WHERE league_key = %s",
             (league_key,),
         )
         row = cur.fetchone()
         if row is not None:
             return int(row[0])
 
+        # Derive which columns to populate: any column that applies to league
+        # profiles and whose name appears in the LEAGUES config entry.
+        # league_key is handled separately since its value is the dict key itself.
+        profile_cols = {
+            col_name: league[col_name]
+            for col_name, col_meta in DB_COLUMNS.items()
+            if 'league' in (col_meta.get('entity_types') or [])
+            and 'entities' in (col_meta.get('scope') or [])
+            and col_name in league
+        }
+
+        cols = ['league_key'] + list(profile_cols.keys())
+        values = [league_key] + list(profile_cols.values())
+        col_str = ', '.join(quote_col(c) for c in cols)
+        placeholders = ', '.join(['%s'] * len(cols))
+
         cur.execute(
-            f"INSERT INTO {CORE_SCHEMA}.league_profiles (key, name, abbr) "
-            f"VALUES (%s, %s, %s) RETURNING {quote_col(THE_GLASS_ID_COLUMN)}",
-            (league_key, league['name'], league['abbr']),
+            f"INSERT INTO {CORE_SCHEMA}.league_profiles ({col_str}) "
+            f"VALUES ({placeholders}) RETURNING {quote_col(THE_GLASS_ID_COLUMN)}",
+            values,
         )
         new_id = int(cur.fetchone()[0])
         logger.info(

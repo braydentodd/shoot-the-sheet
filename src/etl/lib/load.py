@@ -199,6 +199,14 @@ def _resolve_fk_value_columns(
     # Build {column -> ref_entity}
     profile_to_entity = {name: m['entity'] for name, m in PROFILE_TABLES.items()}
 
+    # Batch: collect all raw values per FK column, then one query per FK column.
+    fk_maps: Dict[str, Dict[str, int]] = {}
+    for fk in fks:
+        col = fk['column']
+        raw_values = [row.get(col) for row in rows.values() if row.get(col) is not None]
+        ref_entity = profile_to_entity[fk['ref_table']]
+        fk_maps[col] = _load_glass_id_map(conn, ref_entity, source_key, raw_values)
+
     dropped = 0
     out: Dict[Any, Dict[str, Any]] = {}
     for source_id, row in rows.items():
@@ -210,9 +218,7 @@ def _resolve_fk_value_columns(
             if raw is None:
                 keep = False
                 break
-            ref_entity = profile_to_entity[fk['ref_table']]
-            id_map = _load_glass_id_map(conn, ref_entity, source_key, [raw])
-            glass_id = id_map.get(str(raw))
+            glass_id = fk_maps[col].get(str(raw))
             if glass_id is None:
                 keep = False
                 break
@@ -412,11 +418,11 @@ def seed_empty_stats(
             if entity == 'team':
                 cur.execute(
                     f"""
-                    INSERT INTO {stats_table} ({quote_col(THE_GLASS_ID_COLUMN)}, team_id, season, season_type)
-                    SELECT lr.team_id, lr.team_id, %s, %s
+                    INSERT INTO {stats_table} ({quote_col(THE_GLASS_ID_COLUMN)}, season, season_type)
+                    SELECT lr.team_id, %s, %s
                     FROM core.league_rosters lr
                     JOIN core.league_profiles lp ON lp.{quote_col(THE_GLASS_ID_COLUMN)} = lr.league_id
-                    WHERE lp.key = %s AND lr.is_active = TRUE
+                    WHERE lp.league_key = %s AND lr.is_active = TRUE
                     ON CONFLICT DO NOTHING
                     """,
                     (season, season_type, league_key),
@@ -431,7 +437,7 @@ def seed_empty_stats(
                     JOIN core.player_profiles pp ON pp.{quote_col(THE_GLASS_ID_COLUMN)} = tr.player_id
                     JOIN core.league_rosters lr ON lr.team_id = tr.team_id
                     JOIN core.league_profiles lp ON lp.{quote_col(THE_GLASS_ID_COLUMN)} = lr.league_id
-                    WHERE lp.key = %s
+                    WHERE lp.league_key = %s
                       AND tr.is_active = TRUE
                       AND lr.is_active = TRUE
                     ON CONFLICT DO NOTHING

@@ -114,7 +114,7 @@ def get_teams_from_db(league_key: str) -> Dict[int, Tuple[str, str]]:
             ON lr.team_id = t.{_quote_col(THE_GLASS_ID_COLUMN)}
           JOIN {CORE_SCHEMA}.league_profiles lp
             ON lp.{_quote_col(THE_GLASS_ID_COLUMN)} = lr.league_id
-         WHERE lp.key = %s AND lr.is_active = TRUE
+         WHERE lp.league_key = %s AND lr.is_active = TRUE
          ORDER BY t.abbr
     """
     conn = get_db_connection()

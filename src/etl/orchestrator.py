@@ -96,7 +96,7 @@ def _get_active_team_source_ids(league_key: str, source_key: str) -> Dict[str, i
             ON lr.team_id = t.{quote_col(THE_GLASS_ID_COLUMN)}
           JOIN {CORE_SCHEMA}.league_profiles lp
             ON lp.{quote_col(THE_GLASS_ID_COLUMN)} = lr.league_id
-         WHERE lp.key = %s AND lr.is_active = TRUE
+         WHERE lp.league_key = %s AND lr.is_active = TRUE
          ORDER BY t.abbr
     """
     with db_connection() as conn:
@@ -258,7 +258,7 @@ def _sync_rosters_phase(
         })
         return 0
 
-    counts = sync_rosters(league_key, source_key, roster_pairs)
+    counts = sync_rosters(league_key, source_key, roster_pairs, season)
     return counts['teams_active'] + counts['players_active']
 
 

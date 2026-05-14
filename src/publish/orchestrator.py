@@ -37,17 +37,17 @@ from src.core.lib.leagues_resolver import (
     get_current_season,
     get_current_season_year,
 )
-from src.publish.definitions.layout import SECTIONS_CONFIG
+from src.publish.definitions.destinations import DESTINATIONS
+from src.publish.definitions.layout import AGGREGATE_TABS, SECTIONS_CONFIG
 from src.publish.definitions.stats import HISTORICAL_TIMEFRAMES
 from src.publish.destinations.sheets.config import (
     GOOGLE_SHEETS_CONFIG,
     SHEETS_FORMATTING,
 )
 from src.publish.destinations.sheets.client import get_sheets_client
-from src.publish.lib.calculations import derive_db_fields
+from src.publish.lib.calculations import compute_pct_by_rate, derive_db_fields
 from src.publish.lib.executor import (
     SyncContext,
-    _compute_pct_by_rate,
     sync_players_tab,
     sync_team_tab,
     sync_teams_tab,
@@ -70,16 +70,26 @@ from src.publish.lib.queries import (
 
 logger = logging.getLogger(__name__)
 
-_APPS_SCRIPT_DIR = Path(__file__).resolve().parents[2] / 'apps_script'
+_AUTO_RESUME = True
 
 
-def _push_apps_script_config(league: str) -> None:
+def _push_apps_script_config(league: str, destination: str) -> None:
     """Regenerate the Apps Script config file and push it via clasp.
 
-    Failures are logged but never raised: the sheet sync has already
-    succeeded by the time this runs, and a missing clasp install or a
-    transient push failure should not invalidate the upstream work.
+    Reads the apps_script directory from the destination config.  Failures
+    are logged but never raised: the sheet sync has already succeeded by the
+    time this runs, and a missing clasp install or a transient push failure
+    should not invalidate the upstream work.
     """
+    dest_cfg = DESTINATIONS.get(destination, {})
+    apps_script_cfg = dest_cfg.get('apps_script', {})
+    if not apps_script_cfg.get('enabled', False):
+        return
+
+    apps_script_dir = (
+        Path(__file__).resolve().parents[2] / apps_script_cfg['directory']
+    )
+
     try:
         path = export_config(league)
         logger.info('Apps Script config exported to %s', path)
@@ -87,9 +97,9 @@ def _push_apps_script_config(league: str) -> None:
         logger.exception('Apps Script config export failed.')
         return
 
-    logger.info('Running clasp push from %s', _APPS_SCRIPT_DIR)
+    logger.info('Running clasp push from %s', apps_script_dir)
     try:
-        subprocess.run(['clasp', 'push', '-f'], cwd=_APPS_SCRIPT_DIR, check=True)
+        subprocess.run(['clasp', 'push', '-f'], cwd=apps_script_dir, check=True)
         logger.info('clasp push succeeded')
     except subprocess.CalledProcessError as exc:
         logger.error('clasp push failed: %s', exc)
@@ -189,11 +199,11 @@ def _precompute_percentiles(
             opp_dict[f'postseason_stats_{y}yr'] = all_teams_post[y]['opponents']
 
         precomputed = {
-            'player': _compute_pct_by_rate(player_dict, 'player'),
-            'team': _compute_pct_by_rate(
+            'player': compute_pct_by_rate(player_dict, 'player'),
+            'team': compute_pct_by_rate(
                 team_dict, 'team', context_fn=_team_context_fn,
             ),
-            'opponents': _compute_pct_by_rate(opp_dict, 'opponents'),
+            'opponents': compute_pct_by_rate(opp_dict, 'opponents'),
             'data': {
                 'player': player_dict,
                 'team': team_dict,
@@ -204,6 +214,87 @@ def _precompute_percentiles(
         return precomputed
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Tab-loop helper
+# ---------------------------------------------------------------------------
+
+def _sync_all_tabs(
+    ctx,
+    client,
+    spreadsheet,
+    conn,
+    run_id: int,
+    *,
+    team_tabs,
+    aggregate_tabs,
+    pending_lookup: dict,
+    team_names: dict,
+    precomputed: dict,
+    delay: float,
+    sync_kwargs: dict,
+) -> list:
+    """Iterate team tabs then aggregate tabs, tracking progress per tab.
+
+    Returns a list of tab names that failed.
+    """
+    db_schema = ctx.db_schema
+    total_pending = sum(
+        1 for t in list(team_tabs) + list(aggregate_tabs) if t in pending_lookup
+    )
+    failed_tabs = []
+
+    with progress(total=total_pending, desc='publish', unit='tab', leave=False) as bar:
+        for tab in team_tabs:
+            if tab not in pending_lookup:
+                continue
+            pid = pending_lookup[tab]
+            bar.set_postfix_str(tab, refresh=False)
+            mark_tab_started(conn, db_schema, pid)
+            try:
+                sync_team_tab(
+                    ctx, client, spreadsheet, tab,
+                    team_name=team_names.get(tab, tab),
+                    precomputed=precomputed,
+                    **sync_kwargs,
+                )
+                mark_tab_completed(conn, db_schema, pid)
+                update_run_completed_tabs(conn, db_schema, run_id)
+            except Exception as exc:
+                logger.error('%s failed: %s', tab, exc, exc_info=True)
+                failed_tabs.append(tab)
+                mark_tab_failed(conn, db_schema, pid, str(exc))
+            bar.update(1)
+            time.sleep(delay)
+
+        for tab in aggregate_tabs:
+            if tab not in pending_lookup:
+                continue
+            pid = pending_lookup[tab]
+            bar.set_postfix_str(tab, refresh=False)
+            mark_tab_started(conn, db_schema, pid)
+            try:
+                if tab == 'all_players':
+                    sync_players_tab(
+                        ctx, client, spreadsheet,
+                        precomputed=precomputed, **sync_kwargs,
+                    )
+                else:
+                    sync_teams_tab(
+                        ctx, client, spreadsheet,
+                        precomputed=precomputed, **sync_kwargs,
+                    )
+                mark_tab_completed(conn, db_schema, pid)
+                update_run_completed_tabs(conn, db_schema, run_id)
+            except Exception as exc:
+                logger.error('%s tab failed: %s', tab, exc, exc_info=True)
+                failed_tabs.append(tab)
+                mark_tab_failed(conn, db_schema, pid, str(exc))
+            bar.update(1)
+            time.sleep(delay)
+
+    return failed_tabs
 
 
 # ---------------------------------------------------------------------------
@@ -233,7 +324,7 @@ def run_publish(
     league_config = {
         'current_season':      get_current_season(league),
         'current_season_year': get_current_season_year(league),
-        'season_type':         'rs',
+        'season_type':         LEAGUES[league]['regular_season_types'][0],
     }
 
     # Bind format_season_label to the league's season_format so downstream
@@ -271,8 +362,9 @@ def run_publish(
     logger.info(phase_marker('publish', f'league={league} rate={stat_rate}'))
     logger.info('Starting %s sync', 'partial update' if data_only else 'full')
     delay = (
-        0.5 if data_only
-        else ctx.sheet_formatting.get('sync_delay_seconds', 3)
+        ctx.sheet_formatting.get('data_only_sync_delay_seconds', 0)
+        if data_only
+        else ctx.sheet_formatting.get('sync_delay_seconds', 0)
     )
 
     client = get_sheets_client(ctx.google_sheets_config)
@@ -297,7 +389,7 @@ def run_publish(
         if pt in abbrs:
             abbrs = [pt] + [a for a in abbrs if a != pt]
 
-    aggregate_order = ['all_players', 'all_teams']
+    aggregate_order = list(AGGREGATE_TABS)
     if priority_tab and priority_tab.lower() in aggregate_order:
         first = priority_tab.lower()
         aggregate_order = [first] + [s for s in aggregate_order if s != first]
@@ -305,11 +397,10 @@ def run_publish(
     all_tabs = abbrs + aggregate_order
 
     # Auto-resume: resolve pending work (may be subset if resuming)
-    auto_resume = True  # Always enabled for publish
     conn = get_db_connection()
     try:
         run_id, pending_items = resolve_work(
-            conn, db_schema, league, all_tabs, auto_resume=auto_resume,
+            conn, db_schema, league, all_tabs, auto_resume=_AUTO_RESUME,
         )
     except Exception:
         conn.close()
@@ -325,55 +416,12 @@ def run_publish(
     team_gids = {ws.title: ws.id for ws in spreadsheet.worksheets()}
     sync_kwargs['team_gids'] = team_gids
 
-    failed_tabs = []
-    with progress(total=total_pending, desc='publish', unit='tab', leave=False) as bar:
-        for tab in abbrs:
-            if tab not in pending_lookup:
-                continue
-            pid = pending_lookup[tab]
-            bar.set_postfix_str(tab, refresh=False)
-            mark_tab_started(conn, db_schema, pid)
-            try:
-                sync_team_tab(
-                    ctx, client, spreadsheet, tab,
-                    team_name=team_names.get(tab, tab),
-                    precomputed=precomputed,
-                    **sync_kwargs,
-                )
-                mark_tab_completed(conn, db_schema, pid)
-                update_run_completed_tabs(conn, db_schema, run_id)
-            except Exception as exc:
-                logger.error('%s failed: %s', tab, exc, exc_info=True)
-                failed_tabs.append(tab)
-                mark_tab_failed(conn, db_schema, pid, str(exc))
-            bar.update(1)
-            time.sleep(delay)
-
-        for tab in aggregate_order:
-            if tab not in pending_lookup:
-                continue
-            pid = pending_lookup[tab]
-            bar.set_postfix_str(tab, refresh=False)
-            mark_tab_started(conn, db_schema, pid)
-            try:
-                if tab == 'all_players':
-                    sync_players_tab(
-                        ctx, client, spreadsheet,
-                        precomputed=precomputed, **sync_kwargs,
-                    )
-                else:
-                    sync_teams_tab(
-                        ctx, client, spreadsheet,
-                        precomputed=precomputed, **sync_kwargs,
-                    )
-                mark_tab_completed(conn, db_schema, pid)
-                update_run_completed_tabs(conn, db_schema, run_id)
-            except Exception as exc:
-                logger.error('%s tab failed: %s', tab, exc, exc_info=True)
-                failed_tabs.append(tab)
-                mark_tab_failed(conn, db_schema, pid, str(exc))
-            bar.update(1)
-            time.sleep(delay)
+    failed_tabs = _sync_all_tabs(
+        ctx, client, spreadsheet, conn, run_id,
+        team_tabs=abbrs, aggregate_tabs=aggregate_order,
+        pending_lookup=pending_lookup, team_names=team_names,
+        precomputed=precomputed, delay=delay, sync_kwargs=sync_kwargs,
+    )
 
     if failed_tabs:
         failed_list = ', '.join(failed_tabs)
@@ -386,7 +434,7 @@ def run_publish(
     complete_run(conn, db_schema, run_id)
     conn.close()
 
-    # Apps Script config export is Google Sheets-specific
-    if config_export and destination == 'google_sheets':
+    # Apps Script config export is driven by destination config
+    if config_export and DESTINATIONS.get(destination, {}).get('apps_script', {}).get('enabled', False):
         logger.info(phase_marker('apps_script_push'))
-        _push_apps_script_config(league)
+        _push_apps_script_config(league, destination)

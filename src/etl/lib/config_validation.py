@@ -86,10 +86,8 @@ def _validate_source_structure(
                     continue
                 for entity_name, source_def in entities.items():
                     if entity_name not in VALID_ENTITY_TYPES:
-                        errors.append(
-                            f"{prefix}: sources['{league}']['{provider}'] has "
-                            f"invalid entity '{entity_name}'"
-                        )
+                        # Skip provider-level metadata keys (e.g. update_frequency)
+                        continue
                     elif entity_name not in applies_to and entity_name != 'opponent':
                         errors.append(
                             f"{prefix}: sources['{league}']['{provider}']['{entity_name}'] - "

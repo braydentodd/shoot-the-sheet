@@ -13,6 +13,11 @@ from typing import Any, Dict, List, Tuple
 # TABS
 # ============================================================================
 
+# Ordered list of aggregate (non-team) tabs that are published after all
+# individual team tabs.  The orchestrator iterates this sequence directly;
+# any priority-tab reordering is applied on top.
+AGGREGATE_TABS: List[str] = ['all_players', 'all_teams']
+
 TABS_CONFIG: Dict[str, Dict[str, Any]] = {
     'all_players': {
         'tab_name':                  'Players',

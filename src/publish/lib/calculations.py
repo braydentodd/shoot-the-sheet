@@ -507,3 +507,35 @@ def derive_db_fields(league: str = None, stats_sections: frozenset = None,
         'stat_fields': player_stats,
         'team_stat_fields': team_stats,
     }
+
+
+# ============================================================================
+# PERCENTILE POPULATION BUILDER
+# ============================================================================
+
+def compute_pct_by_rate(section_data: dict, entity_type: str,
+                        context_fn=None) -> dict:
+    """Compute percentile populations for all stat rates.
+
+    Args:
+        section_data: ``{base_section: data_list}`` e.g.
+            ``{'current_stats': [...], 'historical_stats': [...], ...}``
+        entity_type: ``'player'``, ``'team'``, or ``'opponents'``
+        context_fn: Optional callable ``(entity_dict) -> context_dict``.
+            Required for team entities whose profile columns use
+            ``team_average`` (needs per-entity ``team_players`` context).
+
+    Returns:
+        ``{rate: {base_section: {col_key: sorted_values}}}``
+    """
+    result = {}
+    for rate in STAT_RATES:
+        result[rate] = {}
+        for section, data_list in section_data.items():
+            if data_list:
+                result[rate][section] = calculate_all_percentiles(
+                    data_list, entity_type, rate, context_fn=context_fn,
+                )
+            else:
+                result[rate][section] = {}
+    return result

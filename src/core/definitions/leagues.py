@@ -14,6 +14,7 @@ from typing import Any, Dict
 # ============================================================================
 
 VALID_LEAGUE_SEASON_FORMATS = frozenset({'same_year', 'split_year'})
+VALID_LEAGUE_GENDERS = frozenset({'M', 'W'})
 
 
 # ============================================================================
@@ -24,6 +25,7 @@ VALID_LEAGUE_SEASON_FORMATS = frozenset({'same_year', 'split_year'})
 LEAGUES_SCHEMA: Dict[str, Dict[str, Any]] = {
     'name':                   {'required': True, 'types': (str,)},
     'abbr':                   {'required': True, 'types': (str,)},
+    'gender':                 {'required': True, 'types': (str,), 'allowed_values': VALID_LEAGUE_GENDERS},
     'season_format':          {'required': True, 'types': (str,), 'allowed_values': VALID_LEAGUE_SEASON_FORMATS},
     'regular_season_types':   {'required': True, 'types': (list,)},
     'postseason_types':       {'required': True, 'types': (list,)},
@@ -37,6 +39,7 @@ LEAGUES: Dict[str, Dict[str, Any]] = {
     'nba': {
         'name':                   'NBA',
         'abbr':                   'NBA',
+        'gender':                 'M',
         'season_format':          'split_year',
         'regular_season_types':   ['rs'],
         'postseason_types':       ['po', 'pi'],

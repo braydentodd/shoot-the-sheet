@@ -12,10 +12,16 @@ from typing import Any, Dict
 
 VALID_DESTINATION_ROLES = frozenset({'primary', 'backup'})
 
+APPS_SCRIPT_SCHEMA: Dict[str, Dict[str, Any]] = {
+    'enabled':   {'required': True, 'types': (bool,)},
+    'directory': {'required': True, 'types': (str,)},
+}
+
 DESTINATIONS_SCHEMA: Dict[str, Dict[str, Any]] = {
-    'leagues':        {'required': True, 'types': (list,)},
-    'role':           {'required': True, 'types': (str,), 'allowed_values': VALID_DESTINATION_ROLES},
-    'rate_limits':    {'required': False, 'types': (dict, type(None))},
+    'leagues':      {'required': True,  'types': (list,)},
+    'role':         {'required': True,  'types': (str,), 'allowed_values': VALID_DESTINATION_ROLES},
+    'rate_limits':  {'required': False, 'types': (dict, type(None))},
+    'apps_script':  {'required': False, 'types': (dict, type(None))},
 }
 
 DESTINATIONS: Dict[str, Dict[str, Any]] = {
@@ -29,6 +35,10 @@ DESTINATIONS: Dict[str, Dict[str, Any]] = {
             'timeout_default': 30,
             'timeout_bulk': 120,
             'max_consecutive_failures': 5,
+        },
+        'apps_script': {
+            'enabled':   True,
+            'directory': 'apps_script',
         },
     },
 }

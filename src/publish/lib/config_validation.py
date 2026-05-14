@@ -150,6 +150,11 @@ def validate_config() -> List[str]:
         COLORS_SCHEMA,
         WIDTH_CLASSES,
     )
+    from src.publish.definitions.destinations import (
+        DESTINATIONS,
+        DESTINATIONS_SCHEMA,
+        APPS_SCRIPT_SCHEMA,
+    )
 
     errors: List[str] = []
 
@@ -163,6 +168,17 @@ def validate_config() -> List[str]:
     errors.extend(validate_dict_config(STAT_RATES, STAT_RATES_SCHEMA, 'STAT_RATES'))
     errors.extend(validate_dict_config(TABS_CONFIG, TABS_CONFIG_SCHEMA, 'TABS_CONFIG'))
     errors.extend(validate_dict_config(SUBSECTIONS, SUBSECTIONS_SCHEMA, 'SUBSECTIONS'))
+    errors.extend(validate_dict_config(DESTINATIONS, DESTINATIONS_SCHEMA, 'DESTINATIONS'))
+
+    # Nested apps_script blocks within DESTINATIONS
+    for dest_key, dest_entry in DESTINATIONS.items():
+        apps_script = dest_entry.get('apps_script')
+        if apps_script is not None:
+            errors.extend(validate_flat_config(
+                apps_script,
+                APPS_SCRIPT_SCHEMA,
+                f"DESTINATIONS['{dest_key}'].apps_script",
+            ))
 
     # Flat dict schemas
     errors.extend(validate_flat_config(SHEETS_FORMATTING, SHEETS_FORMATTING_SCHEMA, 'SHEETS_FORMATTING'))

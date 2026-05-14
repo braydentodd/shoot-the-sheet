@@ -48,15 +48,17 @@ GOOGLE_SHEETS_CONFIG: Dict[str, Dict[str, Any]] = {
 # ============================================================================
 
 SHEETS_FORMATTING: Dict[str, Any] = {
-    'frozen_columns':     1,
-    'frozen_rows':        6,
-    'header_rows':        6,
-    'sync_delay_seconds': 0,
+    'frozen_columns':              1,
+    'frozen_rows':                 6,
+    'header_rows':                 6,
+    'sync_delay_seconds':          0,
+    'data_only_sync_delay_seconds': 0,
 }
 
 SHEETS_FORMATTING_SCHEMA: Dict[str, Dict[str, Any]] = {
-    'frozen_columns':     {'required': True, 'types': (int,)},
-    'frozen_rows':        {'required': True, 'types': (int,)},
-    'header_rows':        {'required': True, 'types': (int,)},
-    'sync_delay_seconds': {'required': True, 'types': (int,)},
+    'frozen_columns':               {'required': True, 'types': (int,)},
+    'frozen_rows':                  {'required': True, 'types': (int,)},
+    'header_rows':                  {'required': True, 'types': (int,)},
+    'sync_delay_seconds':           {'required': True, 'types': (int,)},
+    'data_only_sync_delay_seconds': {'required': True, 'types': (int,)},
 }

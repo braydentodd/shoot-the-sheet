@@ -28,6 +28,7 @@ from src.publish.destinations.sheets.client import (
 )
 from src.publish.lib.calculations import (
     calculate_all_percentiles,
+    compute_pct_by_rate,
     evaluate_expression,
 )
 from src.publish.lib.data_populator import (
@@ -75,32 +76,6 @@ class SyncContext:
     season_format_fn: Callable = str
     season_key: str = 'current_season'
     include_hist_post_players: bool = True
-
-def _compute_pct_by_rate(section_data, entity_type, context_fn=None):
-    """Compute percentile populations for all stat rates.
-
-    Args:
-        section_data: {base_section: data_list} e.g.
-            {'current_stats': [...], 'historical_stats': [...], 'postseason_stats': [...]}
-        entity_type: 'player', 'team', or 'opponents'
-        context_fn: Optional callable(entity_dict) -> context_dict.
-                    Needed for team entities whose profile columns use
-                    team_average (requires per-entity team_players context).
-
-    Returns:
-        {rate: {base_section: {col_key: sorted_values}}}
-    """
-    result = {}
-    for rate in STAT_RATES:
-        result[rate] = {}
-        for section, data_list in section_data.items():
-            if data_list:
-                result[rate][section] = calculate_all_percentiles(
-                    data_list, entity_type, rate, context_fn=context_fn)
-            else:
-                result[rate][section] = {}
-    return result
-
 
 def _build_merged_pops(pct_by_rate):
     """Build merged percentile populations dict for summary rows.
@@ -235,7 +210,7 @@ def sync_team_tab(ctx, client, spreadsheet, team_abbr,
             all_teams_hist = fetch_all_teams(conn, 'historical_stats', **query_kw)
             all_teams_post = fetch_all_teams(conn, 'postseason_stats', **query_kw)
 
-            player_pct_by_rate = _compute_pct_by_rate({
+            player_pct_by_rate = compute_pct_by_rate({
                 'current_stats': all_players_curr,
                 'historical_stats': all_players_hist,
                 'postseason_stats': all_players_post,
@@ -252,12 +227,12 @@ def sync_team_tab(ctx, client, spreadsheet, team_abbr,
                 abbr = entity.get(ctx.team_abbr_field)
                 return {'team_players': _player_groups.get(abbr, [])}
 
-            team_pct_by_rate = _compute_pct_by_rate({
+            team_pct_by_rate = compute_pct_by_rate({
                 'current_stats': all_teams_curr['teams'],
                 'historical_stats': all_teams_hist['teams'],
                 'postseason_stats': all_teams_post['teams'],
             }, 'team', context_fn=_team_ctx_fn)
-            opp_pct_by_rate = _compute_pct_by_rate({
+            opp_pct_by_rate = compute_pct_by_rate({
                 'current_stats': all_teams_curr['opponents'],
                 'historical_stats': all_teams_hist['opponents'],
                 'postseason_stats': all_teams_post['opponents'],
@@ -494,7 +469,7 @@ def sync_teams_tab(ctx, client, spreadsheet, mode='per_possession',
                 team_dict[f'historical_stats_{y}yr'] = all_teams_hist[y]['teams']
                 team_dict[f'postseason_stats_{y}yr'] = all_teams_post[y]['teams']
 
-            team_pct_by_rate = _compute_pct_by_rate(team_dict, 'team', context_fn=_team_context_fn)
+            team_pct_by_rate = compute_pct_by_rate(team_dict, 'team', context_fn=_team_context_fn)
 
         # ---- Column structure (tripled stats sections) ----
         columns = build_tab_columns(
@@ -680,7 +655,7 @@ def sync_players_tab(ctx, client, spreadsheet, mode='per_possession',
             for y in supported_years:
                 player_dict[f'historical_stats_{y}yr'] = all_players_hist[y]
                 player_dict[f'postseason_stats_{y}yr'] = all_players_post[y]
-            player_pct_by_rate = _compute_pct_by_rate(player_dict, 'player')
+            player_pct_by_rate = compute_pct_by_rate(player_dict, 'player')
 
         # ---- Column structure (tripled stats sections) ----
         columns = build_tab_columns(
