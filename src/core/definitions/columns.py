@@ -4,9 +4,11 @@ The Glass - Column Registry
 Single source of truth for database column definitions and provider source
 mappings.  Column names match the actual PostgreSQL schema exactly.
 
-Each column entry carries a 'sources' attribute that maps source registry
-keys (e.g., 'nba_api') to per-entity fetch definitions.  Columns with no
-external source (system columns) have sources: None.
+Each column entry carries a ``sources`` attribute using this shape:
+
+    dataset_mapping[league_key][source_key][entity] -> source definition
+
+Columns with no external source (system columns) have ``dataset_mapping: None``.
 
 The synthetic identity column ``the_glass_id`` and per-source identity
 columns (e.g. ``nba_api_id``) are emitted directly by the DDL generator
@@ -24,7 +26,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
     # ------------------------------------------------------------------
     'entity_type': {
         'type': 'VARCHAR(10)',
-        'scope': ['runs', 'tasks'],
+        'scope': ['runs', 'tasks', 'backfill'],
         'nullable': True,
         'default': None,
         'entity_types': None,
@@ -32,11 +34,11 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'managed_by': 'execution_context',
         'domain': None,
         'comment': None,
-        'sources': None,
+        'dataset_mapping': None,
     },
     'updated_at': {
         'type': 'TIMESTAMP',
-        'scope': ['entities', 'stats', 'junction'],
+        'scope': ['profiles', 'stats', 'rosters'],
         'nullable': False,
         'default': 'CURRENT_TIMESTAMP',
         'entity_types': ['league', 'player', 'team'],
@@ -44,11 +46,11 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'managed_by': 'db',
         'domain': None,
         'comment': None,
-        'sources': None,
+        'dataset_mapping': None,
     },
     'created_at': {
         'type': 'TIMESTAMP',
-        'scope': ['entities', 'stats', 'junction'],
+        'scope': ['profiles', 'stats', 'rosters'],
         'nullable': True,
         'default': 'CURRENT_TIMESTAMP',
         'entity_types': ['league', 'player', 'team'],
@@ -56,11 +58,11 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'managed_by': 'db',
         'domain': None,
         'comment': None,
-        'sources': None,
+        'dataset_mapping': None,
     },
     'season': {
         'type': 'VARCHAR(7)',
-        'scope': ['entities', 'stats', 'runs', 'junction'],
+        'scope': ['profiles', 'stats', 'runs', 'rosters', 'backfill'],
         'nullable': True,
         'default': None,
         'entity_types': ['player', 'team'],
@@ -68,11 +70,11 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'managed_by': 'execution_context',
         'domain': None,
         'comment': None,
-        'sources': None,
+        'dataset_mapping': None,
     },
     'season_type': {
         'type': 'VARCHAR(3)',
-        'scope': ['entities', 'stats'],
+        'scope': ['profiles', 'stats', 'backfill'],
         'nullable': True,
         'default': None,
         'entity_types': ['player', 'team'],
@@ -80,18 +82,18 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'managed_by': 'execution_context',
         'domain': None,
         'comment': None,
-        'sources': None,
+        'dataset_mapping': None,
     },
     'notes': {
         'type': 'TEXT',
-        'scope': ['entities'],
+        'scope': ['profiles'],
         'nullable': True,
         'default': None,
         'entity_types': ['player', 'team'],
         'update_frequency': None,
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'the_glass_sheets': {
                     'player': {'dataset': 'players', 'field': 'Notes'},
@@ -112,7 +114,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -133,18 +135,18 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'managed_by': 'execution_context',
         'domain': None,
         'comment': None,
-        'sources': None,
+        'dataset_mapping': None,
     },
     'name': {
         'type': 'VARCHAR(100)',
-        'scope': ['entities'],
+        'scope': ['profiles'],
         'nullable': True,
         'default': None,
         'entity_types': ['league', 'player', 'team'],
         'update_frequency': 'annual',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -163,14 +165,14 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
     },
     'height_ins_no_shoes': {
         'type': 'SMALLINT',
-        'scope': ['entities'],
+        'scope': ['profiles'],
         'nullable': True,
         'default': None,
         'entity_types': ['player'],
         'update_frequency': 'annual',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -184,14 +186,14 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
     },
     'height_ins_with_shoes': {
         'type': 'SMALLINT',
-        'scope': ['entities'],
+        'scope': ['profiles'],
         'nullable': True,
         'default': None,
         'entity_types': ['player'],
         'update_frequency': 'annual',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -201,7 +203,6 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
                     },
                 },
                 'the_glass_sheets': {
-                    'update_frequency': 'per_execution',
                     'player': {'dataset': 'players', 'field': 'Height'},
                 },
             },
@@ -209,20 +210,19 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
     },
     'weight_lbs': {
         'type': 'SMALLINT',
-        'scope': ['entities'],
+        'scope': ['profiles'],
         'nullable': True,
         'default': None,
         'entity_types': ['player'],
         'update_frequency': 'annual',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {'dataset': 'commonallplayers', 'field': 'WEIGHT'},
                 },
                 'the_glass_sheets': {
-                    'update_frequency': 'per_execution',
                     'player': {'dataset': 'players', 'field': 'Weight'},
                 },
             },
@@ -230,17 +230,16 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
     },
     'wingspan_ins': {
         'type': 'SMALLINT',
-        'scope': ['entities'],
+        'scope': ['profiles'],
         'nullable': True,
         'default': None,
         'entity_types': ['player'],
         'update_frequency': 'annual',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
-                    'update_frequency': 'annual',
                     'player': {
                         'dataset': 'draftcombineplayeranthro',
                         'field': 'WINGSPAN',
@@ -248,7 +247,6 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
                     },
                 },
                 'the_glass_sheets': {
-                    'update_frequency': 'per_execution',
                     'player': {'dataset': 'players', 'field': 'Wingspan'},
                 },
             },
@@ -256,14 +254,14 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
     },
     'handedness': {
         'type': 'CHAR',
-        'scope': ['entities'],
+        'scope': ['profiles'],
         'nullable': True,
         'default': None,
         'entity_types': ['player'],
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'the_glass_sheets': {
                     'player': {'dataset': 'players', 'field': 'Handedness'},
@@ -273,14 +271,14 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
     },
     'birthdate': {
         'type': 'DATE',
-        'scope': ['entities'],
+        'scope': ['profiles'],
         'nullable': True,
         'default': None,
         'entity_types': ['player'],
         'update_frequency': 'annual',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -294,14 +292,14 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
     },
     'seasons_exp': {
         'type': 'SMALLINT',
-        'scope': ['entities'],
+        'scope': ['profiles'],
         'nullable': True,
         'default': None,
         'entity_types': ['player'],
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {'dataset': 'commonallplayers', 'field': 'SEASON_EXP'},
@@ -311,14 +309,14 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
     },
     'abbr': {
         'type': 'VARCHAR(5)',
-        'scope': ['entities'],
+        'scope': ['profiles'],
         'nullable': True,
         'default': None,
         'entity_types': ['league', 'team'],
         'update_frequency': 'annual',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'team': {'dataset': 'team_metadata', 'field': 'TEAM_ABBREVIATION', 'transform': 'safe_str'},
@@ -328,14 +326,14 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
     },
     'conf': {
         'type': 'VARCHAR(50)',
-        'scope': ['entities'],
+        'scope': ['profiles'],
         'nullable': True,
         'default': None,
         'entity_types': ['team'],
         'update_frequency': 'annual',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'team': {'dataset': 'team_metadata', 'field': 'TEAM_CONFERENCE', 'transform': 'safe_str'},
@@ -343,22 +341,9 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
             },
         },
     },
-    'league_key': {
-        'type': 'VARCHAR(10)',
-        'scope': ['entities'],
-        'nullable': False,
-        'default': None,
-        'entity_types': ['league'],
-        'update_frequency': None,
-        'managed_by': 'execution_context',
-        'domain': None,
-        'comment': None,
-        'sources': None,
-        'unique': True,
-    },
     'gender': {
-        'type': 'CHAR(1)',
-        'scope': ['entities'],
+        'type': 'CHAR',
+        'scope': ['profiles'],
         'nullable': True,
         'default': None,
         'entity_types': ['league', 'team', 'player'],
@@ -366,7 +351,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'managed_by': 'execution_context',
         'domain': None,
         'comment': None,
-        'sources': None,
+        'dataset_mapping': None,
     },
     # ------------------------------------------------------------------
     # GAMES & MINUTES
@@ -380,7 +365,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {'dataset': 'leaguedashplayerstats', 'field': 'GP'},
@@ -398,7 +383,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {'dataset': 'leaguedashplayerstats', 'field': 'MIN', 'scale': 10},
@@ -416,7 +401,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {'dataset': 'leaguedashplayerstats', 'field': 'W'},
@@ -434,7 +419,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -460,7 +445,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -488,7 +473,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {'dataset': 'leaguehustlestatsplayer', 'field': 'G'},
@@ -506,7 +491,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {'dataset': 'leaguehustlestatsplayer', 'field': 'MIN', 'scale': 10},
@@ -524,7 +509,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -548,7 +533,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -576,7 +561,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -608,7 +593,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -643,7 +628,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {'dataset': 'leaguedashplayerstats', 'field': 'FG3M'},
@@ -666,7 +651,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {'dataset': 'leaguedashplayerstats', 'field': 'FG3A'},
@@ -692,7 +677,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {'dataset': 'leaguedashplayerstats', 'field': 'FTM'},
@@ -715,7 +700,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {'dataset': 'leaguedashplayerstats', 'field': 'FTA'},
@@ -741,7 +726,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -787,7 +772,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -833,7 +818,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -879,7 +864,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -925,7 +910,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -959,7 +944,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -993,7 +978,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -1027,7 +1012,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -1061,7 +1046,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -1095,7 +1080,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -1129,7 +1114,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -1163,7 +1148,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -1200,7 +1185,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -1249,7 +1234,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -1323,7 +1308,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -1353,7 +1338,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -1383,7 +1368,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -1416,7 +1401,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {'dataset': 'leaguedashplayerstats', 'field': 'OREB'},
@@ -1439,7 +1424,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {'dataset': 'leaguedashplayerstats', 'field': 'DREB'},
@@ -1462,7 +1447,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -1490,7 +1475,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -1518,7 +1503,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -1557,7 +1542,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -1599,7 +1584,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {'dataset': 'leaguedashplayerstats', 'field': 'AST'},
@@ -1622,7 +1607,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -1648,7 +1633,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -1674,7 +1659,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -1703,7 +1688,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -1729,7 +1714,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -1755,7 +1740,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -1784,7 +1769,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {'dataset': 'leaguedashplayerstats', 'field': 'TOV'},
@@ -1810,7 +1795,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -1838,7 +1823,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -1869,7 +1854,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {'dataset': 'leaguedashplayerstats', 'field': 'STL'},
@@ -1887,7 +1872,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {'dataset': 'leaguedashplayerstats', 'field': 'BLK'},
@@ -1905,7 +1890,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {'dataset': 'leaguedashplayerstats', 'field': 'PF'},
@@ -1931,7 +1916,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'hustle',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {'dataset': 'leaguehustlestatsplayer', 'field': 'DEFLECTIONS'},
@@ -1949,7 +1934,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'hustle',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {'dataset': 'leaguehustlestatsplayer', 'field': 'CHARGES_DRAWN'},
@@ -1967,7 +1952,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'hustle',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {'dataset': 'leaguehustlestatsplayer', 'field': 'CONTESTED_SHOTS'},
@@ -1988,7 +1973,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -2014,7 +1999,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -2040,7 +2025,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -2066,7 +2051,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -2092,7 +2077,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -2118,7 +2103,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -2147,7 +2132,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -2175,7 +2160,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -2203,7 +2188,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'onoff',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -2228,7 +2213,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'onoff',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -2256,7 +2241,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -2284,7 +2269,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -2312,7 +2297,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -2340,7 +2325,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': 'tracking',
         'comment': None,
-        'sources': {
+        'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'player': {
@@ -2372,7 +2357,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': None,
+        'dataset_mapping': None,
     },
     'status': {
         'type': 'VARCHAR(20)',
@@ -2383,7 +2368,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': None,
+        'dataset_mapping': None,
     },
     'started_at': {
         'type': 'TIMESTAMP',
@@ -2394,18 +2379,18 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': None,
+        'dataset_mapping': None,
     },
     'completed_at': {
         'type': 'TIMESTAMP',
-        'scope': ['runs', 'tasks'],
+        'scope': ['runs', 'tasks', 'backfill'],
         'nullable': True,
         'default': None,
         'entity_types': None,
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': None,
+        'dataset_mapping': None,
     },
     'total_items': {
         'type': 'INTEGER',
@@ -2416,7 +2401,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': None,
+        'dataset_mapping': None,
     },
     'completed_items': {
         'type': 'INTEGER',
@@ -2427,7 +2412,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': None,
+        'dataset_mapping': None,
     },
     'total_rows': {
         'type': 'INTEGER',
@@ -2438,7 +2423,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': None,
+        'dataset_mapping': None,
     },
     'error_message': {
         'type': 'TEXT',
@@ -2449,7 +2434,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': None,
+        'dataset_mapping': None,
     },
 
     # ------------------------------------------------------------------
@@ -2464,7 +2449,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': None,
+        'dataset_mapping': None,
     },
     'item_key': {
         'type': 'TEXT',
@@ -2475,7 +2460,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': None,
+        'dataset_mapping': None,
     },
     'rows_written': {
         'type': 'INTEGER',
@@ -2486,7 +2471,7 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': None,
+        'dataset_mapping': None,
     },
     'retry_count': {
         'type': 'INTEGER',
@@ -2497,25 +2482,59 @@ DB_COLUMNS: Dict[str, Dict[str, Any]] = {
         'update_frequency': 'per_execution',
         'domain': None,
         'comment': None,
-        'sources': None,
+        'dataset_mapping': None,
+    },
+    'source_key': {
+        'type': 'VARCHAR(50)',
+        'scope': ['backfill'],
+        'nullable': False,
+        'default': None,
+        'entity_types': None,
+        'update_frequency': 'per_execution',
+        'domain': None,
+        'comment': None,
+        'dataset_mapping': None,
+    },
+    'coverage_signature': {
+        'type': 'TEXT',
+        'scope': ['backfill'],
+        'nullable': False,
+        'default': None,
+        'entity_types': None,
+        'update_frequency': 'per_execution',
+        'domain': None,
+        'comment': None,
+        'dataset_mapping': None,
     },
 
     # ------------------------------------------------------------------
-    # JUNCTION COLUMNS (league_rosters, team_rosters)
+    # ROSTER COLUMNS (league_rosters, team_rosters)
     # Shared operational/data columns only.  FK columns (league_id, team_id,
-    # player_id) are derived directly from JUNCTION_TABLES.foreign_keys by
+    # player_id) are derived directly from ROSTER_TABLES.foreign_keys by
     # the DDL generator, so they do not belong here.
     # ------------------------------------------------------------------
     'is_active': {
         'type': 'BOOLEAN',
-        'scope': ['junction'],
+        'scope': ['rosters'],
         'nullable': False,
         'default': 'TRUE',
-        'entity_types': None,
+        'entity_types': ['team', 'player'],
         'update_frequency': 'per_execution',
         'managed_by': 'execution_context',
         'domain': None,
         'comment': None,
-        'sources': None,
+        'dataset_mapping': None,
+    },
+    'jersey_num': {
+        'type': 'VARCHAR(3)',
+        'scope': ['rosters'],
+        'nullable': True,
+        'default': None,
+        'entity_types': ['player'],
+        'update_frequency': 'per_execution',
+        'managed_by': 'source',
+        'domain': None,
+        'comment': None,
+        'dataset_mapping': None,
     },
 }

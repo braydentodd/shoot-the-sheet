@@ -18,7 +18,6 @@ from src.core.lib.rate_limiter import get_rate_limiter
 from src.etl.sources.nba_api.config import (
     API_CONFIG,
     DATASETS,
-    SOURCE_META,
 )
 
 warnings.filterwarnings(
@@ -286,21 +285,30 @@ def _fetch_virtual(dataset: str, season: str) -> Optional[Dict]:
 # ROSTER SNAPSHOT  (consumed by the runner's `rosters` phase)
 # ============================================================================
 
-def fetch_roster_snapshot(
+def fetch_roster_memberships(
     league_key: str,
     season: str,
     season_type_name: str = 'Regular Season',
+    roster_snapshot: Optional[Dict[str, Any]] = None,
 ) -> list:
-    """Return ``[(team_source_id, player_source_id), ...]`` for every active
+    """Return ``[(team_source_id, player_source_id, jersey_num), ...]`` for every active
     roster slot in the league for the given season.
 
-    The dataset is taken from ``SOURCE_META['roster_dataset']`` so the
-    runner stays source-agnostic.  Players whose ``TEAM_ID`` is null or zero
-    (free agents / inactive) are dropped.
+    Dataset, field names, and request params are supplied via
+    ``roster_snapshot`` from league source-role config. Players whose team ID
+    is null or zero (free agents / inactive) are dropped.
     """
-    dataset = SOURCE_META['roster_dataset']
+    if not roster_snapshot:
+        raise ValueError('roster_snapshot config is required for roster_maintainer role')
+
+    dataset = roster_snapshot['dataset']
+    team_id_field = roster_snapshot['team_id_field']
+    player_id_field = roster_snapshot['player_id_field']
+    jersey_field = roster_snapshot.get('jersey_field')
+    request_params = dict(roster_snapshot.get('params', {}))
+
     fetcher = make_fetcher(season, season_type_name, 'player')
-    result = fetcher(dataset, {'is_only_current_season': '1'})
+    result = fetcher(dataset, request_params)
     if result is None:
         logger.warning(
             'Roster snapshot %s/%s returned no result from %s',
@@ -311,10 +319,11 @@ def fetch_roster_snapshot(
     pairs: list = []
     for rs in result.get('resultSets', []):
         headers = rs.get('headers', [])
-        if 'TEAM_ID' not in headers or 'PERSON_ID' not in headers:
+        if team_id_field not in headers or player_id_field not in headers:
             continue
-        tid_idx = headers.index('TEAM_ID')
-        pid_idx = headers.index('PERSON_ID')
+        tid_idx = headers.index(team_id_field)
+        pid_idx = headers.index(player_id_field)
+        jersey_idx = headers.index(jersey_field) if jersey_field in headers else None
         for row in rs['rowSet']:
             tid = row[tid_idx]
             pid = row[pid_idx]
@@ -326,10 +335,11 @@ def fetch_roster_snapshot(
                 continue
             if tid_val == 0:
                 continue
-            pairs.append((tid_val, pid))
+            jersey_num = row[jersey_idx] if jersey_idx is not None else None
+            pairs.append((tid_val, pid, jersey_num))
 
     logger.info(
-        'Roster snapshot %s/%s: %d active (team, player) pairs from %s',
+        'Roster snapshot %s/%s: %d active (team, player, jersey) rows from %s',
         league_key, season, len(pairs), dataset,
     )
     return pairs

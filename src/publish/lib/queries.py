@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from psycopg2.extras import RealDictCursor
 
 from src.core.lib.postgres import get_db_connection
+from src.core.definitions.leagues import LEAGUES
 from src.core.definitions.tables import CORE_SCHEMA, THE_GLASS_ID_COLUMN
 from src.core.definitions.stats import SEASON_TYPE_GROUPS
 
@@ -107,6 +108,7 @@ def get_teams_from_db(league_key: str) -> Dict[int, Tuple[str, str]]:
     """Return ``{the_glass_id: (abbr, name)}`` for teams currently active in
     ``core.league_rosters`` for ``league_key``.
     """
+    league_abbr = LEAGUES[league_key]['abbr']
     sql = f"""
         SELECT t.{_quote_col(THE_GLASS_ID_COLUMN)}, t.abbr, t.name
           FROM {CORE_SCHEMA}.team_profiles t
@@ -114,13 +116,13 @@ def get_teams_from_db(league_key: str) -> Dict[int, Tuple[str, str]]:
             ON lr.team_id = t.{_quote_col(THE_GLASS_ID_COLUMN)}
           JOIN {CORE_SCHEMA}.league_profiles lp
             ON lp.{_quote_col(THE_GLASS_ID_COLUMN)} = lr.league_id
-         WHERE lp.league_key = %s AND lr.is_active = TRUE
+                 WHERE lp.abbr = %s AND lr.is_active = TRUE
          ORDER BY t.abbr
     """
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute(sql, (league_key,))
+            cur.execute(sql, (league_abbr,))
             return {int(row[0]): (row[1], row[2]) for row in cur.fetchall()}
     finally:
         conn.close()
@@ -161,13 +163,15 @@ def fetch_players_for_team(
 
     if section == 'current_stats':
         s_fields = [f's.{_quote_col(f)}' for f in sorted(ctx.stat_fields)]
-        all_fields = p_select + [team_abbr_select] + s_fields
+        all_fields = p_select + [team_abbr_select, 'tr.jersey_num'] + s_fields
 
         query = f"""
             SELECT {', '.join(all_fields)}
               FROM {players_tbl} p
               JOIN {CORE_SCHEMA}.team_rosters tr
-                ON tr.player_id = p.{glass_id} AND tr.is_active = TRUE
+                                ON tr.player_id = p.{glass_id}
+                             AND tr.is_active = TRUE
+                             AND tr.season = %s
               JOIN {teams_tbl} t
                 ON t.{glass_id} = tr.team_id
               LEFT JOIN {stats_tbl} s
@@ -179,7 +183,10 @@ def fetch_players_for_team(
              ORDER BY COALESCE(s.{ctx.primary_minutes_col}, 0) DESC, p.name
         """
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(query, (current_season, season_type_val, team_abbr))
+            cur.execute(
+                query,
+                (current_season, current_season, season_type_val, team_abbr),
+            )
             return [dict(r) for r in cur.fetchall()]
 
     season_types = _season_types_for_section(section)
@@ -232,13 +239,18 @@ def fetch_all_players(
 
     if section == 'current_stats':
         stat_f = [f's.{_quote_col(f)}' for f in sorted(ctx.stat_fields)]
-        all_f = stat_f + ent_select + [team_abbr_select]
+        all_f = stat_f + ent_select + [team_abbr_select, 'tr.jersey_num']
 
         query = f"""
             SELECT {', '.join(all_f)}
               FROM {stats_tbl} s
               JOIN {players_tbl} p ON p.{glass_id} = s.{glass_id}
               JOIN {teams_tbl}   t ON t.{glass_id} = s.team_id
+                            LEFT JOIN {CORE_SCHEMA}.team_rosters tr
+                                ON tr.player_id = s.{glass_id}
+                             AND tr.team_id = s.team_id
+                             AND tr.season = s.{season_col_name}
+                             AND tr.is_active = TRUE
              WHERE s.{season_col_name} = %s AND s.season_type = %s
         """
         with conn.cursor(cursor_factory=RealDictCursor) as cur:

@@ -11,9 +11,10 @@ module source-agnostic.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from src.core.definitions.columns import DB_COLUMNS
+from src.etl.definitions.sources import SOURCES
 
 logger = logging.getLogger(__name__)
 
@@ -50,13 +51,50 @@ def _get_source_definition(
     col_meta: Dict[str, Any],
     entity: str,
     source_key: str,
+    league_key: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Return the per-entity source definition under ``col_meta['sources'][source_key][entity]``,
-    or ``None`` if absent."""
-    source_entries = (col_meta.get('sources') or {}).get(source_key)
-    if not source_entries:
-        return None
-    return source_entries.get(entity)
+    """Resolve per-entity source definition for a column.
+
+    Supports both shapes:
+
+    1) League-nested: ``sources[league_key][source_key][entity]``
+    2) Flat:          ``sources[source_key][entity]`` (legacy)
+    """
+    all_sources = col_meta.get('dataset_mapping') or {}
+
+    # Preferred shape: sources[league_key][source_key][entity]
+    if league_key is not None:
+        league_sources = all_sources.get(league_key)
+        if isinstance(league_sources, dict):
+            provider_sources = league_sources.get(source_key)
+            if isinstance(provider_sources, dict):
+                return provider_sources.get(entity)
+
+    # Backward-compatible flat shape: sources[source_key][entity]
+    source_entries = all_sources.get(source_key)
+    if isinstance(source_entries, dict):
+        return source_entries.get(entity)
+
+    # Fallback: scan league buckets when caller didn't provide league_key.
+    for league_sources in all_sources.values():
+        if not isinstance(league_sources, dict):
+            continue
+        provider_sources = league_sources.get(source_key)
+        if isinstance(provider_sources, dict) and entity in provider_sources:
+            return provider_sources.get(entity)
+
+    return None
+
+
+def _effective_update_frequency(col_meta: Dict[str, Any], source_key: str) -> Optional[str]:
+    """Resolve the effective update frequency for a column/source pair.
+
+    External=False sources are always treated as per_execution.
+    """
+    source_meta = SOURCES.get(source_key, {})
+    if not source_meta.get('external', True):
+        return 'per_execution'
+    return col_meta.get('update_frequency')
 
 
 # ============================================================================
@@ -87,6 +125,7 @@ def get_columns_for_dataset(
     entity: str,
     source_key: str,
     params: Optional[Dict[str, Any]] = None,
+    league_key: Optional[str] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """Find all columns whose source definition maps to the given dataset.
 
@@ -95,7 +134,9 @@ def get_columns_for_dataset(
     matched: Dict[str, Dict[str, Any]] = {}
 
     for col_name, col_meta in DB_COLUMNS.items():
-        source = _get_source_definition(col_meta, entity, source_key)
+        source = _get_source_definition(
+            col_meta, entity, source_key, league_key=league_key,
+        )
         if not source:
             continue
 
@@ -120,6 +161,7 @@ def get_all_sources_for_entity(
     source_key: str,
     datasets: Dict[str, Dict[str, Any]],
     season: Optional[str] = None,
+    league_key: Optional[str] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """Return every column with a source definition for the given entity.
 
@@ -128,7 +170,9 @@ def get_all_sources_for_entity(
     matched: Dict[str, Dict[str, Any]] = {}
 
     for col_name, col_meta in DB_COLUMNS.items():
-        source = _get_source_definition(col_meta, entity, source_key)
+        source = _get_source_definition(
+            col_meta, entity, source_key, league_key=league_key,
+        )
         if not source:
             continue
 
@@ -151,7 +195,7 @@ def tier_for_dataset(
     datasets: Dict[str, Dict[str, Any]],
 ) -> str:
     """Get the default execution tier for a dataset."""
-    return datasets.get(dataset, {}).get('execution_tier', 'league')
+    return datasets.get(dataset, {}).get('execution_tier', 'per_league')
 
 
 def tier_for_source(
@@ -179,6 +223,10 @@ def build_call_groups(
     source_key: str,
     datasets: Dict[str, Dict[str, Any]],
     scope: Optional[str] = None,
+    league_key: Optional[str] = None,
+    include_columns: Optional[Set[str]] = None,
+    exclude_columns: Optional[Set[str]] = None,
+    update_frequencies: Optional[Set[Optional[str]]] = None,
 ) -> List[Dict[str, Any]]:
     """Group all columns for ``entity`` into API call batches.
 
@@ -189,6 +237,9 @@ def build_call_groups(
     Args:
         scope: If set, only include columns whose ``scope`` matches this
                value or is ``'both'``.
+        include_columns: Optional allow-list of DB column names.
+        exclude_columns: Optional deny-list of DB column names.
+        update_frequencies: Optional allow-list of effective update frequencies.
 
     Returns a list of dicts, each with:
         dataset, params, tier, columns ({col_name: enriched_source})
@@ -197,12 +248,29 @@ def build_call_groups(
     special: List[Dict[str, Any]] = []
 
     for col_name, col_meta in DB_COLUMNS.items():
-        if scope:
-            col_scope = col_meta.get('scope')
-            if col_scope != scope and col_scope != 'both':
+        if include_columns is not None and col_name not in include_columns:
+            continue
+        if exclude_columns is not None and col_name in exclude_columns:
+            continue
+
+        if update_frequencies is not None:
+            effective_frequency = _effective_update_frequency(col_meta, source_key)
+            if effective_frequency not in update_frequencies:
                 continue
 
-        source = _get_source_definition(col_meta, entity, source_key)
+        if scope:
+            col_scopes = col_meta.get('scope', [])
+            if isinstance(col_scopes, str):
+                col_scopes = [col_scopes]
+            # Historical compatibility: orchestrator passes 'entity' while
+            # DB_COLUMNS uses 'profiles'.
+            normalized_scope = 'profiles' if scope == 'entity' else scope
+            if normalized_scope not in col_scopes and 'both' not in col_scopes:
+                continue
+
+        source = _get_source_definition(
+            col_meta, entity, source_key, league_key=league_key,
+        )
         if not source:
             continue
 
@@ -223,11 +291,11 @@ def build_call_groups(
                 'tier': tier_for_source(enriched, ds, datasets),
                 'columns': {col_name: enriched},
             })
-        elif enriched.get('tier') == 'team_call':
+        elif enriched.get('tier') == 'per_team':
             special.append({
                 'dataset': ds,
                 'params': {},
-                'tier': 'team_call',
+                'tier': 'per_team',
                 'columns': {col_name: enriched},
             })
         else:
@@ -260,7 +328,7 @@ def build_call_groups(
         groups.append({
             'dataset': ds,
             'params': {},
-            'tier': 'team_call',
+            'tier': 'per_team',
             'columns': cols,
             'removed_refresh_mode': 'null_only',
         })

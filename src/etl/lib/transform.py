@@ -157,7 +157,7 @@ def execute_pipeline(
         Dict mapping entity ID to the final computed value.
     """
     dataset = pipeline_config['dataset']
-    execution_tier = pipeline_config.get('tier', 'league')
+    execution_tier = pipeline_config.get('tier', 'per_league')
     operations = pipeline_config['operations']
     dataset_params = pipeline_config.get('params', {})
 
@@ -282,7 +282,7 @@ def _op_multi_league_extract(
     totals: Dict[int, int] = {}
 
     for call_params in calls:
-        api_result = api_fetcher(base_dataset, call_params, 'league')
+        api_result = api_fetcher(base_dataset, call_params, 'per_league')
         for rs in api_result.get('resultSets', []):
             if result_set and rs['name'] != result_set:
                 continue

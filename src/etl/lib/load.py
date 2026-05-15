@@ -27,8 +27,9 @@ from src.core.definitions.tables import (
     STATS_TABLES,
     THE_GLASS_ID_COLUMN,
 )
-from src.etl.lib.sources_resolver import get_primary_source, get_source_id_column
+from src.etl.lib.sources_resolver import get_default_external_source, get_source_id_column
 from src.core.lib.tables_resolver import get_table_name
+from src.etl.lib.entity_matcher import approve_entities
 
 logger = logging.getLogger(__name__)
 
@@ -261,10 +262,18 @@ def write_entity_rows(
         return 0
 
     if source_key is None:
-        source_key = get_primary_source(league_key)
+        source_key = get_default_external_source(league_key)
 
     if scope == 'entity':
-        return _write_profile_rows(entity, rows, source_key)
+        approved_rows = approve_entities(
+            entity,
+            rows,
+            league_key=league_key,
+            source_key=source_key,
+            season=season,
+            season_type=season_type,
+        )
+        return _write_profile_rows(entity, approved_rows, source_key)
 
     if scope == 'stats':
         return _write_stats_rows(
@@ -377,85 +386,3 @@ def _write_stats_rows(
         return bulk_upsert(
             conn, table, columns, data, conflict_columns=pk_columns,
         )
-
-
-# ---------------------------------------------------------------------------
-# Stub-row seeding
-# ---------------------------------------------------------------------------
-
-def seed_empty_stats(
-    entity: str,
-    season: str,
-    season_type: str,
-    league_key: str,
-    conn: Any = None,
-) -> int:
-    """Insert skeleton stats rows for currently-active members of the league.
-
-    For ``entity == 'team'``: inserts one row per (team, season, season_type)
-    where the team is active in ``core.league_rosters`` for ``league_key``.
-
-    For ``entity == 'player'``: inserts one row per (player, team, season,
-    season_type) where the player is active in ``core.team_rosters`` and the
-    team is active in ``core.league_rosters`` for ``league_key``.
-
-    Idempotent: ``ON CONFLICT DO NOTHING``.
-    """
-    stats_table = get_table_name(entity, 'stats', league_key=league_key)
-
-    own = conn is None
-    if own:
-        from src.core.lib.postgres import get_db_connection
-        conn = get_db_connection()
-
-    # Get the source ID column for the league's primary source
-    from src.etl.lib.sources_resolver import get_primary_source, get_source_id_column
-    source_key = get_primary_source(league_key)
-    src_id_col = get_source_id_column(source_key)
-
-    try:
-        with conn.cursor() as cur:
-            if entity == 'team':
-                cur.execute(
-                    f"""
-                    INSERT INTO {stats_table} ({quote_col(THE_GLASS_ID_COLUMN)}, season, season_type)
-                    SELECT lr.team_id, %s, %s
-                    FROM core.league_rosters lr
-                    JOIN core.league_profiles lp ON lp.{quote_col(THE_GLASS_ID_COLUMN)} = lr.league_id
-                    WHERE lp.league_key = %s AND lr.is_active = TRUE
-                    ON CONFLICT DO NOTHING
-                    """,
-                    (season, season_type, league_key),
-                )
-            elif entity == 'player':
-                cur.execute(
-                    f"""
-                    INSERT INTO {stats_table}
-                        ({quote_col(THE_GLASS_ID_COLUMN)}, team_id, player_id, season, season_type)
-                    SELECT tr.player_id, tr.team_id, pp.{quote_col(src_id_col)}, %s, %s
-                    FROM core.team_rosters tr
-                    JOIN core.player_profiles pp ON pp.{quote_col(THE_GLASS_ID_COLUMN)} = tr.player_id
-                    JOIN core.league_rosters lr ON lr.team_id = tr.team_id
-                    JOIN core.league_profiles lp ON lp.{quote_col(THE_GLASS_ID_COLUMN)} = lr.league_id
-                    WHERE lp.league_key = %s
-                      AND tr.is_active = TRUE
-                      AND lr.is_active = TRUE
-                    ON CONFLICT DO NOTHING
-                    """,
-                    (season, season_type, league_key),
-                )
-            else:
-                raise ValueError(f"Cannot seed stats for entity {entity!r}")
-            count = cur.rowcount
-        if own:
-            conn.commit()
-    finally:
-        if own:
-            conn.close()
-
-    if count:
-        logger.info(
-            'Seeded %d empty %s stats rows for %s %s (%s)',
-            count, entity, league_key, season, season_type,
-        )
-    return count

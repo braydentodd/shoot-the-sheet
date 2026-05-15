@@ -2,7 +2,7 @@
 The Glass - League Definitions
 
 Per-league operational settings: calendar window, retention, season grammar,
-and the authoritative source that owns external IDs.  Pure declarative data;
+and source role ownership. Pure declarative data;
 helpers live in :mod:`src.core.lib.leagues`.
 """
 
@@ -15,6 +15,7 @@ from typing import Any, Dict
 
 VALID_LEAGUE_SEASON_FORMATS = frozenset({'same_year', 'split_year'})
 VALID_LEAGUE_GENDERS = frozenset({'M', 'W'})
+VALID_SOURCE_ROLE_KEYS = frozenset({'roster_maintainer', 'retained_discoverer'})
 
 
 # ============================================================================
@@ -31,13 +32,12 @@ LEAGUES_SCHEMA: Dict[str, Dict[str, Any]] = {
     'postseason_types':       {'required': True, 'types': (list,)},
     'calendar_flip_md':       {'required': True, 'types': (str,)},
     'retention_seasons':      {'required': True, 'types': (int,)},
-    'primary_source':         {'required': True, 'types': (str,)},
-    'roster_maintainer':       {'required': True, 'types': (str,)},
+    'source_roles':           {'required': True, 'types': (dict,)},
 }
 
 LEAGUES: Dict[str, Dict[str, Any]] = {
     'nba': {
-        'name':                   'NBA',
+        'name':                   'National Basketball Association',
         'abbr':                   'NBA',
         'gender':                 'M',
         'season_format':          'split_year',
@@ -45,7 +45,25 @@ LEAGUES: Dict[str, Dict[str, Any]] = {
         'postseason_types':       ['po', 'pi'],
         'calendar_flip_md':       '08-01',
         'retention_seasons':      8,
-        'primary_source':         'nba_api',
-        'roster_maintainer':      'nba_api'
+        'source_roles': {
+            'roster_maintainer': {
+                'nba_api': {
+                    'dataset': 'commonallplayers',
+                    'team_id_field': 'TEAM_ID',
+                    'player_id_field': 'PERSON_ID',
+                    'jersey_field': 'JERSEY',
+                    'params': {'is_only_current_season': '1'},
+                },
+            },
+            'retained_discoverer': {
+                'nba_api': {
+                    'dataset': 'commonallplayers',
+                    'params': {'is_only_current_season': '0'},
+                    'team_id_field': 'TEAM_ID',
+                    'player_id_field': 'PERSON_ID',
+                    'jersey_field': 'JERSEY',
+                }
+            },
+        },
     }
 }

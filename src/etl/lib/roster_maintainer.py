@@ -1,7 +1,7 @@
 """
 The Glass - Roster Maintainer
 
-Single responsibility: keep the two membership junctions in the ``core``
+Single responsibility: keep the two membership roster tables in the ``core``
 schema in sync with a roster snapshot pulled from the league's reader source.
 
     core.league_rosters  : (league_id, team_id, is_active, ...)
@@ -17,12 +17,13 @@ pairs, resolves each to its ``the_glass_id`` via the relevant
 
 Source-agnostic: callers (the orchestrator) supply already-fetched pairs.
 Source-specific dataset logic stays in each source client.  The league
-profile row itself is bootstrapped by :func:`src.etl.lib.ddl.ensure_league_profile`.
+profile row itself is bootstrapped by :func:`src.core.lib.ddl.ensure_league_profile`.
 """
 
 import logging
 from typing import Any, Dict, Iterable, List, Set, Tuple
 
+from src.core.definitions.leagues import LEAGUES
 from src.core.lib.postgres import db_connection, quote_col
 from src.etl.lib.sources_resolver import get_source_id_column
 from src.core.definitions.tables import CORE_SCHEMA, THE_GLASS_ID_COLUMN
@@ -149,7 +150,7 @@ def _stamp_gender(conn: Any, league_glass_id: int) -> Tuple[int, int]:
 
 
 # ---------------------------------------------------------------------------
-# Junction upsert primitives
+# Roster upsert primitives
 # ---------------------------------------------------------------------------
 
 def _upsert_active(
@@ -176,6 +177,52 @@ def _upsert_active(
             row_triples,
         )
     return len(rows)
+
+
+def _upsert_active_team_rosters(
+    conn: Any,
+    table: str,
+    rows: Iterable[Tuple[int, int, Any]],
+    season: str,
+) -> int:
+    """Upsert active team-player memberships with optional jersey number."""
+    rows = list(rows)
+    if not rows:
+        return 0
+    with conn.cursor() as cur:
+        cur.executemany(
+            f"""
+            INSERT INTO {table} (team_id, player_id, season, is_active, jersey_num)
+            VALUES (%s, %s, %s, TRUE, %s)
+            ON CONFLICT (team_id, player_id, season) DO UPDATE
+            SET is_active = TRUE,
+                jersey_num = COALESCE(EXCLUDED.jersey_num, {table}.jersey_num),
+                updated_at = NOW()
+            """,
+            [(team_id, player_id, season, jersey_num) for team_id, player_id, jersey_num in rows],
+        )
+    return len(rows)
+
+
+def _normalize_roster_snapshot(
+    roster_pairs: Iterable[Tuple[Any, Any]],
+) -> List[Tuple[Any, Any, Any]]:
+    """Normalize roster snapshots to ``(team_source_id, player_source_id, jersey_num)``.
+
+    Accepts legacy 2-tuples and newer 3-tuples; invalid entries are skipped.
+    """
+    normalized: List[Tuple[Any, Any, Any]] = []
+    for entry in roster_pairs:
+        if not isinstance(entry, (tuple, list)):
+            continue
+        if len(entry) < 2:
+            continue
+        team_source_id, player_source_id = entry[0], entry[1]
+        jersey_num = entry[2] if len(entry) >= 3 else None
+        if team_source_id is None or player_source_id is None:
+            continue
+        normalized.append((team_source_id, player_source_id, jersey_num))
+    return normalized
 
 
 def _deactivate_missing(
@@ -225,7 +272,7 @@ def _deactivate_missing(
 def sync_rosters(
     league_key: str,
     source_key: str,
-    roster_pairs: Iterable[Tuple[Any, Any]],
+    roster_pairs: Iterable[Tuple[Any, ...]],
     season: str,
 ) -> Dict[str, int]:
     """Apply a roster snapshot to ``core.league_rosters`` and ``core.team_rosters``.
@@ -233,17 +280,17 @@ def sync_rosters(
     Args:
         league_key:    LEAGUES key (e.g. ``'nba'``).
         source_key:    SOURCES key (e.g. ``'nba_api'``).
-        roster_pairs:  Iterable of ``(team_source_id, player_source_id)`` tuples
+        roster_pairs:  Iterable of ``(team_source_id, player_source_id)`` or
+                       ``(team_source_id, player_source_id, jersey_num)`` tuples
                        representing every active roster slot in the league.
 
     Returns:
-        Dict with the per-junction counters
+        Dict with the per-roster counters
         ``{teams_active, players_active, teams_deactivated, players_deactivated,
            teams_unresolved, players_unresolved}``.
     """
-    pairs: List[Tuple[Any, Any]] = [
-        (t, p) for t, p in roster_pairs if t is not None and p is not None
-    ]
+    pairs = _normalize_roster_snapshot(roster_pairs)
+    league_abbr = LEAGUES[league_key]['abbr']
 
     src_col = get_source_id_column(source_key)
     teams_table = f'{CORE_SCHEMA}.team_profiles'
@@ -255,8 +302,8 @@ def sync_rosters(
         with conn.cursor() as cur:
             cur.execute(
                 f"SELECT {quote_col(THE_GLASS_ID_COLUMN)} "
-                f"FROM {CORE_SCHEMA}.league_profiles WHERE league_key = %s",
-                (league_key,),
+                f"FROM {CORE_SCHEMA}.league_profiles WHERE abbr = %s",
+                (league_abbr,),
             )
             row = cur.fetchone()
             if row is None:
@@ -266,14 +313,14 @@ def sync_rosters(
                 )
             league_glass_id = int(row[0])
 
-        team_source_ids = {t for t, _ in pairs}
-        player_source_ids = {p for _, p in pairs}
+        team_source_ids = {t for t, _, _ in pairs}
+        player_source_ids = {p for _, p, _ in pairs}
 
         team_map = _resolve_glass_ids(conn, teams_table, src_col, team_source_ids)
         player_map = _resolve_glass_ids(conn, players_table, src_col, player_source_ids)
 
-        teams_unresolved = team_source_ids - set(team_map)
-        players_unresolved = player_source_ids - set(player_map)
+        teams_unresolved = {sid for sid in team_source_ids if str(sid) not in team_map}
+        players_unresolved = {sid for sid in player_source_ids if str(sid) not in player_map}
 
         # Create stubs for entities not yet in profiles
         if teams_unresolved:
@@ -308,14 +355,23 @@ def sync_rosters(
 
         # ---- team_rosters: (team_glass_id, player_glass_id) -------------------
         team_player_pairs: Set[Tuple[int, int]] = set()
-        for team_src, player_src in pairs:
+        team_player_jersey: Dict[Tuple[int, int], Any] = {}
+        for team_src, player_src, jersey_num in pairs:
             t = team_map.get(str(team_src))
             p = player_map.get(str(player_src))
             if t is not None and p is not None:
                 team_player_pairs.add((t, p))
+                if jersey_num is not None:
+                    team_player_jersey[(t, p)] = str(jersey_num)
 
-        players_active = _upsert_active(
-            conn, team_rosters, ('team_id', 'player_id'), team_player_pairs, season,
+        players_active = _upsert_active_team_rosters(
+            conn,
+            team_rosters,
+            [
+                (team_id, player_id, team_player_jersey.get((team_id, player_id)))
+                for team_id, player_id in sorted(team_player_pairs)
+            ],
+            season,
         )
 
         # Per-team deactivation: each team's slate is independent.

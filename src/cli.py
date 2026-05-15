@@ -16,12 +16,12 @@ Usage:
     python -m src.cli publish --league nba --export-config
 
 Subcommand phases (etl):
-    full        discover -> rosters -> backfill -> update -> cleanup -> prune
+    full        discover -> rosters -> profile enrichment -> backfill -> update
     discover    populate core profiles for the current season
-    rosters     league/team and team/player junctions
+    rosters     league/team and team/player roster links
     backfill    stats for every retained season
     update      stats for the current season only
-    prune       per-league retention pruning
+    prune       per-league retention pruning (separate phase)
     orphan      cross-league orphan profile sweep (no --league required)
 """
 

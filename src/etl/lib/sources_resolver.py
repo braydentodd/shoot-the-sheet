@@ -2,49 +2,91 @@
 The Glass - Source Resolvers
 
 Pure resolvers over :data:`src.etl.definitions.sources.SOURCES` and the
-per-league primary-source assignment in
+per-league source-role assignments in
 :data:`src.core.definitions.leagues.LEAGUES`.
 """
+
+from typing import Any, Dict
 
 from src.core.definitions.leagues import LEAGUES
 from src.etl.definitions.sources import SOURCES
 
 
-def get_primary_source(league_key: str) -> str:
-    """Return the registry key of the primary source assigned to ``league_key``.
-
-    The primary source is the first source run for a league.  It owns the
-    external IDs (e.g. NBA Stats PERSON_ID) and is responsible for defining
-    the current team rosters.
-
-    Raises:
-        ValueError: if the league has no primary_source configured, the
-                    key is not registered, or the registered source is not external.
-    """
+def get_role_config(league_key: str, role: str) -> Dict[str, Any]:
+    """Return the config object for a league source role."""
     if league_key not in LEAGUES:
         raise ValueError(f"Unknown league: {league_key!r}")
 
-    source_key = LEAGUES[league_key].get('primary_source')
-    if not source_key:
-        raise ValueError(f"League {league_key!r} has no primary_source configured")
+    league_cfg = LEAGUES[league_key]
+    role_map = league_cfg.get('source_roles')
+    if not isinstance(role_map, dict):
+        raise ValueError(f"League {league_key!r} has invalid source_roles config")
+
+    role_cfg = role_map.get(role)
+    if not isinstance(role_cfg, dict):
+        raise ValueError(f"League {league_key!r} has no source role {role!r} configured")
+
+    return role_cfg
+
+
+def get_source_for_role(league_key: str, role: str) -> str:
+    """Return the source key assigned to a league source role."""
+    role_cfg = get_role_config(league_key, role)
+    
+    if not role_cfg:
+        raise ValueError(f"League {league_key!r} role {role!r} is configured with an empty dict")
+        
+    source_key = list(role_cfg.keys())[0]
 
     if source_key not in SOURCES:
         raise ValueError(
-            f"League {league_key!r} primary_source {source_key!r} is not in SOURCES"
+            f"League {league_key!r} role {role!r} source {source_key!r} is not in SOURCES"
         )
-    if not SOURCES[source_key]['external']:
+
+    source_meta = SOURCES[source_key]
+    if not source_meta.get('external'):
         raise ValueError(
-            f"Source {source_key!r} configured as primary_source for "
-            f"{league_key!r} has external=False"
+            f"Source {source_key!r} configured for role {role!r} in {league_key!r} "
+            'has external=False'
         )
+    if league_key not in source_meta.get('leagues', []):
+        raise ValueError(
+            f"Source {source_key!r} configured for role {role!r} in {league_key!r} "
+            f"does not list {league_key!r} in its leagues"
+        )
+
     return source_key
 
 
 def get_source_id_column(source_key: str) -> str:
-    """Return the per-source identity column name for profile tables.
-
-    Convention: ``{source_key}_id`` (e.g. ``nba_api_id``).
-    """
+    """Return the configured source identity column for profile tables."""
     if source_key not in SOURCES:
         raise ValueError(f"Unknown source: {source_key!r}")
-    return f'{source_key}_id'
+
+    id_column = SOURCES[source_key].get('id_column')
+    if not id_column:
+        raise ValueError(f"Source {source_key!r} has no configured id_column")
+    return id_column
+
+
+def get_external_sources_for_league(league_key: str) -> list[str]:
+    """Return sorted external source keys available for a league."""
+    if league_key not in LEAGUES:
+        raise ValueError(f"Unknown league: {league_key!r}")
+
+    sources = [
+        source_key
+        for source_key, meta in SOURCES.items()
+        if meta.get('external') and league_key in meta.get('leagues', [])
+    ]
+    return sorted(sources)
+
+
+def get_default_external_source(league_key: str) -> str:
+    """Return a deterministic default external source for a league."""
+    sources = get_external_sources_for_league(league_key)
+    if not sources:
+        raise ValueError(
+            f"League {league_key!r} has no external sources configured"
+        )
+    return sources[0]

@@ -187,7 +187,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'emphasis': None,
         'font_size': 9,
         'inputs': {
-            'player': {'fields': ('jersey_num',)},
+            'player': {'fields': (), 'source': 'team_rosters'},
         },
         'values': {
             'player': lambda row, ctx: row.get('jersey_num')
@@ -271,14 +271,14 @@ TAB_COLUMNS: Dict[str, Any] = {
         'emphasis': None,
         'font_size': 9,
         'inputs': {
-            'player': {'fields': ('height_ins',)},
-            'team': {'fields': ('height_ins',), 'source': 'players'},
-            'all_teams': {'fields': ('height_ins',), 'source': 'players'},
+            'player': {'fields': ('height_ins_with_shoes',)},
+            'team': {'fields': ('height_ins_with_shoes',), 'source': 'players'},
+            'all_teams': {'fields': ('height_ins_with_shoes',), 'source': 'players'},
         },
         'values': {
-            'player': lambda row, ctx: row.get('height_ins'),
-            'team': lambda row, ctx: team_average(lambda p, c: p.get('height_ins'), ctx),
-            'all_teams': lambda row, ctx: team_average(lambda p, c: p.get('height_ins'), ctx)
+            'player': lambda row, ctx: row.get('height_ins_with_shoes'),
+            'team': lambda row, ctx: team_average(lambda p, c: p.get('height_ins_with_shoes'), ctx),
+            'all_teams': lambda row, ctx: team_average(lambda p, c: p.get('height_ins_with_shoes'), ctx)
         }
     },
     'wt': {

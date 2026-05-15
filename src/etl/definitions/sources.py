@@ -41,6 +41,7 @@ SOURCES_SCHEMA: Dict[str, Dict[str, Any]] = {
     'leagues':        {'required': True, 'types': (list,)},
     'external':       {'required': True, 'types': (bool,)},
     'entity_id_type': {'required': True, 'types': (str, type(None))},
+    'id_column':      {'required': True, 'types': (str, type(None))},
     'applies_to':     {'required': True, 'types': (list,)},
     'season_format':  {'required': True, 'types': (dict, type(None))},
     'rate_limits':    {'required': True, 'types': (dict,)},
@@ -51,6 +52,7 @@ SOURCES: Dict[str, Dict[str, Any]] = {
         'leagues':        ['nba'],
         'external':       True,
         'entity_id_type': 'BIGINT',
+        'id_column':      'nba_api_id',
         'applies_to':     ['team', 'player', 'league'],
         'season_format':  {'shape': 'YYYY-YY', 'anchor': None},
         'rate_limits': {
@@ -65,6 +67,7 @@ SOURCES: Dict[str, Dict[str, Any]] = {
         'leagues':        ['nba'],
         'external':       False,
         'entity_id_type': None,
+        'id_column':      None,
         'applies_to':     ['team', 'player'],
         'season_format':  None,
         'rate_limits': {

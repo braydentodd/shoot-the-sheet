@@ -1,7 +1,7 @@
 """
 The Glass - Database Table Registry
 
-Unified registry of every table in the database: profiles, stats, junctions,
+Unified registry of every table in the database: profiles, stats, rosters,
 and operational (run-tracking) tables.  Each entry carries ``kind`` and
 ``used_by`` metadata so consumers know which pipeline domains touch it.
 
@@ -10,7 +10,7 @@ publish runs share single ``runs`` and ``tasks`` tables rather than
 maintaining four mirrored tables.
 
 Column definitions live in ``src.core.definitions.columns.DB_COLUMNS``.
-Operational and junction tables reference columns by name; the DDL generator
+Operational and roster tables reference columns by name; the DDL generator
 looks up type, nullable, default, and other metadata from the column registry.
 
 Backward-compatible filtered views (PROFILE_TABLES, STATS_TABLES, etc.)
@@ -39,7 +39,7 @@ VALID_PG_TYPES = {
     'BOOLEAN', 'TIMESTAMP', 'DATE', 'NUMERIC', 'REAL', 'DOUBLE PRECISION',
 }
 VALID_ENTITY_TYPES = {'league', 'player', 'team', 'opponent'}
-VALID_SCOPES = {'entity', 'stats', 'both', 'runs', 'tasks', 'entities', 'junction'}
+VALID_SCOPES = {'stats', 'both', 'runs', 'tasks', 'profiles', 'rosters', 'backfill'}
 VALID_UPDATE_FREQUENCIES = {'daily', 'annual', None, 'per_execution'}
 VALID_REFRESH_MODES = {'null_only', 'always'}
 VALID_SCHEMA_KINDS = {'core', 'league'}
@@ -61,7 +61,7 @@ DB_COLUMNS_SCHEMA: Dict[str, Dict[str, Any]] = {
     'managed_by':           {'required': False, 'types': (str,), 'allowed_values': VALID_MANAGED_BY},
     'domain':               {'required': True,  'types': (str, type(None))},
     'comment':              {'required': True,  'types': (str, type(None))},
-    'sources':              {'required': True,  'types': (dict, type(None))},
+    'dataset_mapping':       {'required': True, 'types': (dict, type(None))},
     'unique':               {'required': False, 'types': (bool,)},
     'removed_refresh_mode': {'required': False, 'types': (str,), 'allowed_values': VALID_REFRESH_MODES}
 }
@@ -76,6 +76,7 @@ PROFILE_TABLES_SCHEMA: Dict[str, Dict[str, Any]] = {
     'used_by':   {'required': False, 'types': (list,)},
     'entity':    {'required': True,  'types': (str,), 'allowed_values': {'league', 'team', 'player'}},
     'schema':    {'required': True,  'types': (str,), 'allowed_values': {'core'}},
+    'unique_columns': {'required': False, 'types': (list,)},
 }
 
 STATS_TABLES_SCHEMA: Dict[str, Dict[str, Any]] = {
@@ -88,21 +89,20 @@ STATS_TABLES_SCHEMA: Dict[str, Dict[str, Any]] = {
     'foreign_keys':       {'required': True,  'types': (list,)},
 }
 
-JUNCTION_TABLES_SCHEMA: Dict[str, Dict[str, Any]] = {
-    'kind':          {'required': True,  'types': (str,), 'allowed_values': {'junction'}},
-    'used_by':       {'required': False, 'types': (list,)},
-    'schema':        {'required': True,  'types': (str,), 'allowed_values': {'core'}},
-    'primary_key':   {'required': True,  'types': (list,)},
-    'foreign_keys':  {'required': True,  'types': (list,)},
-    # extra_columns: table-specific columns not in the shared DB_COLUMNS junction scope.
-    # Each entry: {'name': str, 'type': str, 'nullable': bool, 'default': str|None}
-    'extra_columns': {'required': False, 'types': (list,)},
+ROSTER_TABLES_SCHEMA: Dict[str, Dict[str, Any]] = {
+    'kind':        {'required': True,  'types': (str,), 'allowed_values': {'roster'}},
+    'used_by':     {'required': False, 'types': (list,)},
+    'entity':      {'required': True,  'types': (str,), 'allowed_values': {'team', 'player'}},
+    'schema':      {'required': True,  'types': (str,), 'allowed_values': {'core'}},
+    'primary_key': {'required': True,  'types': (list,)},
+    'foreign_keys': {'required': True,  'types': (list,)},
 }
 
 OPERATIONAL_TABLES_SCHEMA: Dict[str, Dict[str, Any]] = {
     'kind':       {'required': True, 'types': (str,), 'allowed_values': {'operational'}},
     'used_by':    {'required': False, 'types': (list,)},
     'schema':     {'required': True, 'types': (str,), 'allowed_values': {'league'}},
+    'scope':      {'required': False, 'types': (str,), 'allowed_values': {'runs', 'tasks', 'backfill'}},
     'unique_key': {'required': False, 'types': (list,)},
     'foreign_keys': {'required': False, 'types': (list,)},
 }
@@ -120,6 +120,7 @@ TABLES: Dict[str, Dict[str, Any]] = {
         'used_by': ['etl', 'publish'],
         'entity': 'league',
         'schema': 'core',
+        'unique_columns': ['abbr', 'name'],
     },
     'team_profiles': {
         'kind': 'profile',
@@ -181,11 +182,12 @@ TABLES: Dict[str, Dict[str, Any]] = {
         ],
     },
     # ------------------------------------------------------------------
-    # JUNCTION TABLES (core schema)
+    # ROSTER TABLES (core schema)
     # ------------------------------------------------------------------
     'league_rosters': {
-        'kind': 'junction',
+        'kind': 'roster',
         'used_by': ['etl', 'publish'],
+        'entity': 'team',
         'schema': 'core',
         'primary_key': ['league_id', 'team_id', 'season'],
         'foreign_keys': [
@@ -212,8 +214,9 @@ TABLES: Dict[str, Dict[str, Any]] = {
         ],
     },
     'team_rosters': {
-        'kind': 'junction',
+        'kind': 'roster',
         'used_by': ['etl', 'publish'],
+        'entity': 'player',
         'schema': 'core',
         'primary_key': ['team_id', 'player_id', 'season'],
         'foreign_keys': [
@@ -234,11 +237,6 @@ TABLES: Dict[str, Dict[str, Any]] = {
                 'on_delete':  'CASCADE',
             },
         ],
-        'extra_columns': [
-            # Jersey number is team-specific: a player may wear different numbers
-            # on different teams. Populated by the roster sync (not ETL entity stages).
-            {'name': 'jersey_num', 'type': 'VARCHAR(3)', 'nullable': True, 'default': None},
-        ],
         'indexes': [
             {'name': 'team_id', 'columns': ['team_id']},
             {'name': 'player_id', 'columns': ['player_id']},
@@ -247,13 +245,16 @@ TABLES: Dict[str, Dict[str, Any]] = {
     # ------------------------------------------------------------------
     # OPERATIONAL TABLES (per-league schema)
     #
-    # Both ETL and publish pipelines share these two tables.  The
-    # ``pipeline`` column ('etl' | 'publish') acts as the discriminator.
+    # ETL/publish share runs/tasks. ETL also owns backfill_tracker.
+    # The ``pipeline`` column ('etl' | 'publish') acts as discriminator on
+    # shared tables.
     #
-    # runs  -- one row per pipeline execution (top-level audit record)
-    # tasks -- one row per resumable work unit within a run:
-    #            ETL:     dataset + tier + column_name group
-    #            publish: tab_name
+    # runs              -- one row per pipeline execution (top-level audit)
+    # tasks             -- one row per resumable work unit within a run:
+    #                       ETL: dataset + tier + column group
+    #                       publish: tab_name
+    # backfill_tracker  -- per (entity, season, season_type, source) coverage
+    #                      signature for historical stats completeness checks.
     #
     # Columns are defined in DB_COLUMNS; table metadata specifies primary_key
     # and unique constraints.  The DDL generator looks up column types from
@@ -286,6 +287,16 @@ TABLES: Dict[str, Dict[str, Any]] = {
             {'name': 'run_id_status', 'columns': ['run_id', 'status']},
         ],
     },
+    'backfill_tracker': {
+        'kind': 'operational',
+        'used_by': ['etl'],
+        'schema': 'league',
+        'scope': 'backfill',
+        'unique_key': ['entity_type', 'season', 'season_type', 'source_key'],
+        'indexes': [
+            {'name': 'entity_season', 'columns': ['entity_type', 'season', 'season_type']},
+        ],
+    },
 }
 
 
@@ -295,5 +306,5 @@ TABLES: Dict[str, Dict[str, Any]] = {
 
 PROFILE_TABLES = {k: v for k, v in TABLES.items() if v['kind'] == 'profile'}
 STATS_TABLES = {k: v for k, v in TABLES.items() if v['kind'] == 'stats'}
-JUNCTION_TABLES = {k: v for k, v in TABLES.items() if v['kind'] == 'junction'}
+ROSTER_TABLES = {k: v for k, v in TABLES.items() if v['kind'] == 'roster'}
 OPERATIONAL_TABLES = {k: v for k, v in TABLES.items() if v['kind'] == 'operational'}

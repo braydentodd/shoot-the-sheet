@@ -4,8 +4,8 @@ The Glass - ETL Cleanup
 Two-phase data hygiene:
 
   Phase A: Per-league stats retention
-        cleanup_stat_domains  - in-place coherency rules within a season's
-                                stats rows (NULL/zero stats based on minutes).
+      normalize_stats_domains - in-place coherency rules within a season's
+                        stats rows (NULL/zero stats based on minutes).
         prune_stats_retention - DELETE stats rows older than the league's
                                 retention window.
 
@@ -67,7 +67,7 @@ def _collect_domain_columns(entity: str) -> Dict[str, List[str]]:
     return out
 
 
-def cleanup_stat_domains(
+def normalize_stats_domains(
     league_key: str,
     entity: str,
     season: str,

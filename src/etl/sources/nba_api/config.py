@@ -14,19 +14,6 @@ Validation is folded into :func:`src.etl.config_validation._validate_nba_api`.
 from typing import Any, Dict
 
 
-# ============================================================================
-# SOURCE METADATA
-# ============================================================================
-
-SOURCE_META: Dict[str, Any] = {
-    'source_key': 'nba_api',
-    # Dataset whose rows define the active roster snapshot for a league.
-    # The client's fetch_roster_snapshot() pulls (TEAM_ID, PERSON_ID) tuples
-    # from this dataset.
-    'roster_dataset': 'commonallplayers',
-}
-
-
 SEASON_TYPES: Dict[str, Dict[str, Any]] = {
     'rs': {
         'name':       'Regular Season',
@@ -73,7 +60,7 @@ DATASETS: Dict[str, Dict[str, Any]] = {
 
     'leaguedashplayerstats': {
         'min_season': '2003-04',
-        'execution_tier': 'league',
+        'execution_tier': 'per_team',
         'default_result_set': 'LeagueDashPlayerStats',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_detailed',
@@ -81,7 +68,7 @@ DATASETS: Dict[str, Dict[str, Any]] = {
     },
     'leaguedashteamstats': {
         'min_season': '2003-04',
-        'execution_tier': 'league',
+        'execution_tier': 'per_league',
         'default_result_set': 'LeagueDashTeamStats',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_detailed',
@@ -92,7 +79,7 @@ DATASETS: Dict[str, Dict[str, Any]] = {
 
     'leaguedashptstats': {
         'min_season': '2013-14',
-        'execution_tier': 'league',
+        'execution_tier': 'per_league',
         'default_result_set': 'LeagueDashPtStats',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_simple',
@@ -104,7 +91,7 @@ DATASETS: Dict[str, Dict[str, Any]] = {
 
     'leaguehustlestatsplayer': {
         'min_season': '2015-16',
-        'execution_tier': 'league',
+        'execution_tier': 'per_team',
         'default_result_set': 'HustleStatsPlayer',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_time',
@@ -112,7 +99,7 @@ DATASETS: Dict[str, Dict[str, Any]] = {
     },
     'leaguehustlestatsteam': {
         'min_season': '2015-16',
-        'execution_tier': 'league',
+        'execution_tier': 'per_league',
         'default_result_set': 'HustleStatsTeam',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_time',
@@ -123,7 +110,7 @@ DATASETS: Dict[str, Dict[str, Any]] = {
 
     'leaguedashptdefend': {
         'min_season': '2013-14',
-        'execution_tier': 'league',
+        'execution_tier': 'per_team',
         'default_result_set': 'LeagueDashPtDefend',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_simple',
@@ -132,7 +119,7 @@ DATASETS: Dict[str, Dict[str, Any]] = {
     },
     'leaguedashptteamdefend': {
         'min_season': '2013-14',
-        'execution_tier': 'league',
+        'execution_tier': 'per_league',
         'default_result_set': 'LeagueDashPtTeamDefend',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_simple',
@@ -144,7 +131,7 @@ DATASETS: Dict[str, Dict[str, Any]] = {
 
     'leaguedashplayerptshot': {
         'min_season': '2013-14',
-        'execution_tier': 'league',
+        'execution_tier': 'per_team',
         'default_result_set': 'LeagueDashPTShots',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_simple',
@@ -152,7 +139,7 @@ DATASETS: Dict[str, Dict[str, Any]] = {
     },
     'leaguedashteamptshot': {
         'min_season': '2013-14',
-        'execution_tier': 'league',
+        'execution_tier': 'per_league',
         'default_result_set': 'LeagueDashPTShots',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_simple',
@@ -163,7 +150,7 @@ DATASETS: Dict[str, Dict[str, Any]] = {
 
     'playerdashptreb': {
         'min_season': '2013-14',
-        'execution_tier': 'player',
+        'execution_tier': 'per_player',
         'default_result_set': 'OverallRebounding',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_simple',
@@ -171,7 +158,7 @@ DATASETS: Dict[str, Dict[str, Any]] = {
     },
     'teamdashptreb': {
         'min_season': '2013-14',
-        'execution_tier': 'team',
+        'execution_tier': 'per_team',
         'default_result_set': 'OverallRebounding',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_simple',
@@ -182,7 +169,7 @@ DATASETS: Dict[str, Dict[str, Any]] = {
 
     'playerdashboardbyshootingsplits': {
         'min_season': '2012-13',
-        'execution_tier': 'player',
+        'execution_tier': 'per_player',
         'default_result_set': 'ShotTypePlayerDashboard',
         'season_type_param': 'season_type_playoffs',
         'per_mode_param': 'per_mode_detailed',
@@ -190,7 +177,7 @@ DATASETS: Dict[str, Dict[str, Any]] = {
     },
     'teamdashboardbyshootingsplits': {
         'min_season': '2012-13',
-        'execution_tier': 'league',
+        'execution_tier': 'per_league',
         'default_result_set': 'ShotTypeTeamDashboard',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_detailed',
@@ -201,7 +188,7 @@ DATASETS: Dict[str, Dict[str, Any]] = {
 
     'commonallplayers': {
         'min_season': None,
-        'execution_tier': 'league',
+        'execution_tier': 'per_league',
         'default_result_set': 'CommonAllPlayers',
         'season_type_param': None,
         'per_mode_param': None,
@@ -210,7 +197,7 @@ DATASETS: Dict[str, Dict[str, Any]] = {
 
     'commonplayerinfo': {
         'min_season': None,
-        'execution_tier': 'player',
+        'execution_tier': 'per_player',
         'default_result_set': 'CommonPlayerInfo',
         'season_type_param': None,
         'per_mode_param': None,
@@ -221,7 +208,7 @@ DATASETS: Dict[str, Dict[str, Any]] = {
 
     'draftcombineplayeranthro': {
         'min_season': '2000-01',
-        'execution_tier': 'league',
+        'execution_tier': 'per_league',
         'default_result_set': 'DraftCombinePlayerAnthro',
         'season_param': 'season_year',
         'season_type_param': None,
@@ -233,7 +220,7 @@ DATASETS: Dict[str, Dict[str, Any]] = {
 
     'teamplayeronoffsummary': {
         'min_season': '2007-08',
-        'execution_tier': 'league',
+        'execution_tier': 'per_league',
         'default_result_set': 'PlayersOffCourtTeamPlayerOnOffSummary',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_detailed',
@@ -246,7 +233,7 @@ DATASETS: Dict[str, Dict[str, Any]] = {
 
     'team_metadata': {
         'min_season': None,
-        'execution_tier': 'league',
+        'execution_tier': 'per_league',
         'default_result_set': 'TeamMetadata',
         'season_type_param': None,
         'per_mode_param': None,
@@ -272,12 +259,7 @@ API_FIELD_NAMES = {
 # VALIDATION SCHEMAS  (co-located with the config they describe)
 # ============================================================================
 
-VALID_EXECUTION_TIERS = {'league', 'player', 'team', 'team_call'}
-
-SOURCE_META_SCHEMA = {
-    'source_key':      {'required': True, 'types': (str,)},
-    'roster_dataset': {'required': True, 'types': (str,)},
-}
+VALID_EXECUTION_TIERS = {'per_league', 'per_player', 'per_team'}
 
 API_CONFIG_SCHEMA = {
     'league_id': {'required': True, 'types': (str,)},

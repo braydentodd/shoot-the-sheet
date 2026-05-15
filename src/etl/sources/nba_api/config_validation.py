@@ -21,8 +21,6 @@ from src.etl.sources.nba_api.config import (
     RETRY_CONFIG_SCHEMA,
     SEASON_TYPES,
     SEASON_TYPES_SCHEMA,
-    SOURCE_META,
-    SOURCE_META_SCHEMA,
 )
 
 
@@ -33,7 +31,6 @@ def validate_provider_config() -> List[str]:
     :func:`src.etl.config_validation.validate_all`) handles surfacing.
     """
     errors: List[str] = []
-    errors.extend(validate_flat_config(SOURCE_META, SOURCE_META_SCHEMA, 'SOURCE_META'))
     errors.extend(validate_flat_config(API_CONFIG, API_CONFIG_SCHEMA, 'API_CONFIG'))
     errors.extend(validate_flat_config(RETRY_CONFIG, RETRY_CONFIG_SCHEMA, 'RETRY_CONFIG'))
     errors.extend(validate_dict_config(SEASON_TYPES, SEASON_TYPES_SCHEMA, 'SEASON_TYPES'))
