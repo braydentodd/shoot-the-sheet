@@ -5,7 +5,7 @@ Rate-mode definitions (per-game, per-100, per-40) and the historical
 timeframes offered to the publish UI.
 """
 
-from typing import Any, Dict
+from typing import Dict
 
 
 STAT_RATES = {

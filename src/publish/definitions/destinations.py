@@ -8,13 +8,9 @@ Rate limiting configuration is defined per destination to handle API limits
 for each destination type.
 """
 
-from typing import Any, Dict
+from typing import TypedDict, Dict, List
 
 VALID_DESTINATION_ROLES = frozenset({'primary', 'backup'})
-
-
-
-from typing import TypedDict, Dict, List, Optional, Any
 
 class RateLimitsDef(TypedDict):
     requests_per_second: float

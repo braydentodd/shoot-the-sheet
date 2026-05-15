@@ -17,7 +17,7 @@ Backward-compatible filtered views (PROFILE_TABLES, STATS_TABLES, etc.)
 are built automatically from the master ``TABLES`` dict.
 """
 
-from typing import Any, Dict
+from typing import TypedDict, Dict, List, Any, Union
 
 
 # ============================================================================
@@ -50,9 +50,6 @@ VALID_MANAGED_BY = frozenset({'db', 'execution_context', 'source'})
 # ============================================================================
 # DB_COLUMNS SCHEMA  (validation contract for src.core.definitions.columns.DB_COLUMNS)
 # ============================================================================
-
-
-from typing import TypedDict, Dict, List, Any, Union
 
 class TableDef(TypedDict):
     kind: str

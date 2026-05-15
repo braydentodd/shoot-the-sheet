@@ -11,11 +11,7 @@ purely about how to talk to the source itself.
 Validation is folded into :func:`src.etl.config_validation._validate_nba_api`.
 """
 
-from typing import Any, Dict
-
-
-
-from typing import TypedDict, Dict, List, Union, Any
+from typing import Any, Dict, TypedDict, List, Union
 
 class ApiConfigDef(TypedDict):
     league_id: str

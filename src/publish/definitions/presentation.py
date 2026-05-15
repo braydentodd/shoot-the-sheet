@@ -7,14 +7,14 @@ layout and formatting engines. Destination-specific config (spreadsheet IDs,
 OAuth scopes, frozen panes) lives in :mod:`src.publish.destinations.sheets.config`.
 """
 
-from typing import Any, Dict, Union
+from typing import Dict, Union
 
 
 # ============================================================================
 # PRESENTATION DEFAULTS
 # ============================================================================
 
-from typing import TypedDict, Dict, List, Optional, Any, Union
+from typing import TypedDict
 
 class PresentationDefaultsDef(TypedDict):
     header_font: str

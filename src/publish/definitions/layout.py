@@ -6,7 +6,7 @@ engine, plus the summary-threshold rows displayed at the bottom of
 players/teams sheets.
 """
 
-from typing import Any, Dict, List, Tuple
+from typing import TypedDict, Dict, List, Tuple, Union
 
 
 # ============================================================================
@@ -17,8 +17,6 @@ from typing import Any, Dict, List, Tuple
 # individual team tabs.  The orchestrator iterates this sequence directly;
 # any priority-tab reordering is applied on top.
 AGGREGATE_TABS: List[str] = ['all_players', 'all_teams']
-
-from typing import TypedDict, Dict, List, Union, Any, Union
 
 class TabConfigDef(TypedDict):
     tab_name: Union[str, None]
