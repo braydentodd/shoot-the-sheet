@@ -9,7 +9,6 @@ and header building logic.
 from typing import Any, Callable, Dict, List, Tuple, Union
 
 from src.publish.definitions.layout import SECTIONS_CONFIG, SUBSECTIONS
-from src.publish.definitions.stats import STAT_RATES
 from src.publish.lib.formatters import format_section_header
 
 
@@ -114,8 +113,6 @@ def build_headers(columns_list: List[Tuple], mode: str = 'per_possession',
                   team_name: str = '',
                   current_season: int = 0,
                   historical_config: Union[dict, None] = None,
-                  hist_timeframe: str = '',
-                  post_timeframe: str = '',
                   season_format_fn: Callable[[int], str] = str) -> dict:
     """
     Build header rows for tabular destinations (4-row layout).

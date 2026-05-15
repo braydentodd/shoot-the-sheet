@@ -25,6 +25,7 @@ import time
 from collections import defaultdict
 from functools import partial
 from pathlib import Path
+from typing import Union
 
 from src.core.lib.terminal import progress
 from src.core.lib.logging import phase_marker

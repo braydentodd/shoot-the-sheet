@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from typing import Union
 
 # Fixed-width slots keep multi-process output aligned for human scanning.
 _LEVEL_WIDTH = 7      # ' WARNING' (with leading space) is 8; longest is 'CRITICAL' (8)

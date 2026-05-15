@@ -6,8 +6,6 @@ border descriptions). These are Sheets-specific and convert presentation
 configuration into Sheets API request format.
 """
 
-from typing import Dict
-
 from src.publish.definitions.presentation import COLORS
 from src.publish.lib.colors import get_color_for_raw
 

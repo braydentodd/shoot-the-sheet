@@ -14,7 +14,6 @@ import logging
 from typing import Any, Dict, List, Set, Union
 
 from src.core.definitions.columns import DB_COLUMNS
-from src.etl.definitions.sources import SOURCES
 
 logger = logging.getLogger(__name__)
 

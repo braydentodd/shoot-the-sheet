@@ -593,12 +593,6 @@ def run_etl(
         handler = stage['handler']
         stage_entities = requested_entities
 
-        stage_include_columns: Union[Set[str], None] = None
-        stage_exclude_columns: Union[Set[str], None] = None
-        if handler == 'discover_entities':
-            stage_include_columns = identity_columns
-        elif handler == 'populate_profiles':
-            stage_exclude_columns = identity_columns
 
         
         stage_seasons = _resolve_stage_seasons(stage, season, season_range)
@@ -642,6 +636,14 @@ def run_etl(
                     api_config=stage_bundle['api_config'],
                     make_fetcher=stage_bundle['client_mod'].make_fetcher,
                 )
+                
+                stage_include_columns: Union[Set[str], None] = None
+                stage_exclude_columns: Union[Set[str], None] = None
+                if handler == 'discover_entities':
+                    stage_include_columns = {THE_GLASS_ID_COLUMN, get_source_id_column(stage_source_key)}
+                elif handler == 'populate_profiles':
+                    stage_exclude_columns = {THE_GLASS_ID_COLUMN, get_source_id_column(stage_source_key)}
+
                 stage_team_ids = _get_team_ids_for_source(stage_source_key)
 
                 logger.info(phase_marker(stage_name, f'source={stage_source_key}'))

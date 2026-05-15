@@ -42,7 +42,6 @@ from src.core.lib.logging import setup_logging
 from src.etl.cli import add_subparser as add_etl_subparser
 from src.etl.orchestrator import run_etl
 from src.publish.cli import add_subparser as add_publish_subparser
-from src.publish.destinations.sheets.config_exporter import export_config
 from src.publish.orchestrator import run_publish
 
 logger = logging.getLogger(__name__)

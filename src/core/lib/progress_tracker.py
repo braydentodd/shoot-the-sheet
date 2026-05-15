@@ -13,7 +13,7 @@ pending item.
 """
 
 import logging
-from typing import Any, Callable, Dict, List, Tuple, Union
+from typing import Any, Callable, List, Tuple, Union
 
 logger = logging.getLogger(__name__)
 

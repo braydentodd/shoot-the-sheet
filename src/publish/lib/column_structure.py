@@ -1,13 +1,10 @@
-import re
 from dataclasses import dataclass
-from typing import Any, Callable, List, Tuple, Union
+from typing import Any, List, Tuple, Union
 
 from src.publish.definitions.columns import TAB_COLUMNS
 from src.publish.definitions.layout import SECTIONS_CONFIG, SUBSECTIONS
 from src.publish.definitions.presentation import PRESENTATION_DEFAULTS
 from src.publish.definitions.stats import DEFAULT_STAT_RATE, STAT_RATES
-from src.publish.lib.row_structure import HEADER_ROWS
-from src.publish.lib.formatters import format_section_header
 
 
 @dataclass(frozen=True)

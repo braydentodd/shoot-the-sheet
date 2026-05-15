@@ -3,7 +3,7 @@ from typing import List, Tuple, Union
 
 from src.publish.definitions.layout import SECTIONS_CONFIG
 from src.publish.definitions.presentation import COLORS, PRESENTATION_DEFAULTS, WIDTH_CLASSES
-from src.publish.lib.row_structure import HEADER_ROWS, ROW_INDEXES, get_row_indexes
+from src.publish.lib.row_structure import HEADER_ROWS, ROW_INDEXES
 from src.publish.destinations.sheets.config import SHEETS_FORMATTING
 from src.publish.destinations.sheets.format_builders import get_border_style
 from src.publish.lib.colors import get_color_for_percentile, get_color_for_raw
