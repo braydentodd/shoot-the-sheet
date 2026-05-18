@@ -428,32 +428,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             },
         },
     },
-    'tracking_games': {
-        'type': 'SMALLINT',
-        'scope': ['stats'],
-        'nullable': False,
-        'default': 0,
-        'entity_types': ['player', 'team'],
-        'update_frequency': 'per_execution',
-        'domain': None,
-        'comment': None,
-        'dataset_mapping': {
-            'nba': {
-                'nba_api': {
-                    'player': {
-                        'dataset': 'leaguedashptstats',
-                        'field': 'GP',
-                        'params': {'pt_measure_type': 'SpeedDistance', 'player_or_team': 'Player'},
-                    },
-                    'team': {
-                        'dataset': 'leaguedashptstats',
-                        'field': 'GP',
-                        'params': {'pt_measure_type': 'SpeedDistance', 'player_or_team': 'Team'},
-                    },
-                },
-            },
-        },
-    },
     'tracking_minutes_x10': {
         'type': 'INTEGER',
         'scope': ['stats'],
@@ -482,24 +456,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             },
         },
     },
-    'hustle_games': {
-        'type': 'SMALLINT',
-        'scope': ['stats'],
-        'nullable': False,
-        'default': 0,
-        'entity_types': ['player', 'team'],
-        'update_frequency': 'per_execution',
-        'domain': None,
-        'comment': None,
-        'dataset_mapping': {
-            'nba': {
-                'nba_api': {
-                    'player': {'dataset': 'leaguehustlestatsplayer', 'field': 'G'},
-                    'team': {'dataset': 'leaguehustlestatsteam', 'field': 'G'},
-                },
-            },
-        },
-    },
     'hustle_minutes_x10': {
         'type': 'INTEGER',
         'scope': ['stats'],
@@ -514,30 +470,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 'nba_api': {
                     'player': {'dataset': 'leaguehustlestatsplayer', 'field': 'MIN', 'scale': 10},
                     'team': {'dataset': 'leaguehustlestatsteam', 'field': 'MIN', 'scale': 10},
-                },
-            },
-        },
-    },
-    'off_games': {
-        'type': 'SMALLINT',
-        'scope': ['stats'],
-        'nullable': False,
-        'default': 0,
-        'entity_types': ['player'],
-        'update_frequency': 'per_execution',
-        'domain': None,
-        'comment': None,
-        'dataset_mapping': {
-            'nba': {
-                'nba_api': {
-                    'player': {
-                        'dataset': 'teamplayeronoffsummary',
-                        'tier': 'team_call',
-                        'result_set': 'PlayersOffCourtTeamPlayerOnOffSummary',
-                        'player_id_field': 'VS_PLAYER_ID',
-                        'field': 'GP',
-                        'aggregation': 'sum',
-                    },
                 },
             },
         },

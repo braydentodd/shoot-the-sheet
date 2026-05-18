@@ -76,7 +76,7 @@ def format_section_header(section: str, historical_config: Union[dict, None] = N
         historical_config: {mode, value} for hist/post
         current_season: End-year integer (e.g. 2026 for the 2025-26 season)
         is_postseason: True for postseason sections
-        mode: Stats rate ('per_possession', 'per_minute', 'per_game')
+        mode: Stats rate ('per_possession', 'per_minute')
         season_format_fn: League-bound formatter that turns the end-year integer
             into a season label.  Defaults to ``str`` so unbound callers still
             render something readable.
@@ -86,7 +86,7 @@ def format_section_header(section: str, historical_config: Union[dict, None] = N
     """
     season_label = 'Postseason' if is_postseason else 'Regular Season'
 
-    # Build the rate string ("per 100 Poss", "per Game")
+    # Build the rate string ("per 100 Poss")
     rate_str = ""
     if mode and mode in STAT_RATES:
         rate_info = STAT_RATES[mode]

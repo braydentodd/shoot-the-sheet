@@ -1,7 +1,7 @@
 """
 The Glass - Stat Rate & Timeframe Definitions
 
-Rate-mode definitions (per-game, per-100, per-40) and the historical
+Rate-mode definitions (per-100, per-40) and the historical
 timeframes offered to the publish UI.
 """
 
@@ -13,11 +13,6 @@ STAT_RATES = {
         'short_label': 'Poss',
         'rate':        100,
         'default':     True,
-    },
-    'per_game': {
-        'short_label': 'Game',
-        'rate':        1,
-        'default':     False,
     },
     'per_minute': {
         'short_label': 'Min',
@@ -41,7 +36,7 @@ HISTORICAL_TIMEFRAMES: Dict[int, str] = {
 
 DEFAULT_STAT_RATE: str = next(
     (k for k, v in STAT_RATES.items() if v.get('default', False)),
-    'per_game',
+    'per_minute',
 )
 
 

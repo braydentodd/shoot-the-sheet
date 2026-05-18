@@ -96,9 +96,6 @@ def _build_merged_pops(pct_by_rate):
     for col_key, col_def in TAB_COLUMNS.items():
         if not col_def.get('percentile'):
             continue
-        bare_key = f'current_stats__per_game:{col_key}'
-        if bare_key in merged:
-            merged[col_key] = merged[bare_key]
         else:
             found = False
             for rate_name in STAT_RATES:

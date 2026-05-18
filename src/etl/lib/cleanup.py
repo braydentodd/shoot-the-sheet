@@ -47,7 +47,7 @@ def _collect_domain_columns(entity: str) -> Dict[str, List[str]]:
 
     Counter columns are everything in the domain *except* its ``minutes_col``
     denominator.  Minutes is the single coherency signal: if it is 0 / NULL
-    every other column in the domain (including ``games_col``) is nulled to
+    every other column in the domain is nulled to
     keep the row internally consistent.
     """
     out: Dict[str, List[str]] = {}

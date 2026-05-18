@@ -192,7 +192,6 @@ def _apply_scaling(
     raw_value: Any,
     mode: str,
     *,
-    domain_games: Union[float, None], base_games: Union[float, None],
     domain_minutes: Union[float, None], base_minutes: Union[float, None],
     domain_possessions: Union[float, None], base_possessions: Union[float, None],
 ) -> Any:
@@ -208,10 +207,6 @@ def _apply_scaling(
         return None
     if raw_value == 0:
         return 0
-
-    if mode == 'per_game':
-        denom = _coerce_positive(domain_games, base_games)
-        return None if denom is None else raw_value / denom
 
     if mode == 'per_minute':
         denom = _coerce_positive(domain_minutes, base_minutes)
@@ -257,7 +252,6 @@ def calculate_entity_stats(entity_data: dict, entity_type: str = 'player',
     results = {}
 
     # Base denominators -- always available on the fact row.
-    base_games = entity_data.get('games')
     base_minutes_x10 = entity_data.get('minutes_x10')
     base_minutes = (base_minutes_x10 or 0) / 10.0 if base_minutes_x10 is not None else None
     base_possessions = entity_data.get('possessions')
@@ -277,25 +271,15 @@ def calculate_entity_stats(entity_data: dict, entity_type: str = 'player',
 
         if rate_domain is None:
             results[col_key] = raw_value
-        elif rate_domain == 'per_game_only':
-            # Special-case: ignore the active mode and always do per-game.
-            results[col_key] = _apply_scaling(
-                raw_value, 'per_game',
-                domain_games=None, base_games=base_games,
-                domain_minutes=None, base_minutes=None,
-                domain_possessions=None, base_possessions=None,
-            )
         else:
             domain_cfg = STAT_DOMAINS.get(rate_domain)
             if domain_cfg and not domain_cfg.get('primary', False):
                 # Non-base domain: pull its own denominators from config.
                 d_min_col = domain_cfg['minutes_col']
-                d_games_col = domain_cfg['games_col']
                 d_min_x10 = entity_data.get(d_min_col)
                 domain_minutes = (
                     (d_min_x10 or 0) / 10.0 if d_min_x10 is not None else None
                 )
-                domain_games = entity_data.get(d_games_col)
 
                 # Scale possessions proportionally to the domain's share of
                 # base minutes, when both denominators are observable.
@@ -308,7 +292,6 @@ def calculate_entity_stats(entity_data: dict, entity_type: str = 'player',
 
                 results[col_key] = _apply_scaling(
                     raw_value, mode,
-                    domain_games=domain_games, base_games=base_games,
                     domain_minutes=domain_minutes, base_minutes=base_minutes,
                     domain_possessions=domain_possessions,
                     base_possessions=base_possessions,
@@ -317,7 +300,6 @@ def calculate_entity_stats(entity_data: dict, entity_type: str = 'player',
                 # 'base' or unknown domain -> base denominators only.
                 results[col_key] = _apply_scaling(
                     raw_value, mode,
-                    domain_games=None, base_games=base_games,
                     domain_minutes=None, base_minutes=base_minutes,
                     domain_possessions=None, base_possessions=base_possessions,
                 )
