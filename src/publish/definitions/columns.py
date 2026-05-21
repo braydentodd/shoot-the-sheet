@@ -44,7 +44,7 @@ _VALID_EMPHASIS = {'bold', None}
 
 TAB_COLUMNS: Dict[str, Any] = {
     'players': {
-        'description': 'PlayerName',
+        'description': 'Player Name',
         'sections': ['entities'],
         'subsection': None,
         'tabs': ['all_players', 'individual_team'],

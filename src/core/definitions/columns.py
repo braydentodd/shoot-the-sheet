@@ -270,7 +270,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             },
         },
     },
-    'handedness': {
+    'hand': {
         'type': 'CHAR',
         'scope': ['profiles'],
         'nullable': True,
@@ -310,7 +310,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'seasons_exp': {
         'type': 'SMALLINT',
-        'scope': ['profiles'],
+        'scope': ['rosters'],
         'nullable': True,
         'default': None,
         'entity_types': ['player'],
@@ -428,7 +428,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             },
         },
     },
-    'tracking_minutes_x10': {
+    'tracking_mins_x10': {
         'type': 'INTEGER',
         'scope': ['stats'],
         'nullable': False,
@@ -456,7 +456,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             },
         },
     },
-    'hustle_minutes_x10': {
+    'hustle_mins_x10': {
         'type': 'INTEGER',
         'scope': ['stats'],
         'nullable': False,
@@ -470,31 +470,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 'nba_api': {
                     'player': {'dataset': 'leaguehustlestatsplayer', 'field': 'MIN', 'scale': 10},
                     'team': {'dataset': 'leaguehustlestatsteam', 'field': 'MIN', 'scale': 10},
-                },
-            },
-        },
-    },
-    'off_minutes_x10': {
-        'type': 'INTEGER',
-        'scope': ['stats'],
-        'nullable': False,
-        'default': 0,
-        'entity_types': ['player', 'team'],
-        'update_frequency': 'per_execution',
-        'domain': None,
-        'comment': None,
-        'dataset_mapping': {
-            'nba': {
-                'nba_api': {
-                    'player': {
-                        'dataset': 'teamplayeronoffsummary',
-                        'tier': 'team_call',
-                        'result_set': 'PlayersOffCourtTeamPlayerOnOffSummary',
-                        'player_id_field': 'VS_PLAYER_ID',
-                        'field': 'MIN',
-                        'scale': 10,
-                        'aggregation': 'sum',
-                    },
                 },
             },
         },
@@ -665,465 +640,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         },
     },
     # ------------------------------------------------------------------
-    # SHOT TRACKING: CONTESTED / OPEN  x  RIM / ALL
-    # ------------------------------------------------------------------
-    'cont_close_fgm': {
-        'type': 'SMALLINT',
-        'scope': ['stats'],
-        'nullable': True,
-        'default': None,
-        'entity_types': ['player', 'team'],
-        'update_frequency': 'per_execution',
-        'domain': 'tracking',
-        'comment': None,
-        'dataset_mapping': {
-            'nba': {
-                'nba_api': {
-                    'player': {
-                        'dataset': 'leaguedashplayerptshot',
-                        'field': 'FGM',
-                        'multi_call': [
-                            {
-                                'close_def_dist_range_nullable': '0-2 Feet - Very Tight',
-                                'general_range_nullable': 'Less Than 10 ft',
-                            },
-                            {
-                                'close_def_dist_range_nullable': '2-4 Feet - Tight',
-                                'general_range_nullable': 'Less Than 10 ft',
-                            },
-                        ],
-                        'result_set': 'LeagueDashPTShots',
-                    },
-                    'team': {
-                        'dataset': 'leaguedashteamptshot',
-                        'field': 'FGM',
-                        'multi_call': [
-                            {
-                                'close_def_dist_range_nullable': '0-2 Feet - Very Tight',
-                                'general_range_nullable': 'Less Than 10 ft',
-                            },
-                            {
-                                'close_def_dist_range_nullable': '2-4 Feet - Tight',
-                                'general_range_nullable': 'Less Than 10 ft',
-                            },
-                        ],
-                        'result_set': 'LeagueDashPTShots',
-                    },
-                },
-            },
-        },
-    },
-    'cont_close_fga': {
-        'type': 'SMALLINT',
-        'scope': ['stats'],
-        'nullable': True,
-        'default': None,
-        'entity_types': ['player', 'team'],
-        'update_frequency': 'per_execution',
-        'domain': 'tracking',
-        'comment': None,
-        'dataset_mapping': {
-            'nba': {
-                'nba_api': {
-                    'player': {
-                        'dataset': 'leaguedashplayerptshot',
-                        'field': 'FGA',
-                        'multi_call': [
-                            {
-                                'close_def_dist_range_nullable': '0-2 Feet - Very Tight',
-                                'general_range_nullable': 'Less Than 10 ft',
-                            },
-                            {
-                                'close_def_dist_range_nullable': '2-4 Feet - Tight',
-                                'general_range_nullable': 'Less Than 10 ft',
-                            },
-                        ],
-                        'result_set': 'LeagueDashPTShots',
-                    },
-                    'team': {
-                        'dataset': 'leaguedashteamptshot',
-                        'field': 'FGA',
-                        'multi_call': [
-                            {
-                                'close_def_dist_range_nullable': '0-2 Feet - Very Tight',
-                                'general_range_nullable': 'Less Than 10 ft',
-                            },
-                            {
-                                'close_def_dist_range_nullable': '2-4 Feet - Tight',
-                                'general_range_nullable': 'Less Than 10 ft',
-                            },
-                        ],
-                        'result_set': 'LeagueDashPTShots',
-                    },
-                },
-            },
-        },
-    },
-    'open_close_fgm': {
-        'type': 'SMALLINT',
-        'scope': ['stats'],
-        'nullable': True,
-        'default': None,
-        'entity_types': ['player', 'team'],
-        'update_frequency': 'per_execution',
-        'domain': 'tracking',
-        'comment': None,
-        'dataset_mapping': {
-            'nba': {
-                'nba_api': {
-                    'player': {
-                        'dataset': 'leaguedashplayerptshot',
-                        'field': 'FGM',
-                        'multi_call': [
-                            {
-                                'close_def_dist_range_nullable': '4-6 Feet - Open',
-                                'general_range_nullable': 'Less Than 10 ft',
-                            },
-                            {
-                                'close_def_dist_range_nullable': '6+ Feet - Wide Open',
-                                'general_range_nullable': 'Less Than 10 ft',
-                            },
-                        ],
-                        'result_set': 'LeagueDashPTShots',
-                    },
-                    'team': {
-                        'dataset': 'leaguedashteamptshot',
-                        'field': 'FGM',
-                        'multi_call': [
-                            {
-                                'close_def_dist_range_nullable': '4-6 Feet - Open',
-                                'general_range_nullable': 'Less Than 10 ft',
-                            },
-                            {
-                                'close_def_dist_range_nullable': '6+ Feet - Wide Open',
-                                'general_range_nullable': 'Less Than 10 ft',
-                            },
-                        ],
-                        'result_set': 'LeagueDashPTShots',
-                    },
-                },
-            },
-        },
-    },
-    'open_close_fga': {
-        'type': 'SMALLINT',
-        'scope': ['stats'],
-        'nullable': True,
-        'default': None,
-        'entity_types': ['player', 'team'],
-        'update_frequency': 'per_execution',
-        'domain': 'tracking',
-        'comment': None,
-        'dataset_mapping': {
-            'nba': {
-                'nba_api': {
-                    'player': {
-                        'dataset': 'leaguedashplayerptshot',
-                        'field': 'FGA',
-                        'multi_call': [
-                            {
-                                'close_def_dist_range_nullable': '4-6 Feet - Open',
-                                'general_range_nullable': 'Less Than 10 ft',
-                            },
-                            {
-                                'close_def_dist_range_nullable': '6+ Feet - Wide Open',
-                                'general_range_nullable': 'Less Than 10 ft',
-                            },
-                        ],
-                        'result_set': 'LeagueDashPTShots',
-                    },
-                    'team': {
-                        'dataset': 'leaguedashteamptshot',
-                        'field': 'FGA',
-                        'multi_call': [
-                            {
-                                'close_def_dist_range_nullable': '4-6 Feet - Open',
-                                'general_range_nullable': 'Less Than 10 ft',
-                            },
-                            {
-                                'close_def_dist_range_nullable': '6+ Feet - Wide Open',
-                                'general_range_nullable': 'Less Than 10 ft',
-                            },
-                        ],
-                        'result_set': 'LeagueDashPTShots',
-                    },
-                },
-            },
-        },
-    },
-    'cont_fg2m': {
-        'type': 'SMALLINT',
-        'scope': ['stats'],
-        'nullable': True,
-        'default': None,
-        'entity_types': ['player', 'team'],
-        'update_frequency': 'per_execution',
-        'domain': 'tracking',
-        'comment': None,
-        'dataset_mapping': {
-            'nba': {
-                'nba_api': {
-                    'player': {
-                        'dataset': 'leaguedashplayerptshot',
-                        'field': 'FG2M',
-                        'multi_call': [
-                            {'close_def_dist_range_nullable': '0-2 Feet - Very Tight'},
-                            {'close_def_dist_range_nullable': '2-4 Feet - Tight'},
-                        ],
-                        'result_set': 'LeagueDashPTShots',
-                    },
-                    'team': {
-                        'dataset': 'leaguedashteamptshot',
-                        'field': 'FG2M',
-                        'multi_call': [
-                            {'close_def_dist_range_nullable': '0-2 Feet - Very Tight'},
-                            {'close_def_dist_range_nullable': '2-4 Feet - Tight'},
-                        ],
-                        'result_set': 'LeagueDashPTShots',
-                    },
-                },
-            },
-        },
-    },
-    'cont_fg2a': {
-        'type': 'SMALLINT',
-        'scope': ['stats'],
-        'nullable': True,
-        'default': None,
-        'entity_types': ['player', 'team'],
-        'update_frequency': 'per_execution',
-        'domain': 'tracking',
-        'comment': None,
-        'dataset_mapping': {
-            'nba': {
-                'nba_api': {
-                    'player': {
-                        'dataset': 'leaguedashplayerptshot',
-                        'field': 'FG2A',
-                        'multi_call': [
-                            {'close_def_dist_range_nullable': '0-2 Feet - Very Tight'},
-                            {'close_def_dist_range_nullable': '2-4 Feet - Tight'},
-                        ],
-                        'result_set': 'LeagueDashPTShots',
-                    },
-                    'team': {
-                        'dataset': 'leaguedashteamptshot',
-                        'field': 'FG2A',
-                        'multi_call': [
-                            {'close_def_dist_range_nullable': '0-2 Feet - Very Tight'},
-                            {'close_def_dist_range_nullable': '2-4 Feet - Tight'},
-                        ],
-                        'result_set': 'LeagueDashPTShots',
-                    },
-                },
-            },
-        },
-    },
-    'open_fg2m': {
-        'type': 'SMALLINT',
-        'scope': ['stats'],
-        'nullable': True,
-        'default': None,
-        'entity_types': ['player', 'team'],
-        'update_frequency': 'per_execution',
-        'domain': 'tracking',
-        'comment': None,
-        'dataset_mapping': {
-            'nba': {
-                'nba_api': {
-                    'player': {
-                        'dataset': 'leaguedashplayerptshot',
-                        'field': 'FG2M',
-                        'multi_call': [
-                            {'close_def_dist_range_nullable': '4-6 Feet - Open'},
-                            {'close_def_dist_range_nullable': '6+ Feet - Wide Open'},
-                        ],
-                        'result_set': 'LeagueDashPTShots',
-                    },
-                    'team': {
-                        'dataset': 'leaguedashteamptshot',
-                        'field': 'FG2M',
-                        'multi_call': [
-                            {'close_def_dist_range_nullable': '4-6 Feet - Open'},
-                            {'close_def_dist_range_nullable': '6+ Feet - Wide Open'},
-                        ],
-                        'result_set': 'LeagueDashPTShots',
-                    },
-                },
-            },
-        },
-    },
-    'open_fg2a': {
-        'type': 'SMALLINT',
-        'scope': ['stats'],
-        'nullable': True,
-        'default': None,
-        'entity_types': ['player', 'team'],
-        'update_frequency': 'per_execution',
-        'domain': 'tracking',
-        'comment': None,
-        'dataset_mapping': {
-            'nba': {
-                'nba_api': {
-                    'player': {
-                        'dataset': 'leaguedashplayerptshot',
-                        'field': 'FG2A',
-                        'multi_call': [
-                            {'close_def_dist_range_nullable': '4-6 Feet - Open'},
-                            {'close_def_dist_range_nullable': '6+ Feet - Wide Open'},
-                        ],
-                        'result_set': 'LeagueDashPTShots',
-                    },
-                    'team': {
-                        'dataset': 'leaguedashteamptshot',
-                        'field': 'FG2A',
-                        'multi_call': [
-                            {'close_def_dist_range_nullable': '4-6 Feet - Open'},
-                            {'close_def_dist_range_nullable': '6+ Feet - Wide Open'},
-                        ],
-                        'result_set': 'LeagueDashPTShots',
-                    },
-                },
-            },
-        },
-    },
-    'cont_fg3m': {
-        'type': 'SMALLINT',
-        'scope': ['stats'],
-        'nullable': True,
-        'default': None,
-        'entity_types': ['player', 'team'],
-        'update_frequency': 'per_execution',
-        'domain': 'tracking',
-        'comment': None,
-        'dataset_mapping': {
-            'nba': {
-                'nba_api': {
-                    'player': {
-                        'dataset': 'leaguedashplayerptshot',
-                        'field': 'FG3M',
-                        'multi_call': [
-                            {'close_def_dist_range_nullable': '0-2 Feet - Very Tight'},
-                            {'close_def_dist_range_nullable': '2-4 Feet - Tight'},
-                        ],
-                        'result_set': 'LeagueDashPTShots',
-                    },
-                    'team': {
-                        'dataset': 'leaguedashteamptshot',
-                        'field': 'FG3M',
-                        'multi_call': [
-                            {'close_def_dist_range_nullable': '0-2 Feet - Very Tight'},
-                            {'close_def_dist_range_nullable': '2-4 Feet - Tight'},
-                        ],
-                        'result_set': 'LeagueDashPTShots',
-                    },
-                },
-            },
-        },
-    },
-    'cont_fg3a': {
-        'type': 'SMALLINT',
-        'scope': ['stats'],
-        'nullable': True,
-        'default': None,
-        'entity_types': ['player', 'team'],
-        'update_frequency': 'per_execution',
-        'domain': 'tracking',
-        'comment': None,
-        'dataset_mapping': {
-            'nba': {
-                'nba_api': {
-                    'player': {
-                        'dataset': 'leaguedashplayerptshot',
-                        'field': 'FG3A',
-                        'multi_call': [
-                            {'close_def_dist_range_nullable': '0-2 Feet - Very Tight'},
-                            {'close_def_dist_range_nullable': '2-4 Feet - Tight'},
-                        ],
-                        'result_set': 'LeagueDashPTShots',
-                    },
-                    'team': {
-                        'dataset': 'leaguedashteamptshot',
-                        'field': 'FG3A',
-                        'multi_call': [
-                            {'close_def_dist_range_nullable': '0-2 Feet - Very Tight'},
-                            {'close_def_dist_range_nullable': '2-4 Feet - Tight'},
-                        ],
-                        'result_set': 'LeagueDashPTShots',
-                    },
-                },
-            },
-        },
-    },
-    'open_fg3m': {
-        'type': 'SMALLINT',
-        'scope': ['stats'],
-        'nullable': True,
-        'default': None,
-        'entity_types': ['player', 'team'],
-        'update_frequency': 'per_execution',
-        'domain': 'tracking',
-        'comment': None,
-        'dataset_mapping': {
-            'nba': {
-                'nba_api': {
-                    'player': {
-                        'dataset': 'leaguedashplayerptshot',
-                        'field': 'FG3M',
-                        'multi_call': [
-                            {'close_def_dist_range_nullable': '4-6 Feet - Open'},
-                            {'close_def_dist_range_nullable': '6+ Feet - Wide Open'},
-                        ],
-                        'result_set': 'LeagueDashPTShots',
-                    },
-                    'team': {
-                        'dataset': 'leaguedashteamptshot',
-                        'field': 'FG3M',
-                        'multi_call': [
-                            {'close_def_dist_range_nullable': '4-6 Feet - Open'},
-                            {'close_def_dist_range_nullable': '6+ Feet - Wide Open'},
-                        ],
-                        'result_set': 'LeagueDashPTShots',
-                    },
-                },
-            },
-        },
-    },
-    'open_fg3a': {
-        'type': 'SMALLINT',
-        'scope': ['stats'],
-        'nullable': True,
-        'default': None,
-        'entity_types': ['player', 'team'],
-        'update_frequency': 'per_execution',
-        'domain': 'tracking',
-        'comment': None,
-        'dataset_mapping': {
-            'nba': {
-                'nba_api': {
-                    'player': {
-                        'dataset': 'leaguedashplayerptshot',
-                        'field': 'FG3A',
-                        'multi_call': [
-                            {'close_def_dist_range_nullable': '4-6 Feet - Open'},
-                            {'close_def_dist_range_nullable': '6+ Feet - Wide Open'},
-                        ],
-                        'result_set': 'LeagueDashPTShots',
-                    },
-                    'team': {
-                        'dataset': 'leaguedashteamptshot',
-                        'field': 'FG3A',
-                        'multi_call': [
-                            {'close_def_dist_range_nullable': '4-6 Feet - Open'},
-                            {'close_def_dist_range_nullable': '6+ Feet - Wide Open'},
-                        ],
-                        'result_set': 'LeagueDashPTShots',
-                    },
-                },
-            },
-        },
-    },
-    # ------------------------------------------------------------------
     # PUTBACKS & DUNKS  (pipeline: filter shooting splits -> aggregate)
     # ------------------------------------------------------------------
     'putbacks': {
@@ -1167,77 +683,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                                 'field': 'FGM',
                                 'filter_field': 'GROUP_VALUE',
                                 'filter_values': ['Putback Dunk Shot', 'Putback Layup Shot', 'Tip Dunk Shot', 'Tip Layup Shot'],
-                            },
-                            {'type': 'aggregate', 'method': 'sum'},
-                        ],
-                    },
-                },
-            },
-        },
-    },
-    'dunks': {
-        'type': 'SMALLINT',
-        'scope': ['stats'],
-        'nullable': True,
-        'default': None,
-        'entity_types': ['player', 'team'],
-        'update_frequency': 'per_execution',
-        'domain': None,
-        'comment': None,
-        'dataset_mapping': {
-            'nba': {
-                'nba_api': {
-                    'player': {
-                        'dataset': 'playerdashboardbyshootingsplits',
-                        'tier': 'player',
-                        'params': {'measure_type_detailed': 'Base', 'per_mode_detailed': 'Totals'},
-                        'operations': [
-                            {
-                                'type': 'extract',
-                                'result_set': 'ShotTypePlayerDashboard',
-                                'field': 'FGM',
-                                'filter_field': 'GROUP_VALUE',
-                                'filter_values': [
-                                    'Alley Oop Dunk Shot',
-                                    'Cutting Dunk Shot',
-                                    'Driving Dunk Shot',
-                                    'Driving Reverse Dunk Shot',
-                                    'Dunk Shot',
-                                    'Putback Dunk Shot',
-                                    'Reverse Dunk Shot',
-                                    'Running Alley Oop Dunk Shot',
-                                    'Running Dunk Shot',
-                                    'Tip Dunk Shot',
-                                ],
-                            },
-                            {'type': 'aggregate', 'method': 'sum'},
-                        ],
-                    },
-                    'team': {
-                        'dataset': 'teamdashboardbyshootingsplits',
-                        'tier': 'team',
-                        'params': {
-                            'measure_type_detailed_defense': 'Base',
-                            'per_mode_detailed': 'Totals',
-                        },
-                        'operations': [
-                            {
-                                'type': 'extract',
-                                'result_set': 'ShotTypeTeamDashboard',
-                                'field': 'FGM',
-                                'filter_field': 'GROUP_VALUE',
-                                'filter_values': [
-                                    'Alley Oop Dunk Shot',
-                                    'Cutting Dunk Shot',
-                                    'Driving Dunk Shot',
-                                    'Driving Reverse Dunk Shot',
-                                    'Dunk Shot',
-                                    'Putback Dunk Shot',
-                                    'Reverse Dunk Shot',
-                                    'Running Alley Oop Dunk Shot',
-                                    'Running Dunk Shot',
-                                    'Tip Dunk Shot',
-                                ],
                             },
                             {'type': 'aggregate', 'method': 'sum'},
                         ],
@@ -1928,13 +1373,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 'nba_api': {
                     'player': {
                         'dataset': 'leaguedashptdefend',
-                        'field': 'FGM',
-                        'params': {'defense_category': 'Less Than 10Ft'},
+                        'field': 'FGM_LT_06',
+                        'params': {'defense_category': 'Less Than 6Ft'},
                     },
                     'team': {
                         'dataset': 'leaguedashptteamdefend',
-                        'field': 'FGM',
-                        'params': {'defense_category': 'Less Than 10Ft'},
+                        'field': 'FGM_LT_06',
+                        'params': {'defense_category': 'Less Than 6Ft'},
                     },
                 },
             },
@@ -1954,13 +1399,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 'nba_api': {
                     'player': {
                         'dataset': 'leaguedashptdefend',
-                        'field': 'FGA_LT_10',
-                        'params': {'defense_category': 'Less Than 10Ft'},
+                        'field': 'FGA_LT_06',
+                        'params': {'defense_category': 'Less Than 6Ft'},
                     },
                     'team': {
                         'dataset': 'leaguedashptteamdefend',
-                        'field': 'FGA_LT_10',
-                        'params': {'defense_category': 'Less Than 10Ft'},
+                        'field': 'FGA_LT_06',
+                        'params': {'defense_category': 'Less Than 6Ft'},
                     },
                 },
             },
@@ -2370,6 +1815,60 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'managed_by': 'source',
         'domain': None,
         'comment': None,
-        'dataset_mapping': None,
+        'dataset_mapping': {
+            'nba': {
+                'nba_api': {
+                    'player': {'dataset': 'commonallplayers', 'field': 'JERSEY'},
+                },
+            },
+        },
     },
 }
+
+
+# ============================================================================
+# ROSTER FIELD EXTRACTOR
+# ============================================================================
+
+def get_rosters_fields(league_key: str, source_key: str) -> Dict[str, str]:
+    """Extract rosters-scoped column field mappings for a league/source.
+    
+    Returns a dict of column_name -> source_field_name for all columns with
+    'rosters' in their scope and a dataset_mapping for the given league/source.
+    
+    Example:
+        get_rosters_fields('nba', 'nba_api') returns
+        {'jersey_num': 'JERSEY', 'seasons_exp': 'SEASON_EXP'}
+    
+    Args:
+        league_key: League identifier (e.g. 'nba')
+        source_key: Source system identifier (e.g. 'nba_api')
+    
+    Returns:
+        Dict mapping column names to their source field names, or empty dict
+        if the league/source has no rosters-scoped columns.
+    """
+    result = {}
+    
+    for col_name, col_def in DB_COLUMNS.items():
+        scope = col_def.get('scope', [])
+        if 'rosters' not in scope:
+            continue
+            
+        dataset_mapping = col_def.get('dataset_mapping')
+        if not dataset_mapping:
+            continue
+            
+        # Navigate: league -> source -> entity -> {dataset, field}
+        league_mapping = dataset_mapping.get(league_key, {})
+        source_mapping = league_mapping.get(source_key, {})
+        
+        # For rosters, we typically only have 'player' entity
+        player_mapping = source_mapping.get('player')
+        if player_mapping:
+            field = player_mapping.get('field')
+            if field:
+                result[col_name] = field
+    
+    return result
+

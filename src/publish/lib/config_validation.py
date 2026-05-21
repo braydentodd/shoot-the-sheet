@@ -102,6 +102,42 @@ def _validate_stat_rates_default_unique(stat_rates: dict) -> List[str]:
     return []
 
 
+def _validate_field_prefixes(sheets_columns: dict) -> List[str]:
+    """All fields in values[key]['fields'] must have explicit SQL alias prefixes.
+    
+    Valid prefixes: 'p.' (player_profiles), 't.' (team_profiles),
+    's.' (stats), 'tr.' (team_rosters).
+    """
+    import re
+    
+    errors: List[str] = []
+    valid_prefixes = {'p.', 't.', 's.', 'tr.'}
+    prefix_pattern = re.compile(r'^(p|t|s|tr)\.')
+    
+    for col_name, col_def in sheets_columns.items():
+        values = col_def.get('values', {})
+        if not isinstance(values, dict):
+            continue
+            
+        for values_key, spec in values.items():
+            if not isinstance(spec, dict):
+                continue
+                
+            fields = spec.get('fields', ())
+            for field in fields:
+                if not isinstance(field, str):
+                    continue
+                    
+                if not prefix_pattern.match(field):
+                    errors.append(
+                        f"TAB_COLUMNS['{col_name}']['values']['{values_key}']: "
+                        f"field '{field}' missing required prefix (must start with "
+                        f"one of {sorted(valid_prefixes)})"
+                    )
+    
+    return errors
+
+
 # ============================================================================
 # PUBLIC API
 # ============================================================================
@@ -116,6 +152,7 @@ def validate_config(league_key: str = None) -> List[str]:
     errors.extend(_validate_column_section_refs(TAB_COLUMNS))
     errors.extend(_validate_subsection_section_refs())
     errors.extend(_validate_stat_rates_default_unique(STAT_RATES))
+    errors.extend(_validate_field_prefixes(TAB_COLUMNS))
     return errors
 
 

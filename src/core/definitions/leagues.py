@@ -29,7 +29,6 @@ class SourceRoleDef(TypedDict):
     dataset: str
     team_id_field: str
     player_id_field: str
-    jersey_field: str
     params: SourceRoleParams
 
 class LeagueRoles(TypedDict):
@@ -64,7 +63,6 @@ LEAGUES: Dict[str, LeagueDef] = {
                     'dataset': 'commonallplayers',
                     'team_id_field': 'TEAM_ID',
                     'player_id_field': 'PERSON_ID',
-                    'jersey_field': 'JERSEY',
                     'params': {'is_only_current_season': '1'},
                 },
             },
@@ -74,7 +72,6 @@ LEAGUES: Dict[str, LeagueDef] = {
                     'params': {'is_only_current_season': '0'},
                     'team_id_field': 'TEAM_ID',
                     'player_id_field': 'PERSON_ID',
-                    'jersey_field': 'JERSEY',
                 }
             },
         },

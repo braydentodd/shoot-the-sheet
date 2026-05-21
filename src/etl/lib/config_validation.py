@@ -227,7 +227,6 @@ def _validate_league_source_roles(
                     'dataset',
                     'team_id_field',
                     'player_id_field',
-                    'jersey_field',
                     'params',
                 }
                 extra_snapshot_keys = sorted(k for k in snapshot_cfg if k not in required_keys)
@@ -248,8 +247,6 @@ def _validate_league_source_roles(
                         errors.append(f"{role_prefix}.{source_key}.team_id_field: expected str")
                     if not isinstance(snapshot_cfg['player_id_field'], str):
                         errors.append(f"{role_prefix}.{source_key}.player_id_field: expected str")
-                    if not isinstance(snapshot_cfg['jersey_field'], str):
-                        errors.append(f"{role_prefix}.{source_key}.jersey_field: expected str")
                     if not isinstance(snapshot_cfg['params'], dict):
                         errors.append(f"{role_prefix}.{source_key}.params: expected dict")
             elif role == 'roster_maintainer':

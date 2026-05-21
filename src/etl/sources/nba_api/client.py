@@ -291,21 +291,27 @@ def fetch_roster_memberships(
     season_type_name: str = 'Regular Season',
     roster_snapshot: Union[Dict[str, Any], None] = None,
 ) -> list:
-    """Return ``[(team_source_id, player_source_id, jersey_num), ...]`` for every active
-    roster slot in the league for the given season.
+    """Return ``[(team_source_id, player_source_id, jersey_num, seasons_exp), ...]``
+    for every active roster slot in the league for the given season.
 
-    Dataset, field names, and request params are supplied via
-    ``roster_snapshot`` from league source-role config. Players whose team ID
-    is null or zero (free agents / inactive) are dropped.
+    The roster_snapshot config supplies the dataset and linking fields (team_id_field,
+    player_id_field). Additional rosters-scoped fields (jersey_num, seasons_exp, etc.)
+    are dynamically discovered from the column registry.
+    
+    Players whose team ID is null or zero (free agents / inactive) are dropped.
     """
     if not roster_snapshot:
         raise ValueError('roster_snapshot config is required for roster_maintainer role')
 
+    from src.core.definitions.columns import get_rosters_fields
+
     dataset = roster_snapshot['dataset']
     team_id_field = roster_snapshot['team_id_field']
     player_id_field = roster_snapshot['player_id_field']
-    jersey_field = roster_snapshot.get('jersey_field')
     request_params = dict(roster_snapshot.get('params', {}))
+    
+    # Dynamically discover rosters-scoped fields from columns.py
+    rosters_fields = get_rosters_fields(league_key, 'nba_api')
 
     fetcher = make_fetcher(season, season_type_name, 'player')
     result = fetcher(dataset, request_params)
@@ -321,9 +327,16 @@ def fetch_roster_memberships(
         headers = rs.get('headers', [])
         if team_id_field not in headers or player_id_field not in headers:
             continue
+        
         tid_idx = headers.index(team_id_field)
         pid_idx = headers.index(player_id_field)
-        jersey_idx = headers.index(jersey_field) if jersey_field in headers else None
+        
+        # Build dynamic field indices from discovered rosters fields
+        field_indices = {}
+        for col_name, api_field_name in rosters_fields.items():
+            if api_field_name in headers:
+                field_indices[col_name] = headers.index(api_field_name)
+        
         for row in rs['rowSet']:
             tid = row[tid_idx]
             pid = row[pid_idx]
@@ -335,12 +348,19 @@ def fetch_roster_memberships(
                 continue
             if tid_val == 0:
                 continue
-            jersey_num = row[jersey_idx] if jersey_idx is not None else None
-            pairs.append((tid_val, pid, jersey_num))
+            
+            # Extract rosters fields in consistent order: jersey_num, seasons_exp, ...
+            extra_fields = []
+            for col_name in sorted(rosters_fields.keys()):
+                idx = field_indices.get(col_name)
+                extra_fields.append(row[idx] if idx is not None else None)
+            
+            # Pair: (team_id, player_id, jersey_num, seasons_exp, ...)
+            pairs.append((tid_val, pid, *extra_fields))
 
     logger.info(
-        'Roster snapshot %s/%s: %d active (team, player, jersey) rows from %s',
-        league_key, season, len(pairs), dataset,
+        'Roster snapshot %s/%s: %d active rows from %s (fields: %s)',
+        league_key, season, len(pairs), dataset, sorted(rosters_fields.keys()),
     )
     return pairs
 
