@@ -275,7 +275,7 @@ def _execute_per_entity(
     failed: List[Dict[str, Any]],
     removed_refresh_mode: str = 'null_only',
 ) -> int:
-    """Per-entity API calls for simple columns (e.g. commonplayerinfo).
+    """Per-entity API calls for simple columns.
 
     Iterates over all known entities in the DB, calls the dataset once
     per entity (passing the entity's source_id), and extracts simple columns.
