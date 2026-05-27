@@ -2,8 +2,7 @@
 The Glass - Database Table Registry
 
 Unified registry of every table in the database: profiles, stats, rosters,
-and operational (run-tracking) tables.  Each entry carries ``kind`` and
-``used_by`` metadata so consumers know which pipeline domains touch it.
+and operational (run-tracking) tables.
 
 Operational tables use a ``pipeline`` discriminator column so both ETL and
 publish runs share single ``runs`` and ``tasks`` tables rather than
@@ -12,52 +11,54 @@ maintaining four mirrored tables.
 Column definitions live in ``src.core.definitions.columns.DB_COLUMNS``.
 Operational and roster tables reference columns by name; the DDL generator
 looks up type, nullable, default, and other metadata from the column registry.
-
-Backward-compatible filtered views (PROFILE_TABLES, STATS_TABLES, etc.)
-are built automatically from the master ``TABLES`` dict.
 """
 
-from typing import TypedDict, Dict, List, Any, Union
-
-
-# ============================================================================
-# FUNDAMENTAL SCHEMA CONSTANTS
-# ============================================================================
-
-CORE_SCHEMA = 'core'
-THE_GLASS_ID_COLUMN = 'the_glass_id'
-THE_GLASS_ID_TYPE = 'BIGINT'
-THE_GLASS_ID_SEQUENCE = 'core.the_glass_id_seq'
+from typing import TypedDict, Dict, List, Union
 
 
 # ============================================================================
 # ALLOWED VALUE SETS
 # ============================================================================
 
-VALID_PG_TYPES = {
+VALID_PG_TYPES = frozenset({
     'SERIAL', 'SMALLINT', 'INTEGER', 'BIGINT', 'VARCHAR', 'TEXT', 'CHAR',
     'BOOLEAN', 'TIMESTAMP', 'DATE', 'NUMERIC', 'REAL', 'DOUBLE PRECISION',
-}
-VALID_ENTITY_TYPES = {'league', 'player', 'team'}
-VALID_SCOPES = {'profile', 'stats', 'roster', 'runs', 'tasks', 'backfill'}
-VALID_REFRESH_MODES = {'null_only', 'always'}
-VALID_SCHEMA_KINDS = {'core', 'league'}
-VALID_FK_ACTIONS = {'CASCADE', 'RESTRICT', 'SET NULL', 'NO ACTION'}
-VALID_MANAGED_BY = frozenset({'db', 'execution_context', 'source'})
+})
+VALID_ENTITY_TYPES = frozenset({'league', 'player', 'team'})
+VALID_SCOPES = frozenset({'profiles', 'stats', 'rosters', 'runs', 'tasks', 'backfill'})
+VALID_REFRESH_MODES = frozenset({'null_only', 'always'})
+VALID_SCHEMA_KINDS = frozenset({'core', 'league'})
+VALID_FK_ACTIONS = frozenset({'CASCADE', 'RESTRICT', 'SET NULL', 'NO ACTION'})
+VALID_MANAGERS = frozenset({'db', 'execution_context', 'source'})
+VALID_FK_STRATEGIES = frozenset({'direct', 'profile_lookup'})
 
 
 # ============================================================================
-# DB_COLUMNS SCHEMA  (validation contract for src.core.definitions.columns.DB_COLUMNS)
+# DB_COLUMNS SCHEMA
 # ============================================================================
+
+class FKDef(TypedDict):
+    column: str
+    ref_schema: str
+    ref_table: str
+    ref_column: str
+    strategy: str
+    on_update: str
+    on_delete: str
+
+class IndexDef(TypedDict):
+    name: str
+    columns: List[str]
 
 class TableDef(TypedDict):
-    used_by: List[str]
     entity: Union[str, None]
     schema: Union[str, None]
     primary_key: Union[List[str], None]
-    foreign_keys: Union[List[Dict[str, Any]], None]
+    foreign_keys: Union[List[FKDef], None]
     scope: Union[str, None]
     unique_constraints: Union[List[List[str]], None]
+    indexes: Union[List[IndexDef], None]
+    source_ids: Union[bool, None]
 
 TABLES: Dict[str, TableDef] = {
 
@@ -65,37 +66,39 @@ TABLES: Dict[str, TableDef] = {
     # PROFILE TABLES (core schema)
     # ------------------------------------------------------------------
     'league_profiles': {
-        'used_by': ['etl', 'publish'],
         'entity': 'league',
         'schema': 'core',
         'primary_key': ['the_glass_id'],
         'foreign_keys': [],
+        'unique_constraints': None,
         'indexes': [],
-        'scope': 'profile',
+        'scope': 'profiles',
+        'source_ids': False
     },
     'team_profiles': {
-        'used_by': ['etl', 'publish'],
         'entity': 'team',
         'schema': 'core',
         'primary_key': ['the_glass_id'],
         'foreign_keys': [],
+        'unique_constraints': None,
         'indexes': [],
-        'scope': 'profile',
+        'scope': 'profiles',
+        'source_ids': True
     },
     'player_profiles': {
-        'used_by': ['etl', 'publish'],
         'entity': 'player',
         'schema': 'core',
         'primary_key': ['the_glass_id'],
         'foreign_keys': [],
+        'unique_constraints': None,
         'indexes': [],
-        'scope': 'profile',
+        'scope': 'profiles',
+        'source_ids': True
     },
     # ------------------------------------------------------------------
     # STATS TABLES (per-league schema)
     # ------------------------------------------------------------------
     'player_season_stats': {
-        'used_by': ['etl', 'publish'],
         'entity': 'player',
         'schema': 'league',
         'primary_key': ['player_id', 'team_id', 'season', 'season_type'],
@@ -105,6 +108,7 @@ TABLES: Dict[str, TableDef] = {
                 'ref_schema': 'core',
                 'ref_table':  'player_profiles',
                 'ref_column': 'the_glass_id',
+                'strategy':   'profile_lookup',
                 'on_update':  'CASCADE',
                 'on_delete':  'CASCADE',
             },
@@ -113,15 +117,17 @@ TABLES: Dict[str, TableDef] = {
                 'ref_schema': 'core',
                 'ref_table':  'team_profiles',
                 'ref_column': 'the_glass_id',
+                'strategy':   'profile_lookup',
                 'on_update':  'CASCADE',
                 'on_delete':  'CASCADE',
             },
         ],
+        'unique_constraints': None,
         'indexes': [],
         'scope': 'stats',
+        'source_ids': False
     },
     'team_season_stats': {
-        'used_by': ['etl', 'publish'],
         'entity': 'team',
         'schema': 'league',
         'primary_key': ['team_id', 'season', 'season_type'],
@@ -131,18 +137,20 @@ TABLES: Dict[str, TableDef] = {
                 'ref_schema': 'core',
                 'ref_table':  'team_profiles',
                 'ref_column': 'the_glass_id',
+                'strategy':   'profile_lookup',
                 'on_update':  'CASCADE',
                 'on_delete':  'CASCADE',
             },
         ],
+        'unique_constraints': None,
         'indexes': [],
         'scope': 'stats',
+        'source_ids': False
     },
     # ------------------------------------------------------------------
     # ROSTER TABLES (core schema)
     # ------------------------------------------------------------------
     'league_rosters': {
-        'used_by': ['etl', 'publish'],
         'entity': 'team',
         'schema': 'core',
         'primary_key': ['league_id', 'team_id'],
@@ -152,26 +160,29 @@ TABLES: Dict[str, TableDef] = {
                 'ref_schema': 'core',
                 'ref_table':  'league_profiles',
                 'ref_column': 'the_glass_id',
+                'strategy':   'profile_lookup',
                 'on_update':  'CASCADE',
-                'on_delete':  'RESTRICT',
+                'on_delete':  'CASCADE',
             },
             {
                 'column':     'team_id',
                 'ref_schema': 'core',
                 'ref_table':  'team_profiles',
                 'ref_column': 'the_glass_id',
+                'strategy':   'profile_lookup',
                 'on_update':  'CASCADE',
                 'on_delete':  'CASCADE',
             },
         ],
+        'unique_constraints': None,
         'indexes': [
             {'name': 'league_id', 'columns': ['league_id']},
             {'name': 'team_id', 'columns': ['team_id']},
         ],
-        'scope': 'roster',
+        'scope': 'rosters',
+        'source_ids': False
     },
     'team_rosters': {
-        'used_by': ['etl', 'publish'],
         'entity': 'player',
         'schema': 'core',
         'primary_key': ['team_id', 'player_id'],
@@ -181,6 +192,7 @@ TABLES: Dict[str, TableDef] = {
                 'ref_schema': 'core',
                 'ref_table':  'team_profiles',
                 'ref_column': 'the_glass_id',
+                'strategy':   'profile_lookup',
                 'on_update':  'CASCADE',
                 'on_delete':  'CASCADE',
             },
@@ -189,85 +201,95 @@ TABLES: Dict[str, TableDef] = {
                 'ref_schema': 'core',
                 'ref_table':  'player_profiles',
                 'ref_column': 'the_glass_id',
+                'strategy':   'profile_lookup',
                 'on_update':  'CASCADE',
                 'on_delete':  'CASCADE',
             },
         ],
+        'unique_constraints': None,
         'indexes': [
             {'name': 'team_id', 'columns': ['team_id']},
             {'name': 'player_id', 'columns': ['player_id']},
         ],
-        'scope': 'roster',
+        'scope': 'rosters',
+        'source_ids': False
     },
     # ------------------------------------------------------------------
-    # OPERATIONAL TABLES (per-league schema)
-    #
-    # ETL/publish share runs/tasks. ETL also owns backfill_tracker.
-    # The ``pipeline`` column ('etl' | 'publish') acts as discriminator on
-    # shared tables.
-    #
-    # runs              -- one row per pipeline execution (top-level audit)
-    # tasks             -- one row per resumable work unit within a run:
-    #                       ETL: dataset + tier + column group
-    #                       publish: tab_name
-    # backfill_tracker  -- per (entity, season, season_type, source) coverage
-    #                      signature for historical stats completeness checks.
-    #
-    # Columns are defined in DB_COLUMNS; table metadata specifies primary_key
-    # and unique constraints.  The DDL generator looks up column types from
-    # the column registry.
+    # OPERATIONAL TABLES (core schema)
     # ------------------------------------------------------------------
     'runs': {
-        'used_by': ['etl', 'publish'],
         'entity': None,
-        'schema': 'league',
+        'schema': 'core',
         'primary_key': ['run_id'],
-        'foreign_keys': [],
+        'foreign_keys': [
+            {
+                'column':     'league_id',
+                'ref_schema': 'core',
+                'ref_table':  'league_profiles',
+                'ref_column': 'the_glass_id',
+                'strategy':   'profile_lookup',
+                'on_update':  'CASCADE',
+                'on_delete':  'CASCADE',
+            }
+        ],
+        'unique_constraints': None,
         'indexes': [
             {'name': 'pipeline_status', 'columns': ['pipeline', 'status']},
         ],
         'scope': 'runs',
+        'source_ids': False
     },
     'tasks': {
-        'used_by': ['etl', 'publish'],
         'entity': None,
-        'schema': 'league',
+        'schema': 'core',
         'primary_key': ['task_id'],
-        'unique_constraints': [['run_id', 'pipeline', 'item_key']],
         'foreign_keys': [
             {
-                'column': 'run_id',
-                'ref_schema': None,  # Same schema (league)
-                'ref_table': 'runs',
+                'column':     'run_id',
+                'ref_schema': 'core',
+                'ref_table':  'runs',
                 'ref_column': 'run_id',
-                'on_update': 'CASCADE',
-                'on_delete': 'CASCADE',
+                'strategy':   'direct',
+                'on_update':  'CASCADE',
+                'on_delete':  'CASCADE',
+            },
+            {
+                'column':     'league_id',
+                'ref_schema': 'core',
+                'ref_table':  'league_profiles',
+                'ref_column': 'the_glass_id',
+                'strategy':   'profile_lookup',
+                'on_update':  'CASCADE',
+                'on_delete':  'CASCADE',
             },
         ],
+        'unique_constraints': [['run_id', 'item_key']],
         'indexes': [
             {'name': 'run_id_status', 'columns': ['run_id', 'status']},
         ],
         'scope': 'tasks',
+        'source_ids': False
     },
     'backfill_tracker': {
-        'used_by': ['etl'],
         'entity': None,
-        'schema': 'league',
-        'primary_key': ['entity_type', 'season', 'season_type', 'source_key'],
-        'foreign_keys': [],
+        'schema': 'core',
+        'primary_key': ['league_id', 'entity_type', 'season', 'season_type', 'source_key'],
+        'foreign_keys': [
+            {
+                'column':     'league_id',
+                'ref_schema': 'core',
+                'ref_table':  'league_profiles',
+                'ref_column': 'the_glass_id',
+                'strategy':   'profile_lookup',
+                'on_update':  'CASCADE',
+                'on_delete':  'CASCADE',
+            },
+        ],
+        'unique_constraints': None,
         'indexes': [
             {'name': 'entity_season', 'columns': ['entity_type', 'season', 'season_type']},
         ],
         'scope': 'backfill',
-    },
+        'source_ids': False
+    }
 }
-
-
-# ============================================================================
-# FILTERED VIEWS
-# ============================================================================
-
-PROFILE_TABLES = {k: v for k, v in TABLES.items() if v['scope'] == 'profile'}
-STATS_TABLES = {k: v for k, v in TABLES.items() if v['scope'] == 'stats'}
-ROSTER_TABLES = {k: v for k, v in TABLES.items() if v['scope'] == 'roster'}
-OPERATIONAL_TABLES = {k: v for k, v in TABLES.items() if v['scope'] in ('runs', 'tasks', 'backfill')}

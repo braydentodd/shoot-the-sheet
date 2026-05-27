@@ -5,15 +5,13 @@ Pure resolvers over the table registries in
 :mod:`src.core.definitions.tables`.  Builds qualified table names.
 """
 
-from src.core.definitions.tables import (
-    CORE_SCHEMA,
-    PROFILE_TABLES,
-    STATS_TABLES,
-)
+from src.core.definitions.tables import CORE_SCHEMA, TABLES
 
 
-_PROFILE_BY_ENTITY = {meta['entity']: name for name, meta in PROFILE_TABLES.items()}
-_STATS_BY_ENTITY = {meta['entity']: name for name, meta in STATS_TABLES.items()}
+def _normalize_scope(s: str) -> str:
+    if not s:
+        return s
+    return s if s.endswith('s') else f"{s}s"
 
 
 def get_table_name(entity: str, scope: str, league_key: str = None) -> str:
@@ -22,16 +20,28 @@ def get_table_name(entity: str, scope: str, league_key: str = None) -> str:
     ``scope == 'profiles'`` -> ``core.{entity}_profiles`` (league_key ignored).
     ``scope == 'stats'``  -> ``{league_key}.{entity}_season_stats`` (league_key required).
     """
-    if scope == 'profiles':
-        if entity not in _PROFILE_BY_ENTITY:
-            raise ValueError(f"No profile table for entity {entity!r}")
-        return f'{CORE_SCHEMA}.{_PROFILE_BY_ENTITY[entity]}'
+    norm_scope = _normalize_scope(scope)
 
-    if scope == 'stats':
-        if entity not in _STATS_BY_ENTITY:
-            raise ValueError(f"No stats table for entity {entity!r}")
+    candidates = []
+    for name, meta in TABLES.items():
+        meta_scope = _normalize_scope(meta.get('scope') or '')
+        if meta.get('entity') != entity:
+            continue
+        if meta_scope != norm_scope:
+            continue
+        candidates.append((name, meta))
+
+    if not candidates:
+        raise ValueError(f"No table for entity {entity!r} scope {scope!r}")
+    if len(candidates) > 1:
+        raise ValueError(f"Ambiguous table resolution for entity {entity!r} scope {scope!r}")
+
+    name, meta = candidates[0]
+    schema = meta.get('schema') or 'core'
+    if schema == 'league':
         if not league_key:
-            raise ValueError(f"league_key required for stats scope (entity {entity!r})")
-        return f'{league_key}.{_STATS_BY_ENTITY[entity]}'
-
-    raise ValueError(f"Unsupported scope: {scope!r}")
+            raise ValueError(f"league_key required for scope {scope!r} (entity {entity!r})")
+        return f"{league_key}.{name}"
+    if schema == 'core':
+        return f"{CORE_SCHEMA}.{name}"
+    return f"{schema}.{name}"

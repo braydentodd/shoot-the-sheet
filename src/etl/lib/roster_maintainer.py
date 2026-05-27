@@ -25,34 +25,13 @@ from typing import Any, Dict, Iterable, List, Set, Tuple
 
 from src.core.definitions.leagues import LEAGUES
 from src.core.lib.postgres import db_connection, quote_col
-from src.etl.lib.sources_resolver import get_source_id_column
 from src.core.definitions.tables import CORE_SCHEMA, THE_GLASS_ID_COLUMN
+from src.core.lib.fk_resolver import load_fk_mapping
 
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Source -> the_glass_id resolution
-# ---------------------------------------------------------------------------
 
-def _resolve_glass_ids(
-    conn: Any,
-    profile_table: str,
-    source_id_col: str,
-    source_ids: Iterable[Any],
-) -> Dict[str, int]:
-    """Return ``{str(source_id): the_glass_id}`` for the given source IDs."""
-    ids = [v for v in source_ids if v is not None]
-    if not ids:
-        return {}
-    with conn.cursor() as cur:
-        cur.execute(
-            f"SELECT {quote_col(source_id_col)}, {quote_col(THE_GLASS_ID_COLUMN)} "
-            f"FROM {profile_table} "
-            f"WHERE {quote_col(source_id_col)} = ANY(%s)",
-            (ids,),
-        )
-        return {str(row[0]): int(row[1]) for row in cur.fetchall()}
 
 
 
@@ -246,9 +225,6 @@ def sync_rosters(
     pairs = _normalize_roster_snapshot(roster_pairs)
     league_abbr = LEAGUES[league_key]['abbr']
 
-    src_col = get_source_id_column(source_key)
-    teams_table = f'{CORE_SCHEMA}.team_profiles'
-    players_table = f'{CORE_SCHEMA}.player_profiles'
     league_rosters = f'{CORE_SCHEMA}.league_rosters'
     team_rosters = f'{CORE_SCHEMA}.team_rosters'
 
@@ -270,8 +246,8 @@ def sync_rosters(
         team_source_ids = {t for t, _, _ in pairs}
         player_source_ids = {p for _, p, _ in pairs}
 
-        team_map = _resolve_glass_ids(conn, teams_table, src_col, team_source_ids)
-        player_map = _resolve_glass_ids(conn, players_table, src_col, player_source_ids)
+        team_map = load_fk_mapping(conn, 'team', source_key, team_source_ids)
+        player_map = load_fk_mapping(conn, 'player', source_key, player_source_ids)
 
         teams_unresolved = {sid for sid in team_source_ids if str(sid) not in team_map}
         players_unresolved = {sid for sid in player_source_ids if str(sid) not in player_map}

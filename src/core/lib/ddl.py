@@ -2,51 +2,28 @@
 The Glass - DDL Generator
 
 Idempotent schema synchronization driven entirely by the central config dicts.
-Builds the ``core`` schema (profiles + rosters + the_glass_id sequence),
-the per-league stats schemas, and operational ETL tables.
-
-Public surface:
-    ensure_core_schema(conn)            - core schema + sequence + profile + roster tables
-    ensure_league_schema(league, conn)  - league schema + stats tables + ETL operational tables
-    ensure_league_profile(league, conn) - upsert a core.league_profiles row for a league key
-    ensure_all(league, conn=None)       - one-shot orchestrator (called from the CLI)
-
 The generator is purely additive: it CREATEs missing tables and ADDs
-missing columns, but never drops or alters existing structures.  Schema
+missing columns, but never drops or alters existing structures. Schema
 changes that require destructive migrations must be performed deliberately
 outside this module.
 """
 
 import logging
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 from src.core.lib.postgres import get_db_connection, quote_col
-from src.core.definitions.leagues import LEAGUES
-from src.core.definitions.tables import (
-    CORE_SCHEMA,
-    ROSTER_TABLES,
-    OPERATIONAL_TABLES,
-    PROFILE_TABLES,
-    STATS_TABLES,
-    THE_GLASS_ID_COLUMN,
-    THE_GLASS_ID_SEQUENCE,
-    THE_GLASS_ID_TYPE,
-)
-from src.core.definitions.columns import DB_COLUMNS
+from src.core.definitions.tables import TABLES
+from src.core.definitions.db_columns import DB_COLUMNS
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Source ID column resolution (private helper for DDL)
+# Source ID column resolution
 # ---------------------------------------------------------------------------
 
 def _get_source_id_columns_for_entity(entity: str) -> List[Tuple[str, str]]:
-    """Source-id columns to add to ``entity``'s profile table, in stable order.
-
-    A source contributes a column when it has a non-null ``entity_id_type``,
-    is external, and includes ``entity`` in its ``applies_to`` list.
-    """
+    """Source-id columns to add to ``entity``'s profile table, in stable order."""
     from src.etl.definitions.sources import SOURCES
     from src.etl.lib.sources_resolver import get_source_id_column
 
@@ -72,46 +49,28 @@ def _get_source_id_columns_for_entity(entity: str) -> List[Tuple[str, str]]:
 # Column-set assembly
 # ---------------------------------------------------------------------------
 
-def _matches(
-    col_meta: Dict[str, Any],
-    scope: str,
-    entity: str,
-    table_name: str = None,
-) -> bool:
+def _matches(col_meta: Dict[str, Any], scope: str, entity: str) -> bool:
     """Whether a DB_COLUMNS entry contributes to the given (scope, entity) table."""
-    col_scope = col_meta.get('scope', [])
-    # Normalize scope to list for comparison
-    if isinstance(col_scope, str):
-        col_scope = [col_scope]
-    if scope not in col_scope:
+    # Strictly trust the List[str] contract defined in TypedDict
+    if scope not in col_meta.get('scope', []):
         return False
-    # If entity is None, skip entity_types check (for roster/operational tables)
     if entity is None:
         return True
-    return entity in col_meta.get('entity_types', [])
+    return entity in (col_meta.get('entity_types') or [])
 
 
-def _data_columns_for(
-    scope: str,
-    entity: str,
-    table_name: str = None,
-) -> List[Tuple[str, Dict[str, Any]]]:
-    """Return ``[(col_name, col_meta), ...]`` for every DB_COLUMNS entry that
-    belongs in the table identified by (scope, entity).
-
-    For tables with ``has_opponent_columns``, also emits ``opp_<col>`` for
-    columns whose ``entity_types`` lists ``'opponent'``.
-    """
+def _data_columns_for(scope: str, entity: str) -> List[Tuple[str, Dict[str, Any]]]:
+    """Return ``[(col_name, col_meta), ...]`` for every DB_COLUMNS entry."""
     out: List[Tuple[str, Dict[str, Any]]] = []
     for name, meta in DB_COLUMNS.items():
-        if not _matches(meta, scope, entity, table_name=table_name):
+        if not _matches(meta, scope, entity):
             continue
         out.append((name, meta))
     return out
 
 
 # ---------------------------------------------------------------------------
-# Single-column DDL fragment
+# Single-column DDL fragments
 # ---------------------------------------------------------------------------
 
 def _format_default(default: Any, pg_type: str) -> str:
@@ -120,9 +79,7 @@ def _format_default(default: Any, pg_type: str) -> str:
         return ''
     if isinstance(default, bool):
         return f"DEFAULT {'TRUE' if default else 'FALSE'}"
-    if isinstance(default, (int, float)):
-        return f'DEFAULT {default}'
-    return f'DEFAULT {default}'  # already a SQL literal / function call
+    return f'DEFAULT {default}'
 
 
 def _column_ddl(name: str, meta: Dict[str, Any]) -> str:
@@ -136,10 +93,10 @@ def _column_ddl(name: str, meta: Dict[str, Any]) -> str:
     return ' '.join(parts)
 
 
-def _foreign_key_ddl(fk: Dict[str, Any], default_schema: str = None) -> str:
+def _foreign_key_ddl(fk: Dict[str, Any], default_schema: str = 'core') -> str:
     """Render a ``FOREIGN KEY`` clause."""
-    ref_schema = fk['ref_schema'] or default_schema
-    target = f"{ref_schema}.{fk['ref_table']}" if ref_schema else fk['ref_table']
+    ref_schema = fk.get('ref_schema') or default_schema
+    target = f"{ref_schema}.{fk['ref_table']}"
     return (
         f"FOREIGN KEY ({quote_col(fk['column'])}) "
         f"REFERENCES {target}"
@@ -171,174 +128,76 @@ def _existing_columns(cur, schema: str, table: str) -> set:
 
 
 # ---------------------------------------------------------------------------
-# Core schema bootstrap
+# Core Schema Build Engine
 # ---------------------------------------------------------------------------
 
-def _ensure_sequence(cur) -> None:
-    """Create the_glass_id sequence in the core schema if absent."""
-    schema, _, name = THE_GLASS_ID_SEQUENCE.rpartition('.')
-    cur.execute(
-        f"CREATE SEQUENCE IF NOT EXISTS {THE_GLASS_ID_SEQUENCE} "
-        f"AS {THE_GLASS_ID_TYPE} START 1 MINVALUE 1 NO CYCLE"
-    )
-
-
-def _the_glass_id_pk_clause() -> str:
-    """Render the PK column clause used by every profile table."""
-    return (
-        f"{quote_col(THE_GLASS_ID_COLUMN)} {THE_GLASS_ID_TYPE} "
-        f"PRIMARY KEY DEFAULT nextval('{THE_GLASS_ID_SEQUENCE}')"
-    )
-
-
-def _create_profile_table(cur, table_name: str, meta: Dict[str, Any]) -> int:
-    """CREATE TABLE for a profile table.  Returns column count."""
-    entity = meta['entity']
-    qualified = f'{CORE_SCHEMA}.{table_name}'
-
-    columns = _data_columns_for(scope='profiles', entity=entity, table_name=table_name)
-    source_id_cols = _get_source_id_columns_for_entity(entity)
-
-    fragments: List[str] = [_the_glass_id_pk_clause()]
-    fragments.extend(_column_ddl(name, m) for name, m in columns)
-    for src_col, pg_type in source_id_cols:
-        fragments.append(f"{quote_col(src_col)} {pg_type}")
-
-    # UNIQUE constraints: source ID columns and DB_COLUMNS entries marked unique.
-    for src_col, _ in source_id_cols:
-        fragments.append(f"UNIQUE ({quote_col(src_col)})")
-    for name, m in columns:
-        if m.get('unique'):
-            fragments.append(f"UNIQUE ({quote_col(name)})")
-    for col in []:
-        fragments.append(f"UNIQUE ({quote_col(col)})")
-
-    cur.execute(f"CREATE TABLE {qualified} (\n  " + ",\n  ".join(fragments) + "\n)")
-    return len(fragments)
-
-
-def _create_roster_table(cur, table_name: str, meta: Dict[str, Any]) -> int:
-    """CREATE TABLE for a roster table.  Returns column count.
-
-    FK columns are derived from ``meta['foreign_keys']`` (BIGINT NOT NULL).
-    Shared operational columns come from
-    DB_COLUMNS with scope='rosters'.
-    """
-    qualified = f'{CORE_SCHEMA}.{table_name}'
-    # Emit FK columns first, in declaration order
-    fk_col_names = [fk['column'] for fk in meta['foreign_keys']]
-    # Deduplicate while preserving order (a column may appear in multiple FKs)
-    seen: set = set()
-    unique_fk_cols = [c for c in fk_col_names if not (c in seen or seen.add(c))]
-
+def _create_table(cur, schema_name: str, table_name: str, meta: Dict[str, Any]) -> int:
+    """Unified CREATE TABLE builder driven strictly by registry config."""
     fragments: List[str] = []
-    for col in unique_fk_cols:
-        fragments.append(f"{quote_col(col)} BIGINT NOT NULL")
+    seen_columns: set = set()
 
-    # Operational data columns
-    roster_entity = meta['entity']
-    data_columns = _data_columns_for(
-        scope='rosters', entity=roster_entity, table_name=table_name,
-    )
-    fk_set = set(unique_fk_cols)
-    for col_name, col_def in data_columns:
-        if col_name in fk_set:
-            continue  # already emitted above
-        ddl = f"{quote_col(col_name)} {col_def['type']}"
-        if not col_def.get('nullable', True):
-            ddl += ' NOT NULL'
-        default_val = col_def.get('default')
-        if default_val is not None:
-            ddl += f' DEFAULT {default_val}'
-        fragments.append(ddl)
+    pk_cols = meta.get('primary_key') or []
 
-    pk_cols = ', '.join(quote_col(c) for c in meta['primary_key'])
-    fragments.append(f"PRIMARY KEY ({pk_cols})")
-    for fk in meta['foreign_keys']:
-        fragments.append(_foreign_key_ddl(fk, default_schema=CORE_SCHEMA))
-    cur.execute(f"CREATE TABLE {qualified} (\n  " + ",\n  ".join(fragments) + "\n)")
+    # 1. Primary Keys
+    for col in pk_cols:
+        # If a PK entry is missing from DB_COLUMNS (e.g. run_id/task_id),
+        # fall back to a reasonable identity/BIGINT default rather than
+        # raising a KeyError. Registries are preferred, but this keeps
+        # the sync resilient during iterative migration work.
+        default_meta = {'type': 'BIGINT GENERATED BY DEFAULT AS IDENTITY', 'nullable': False}
+        col_meta = DB_COLUMNS.get(col, default_meta)
+        if col not in seen_columns:
+            fragments.append(_column_ddl(col, col_meta))
+            seen_columns.add(col)
 
-    # Create indexes
-    for idx in meta.get('indexes', []):
-        idx_name = f"idx_{table_name}_{idx['name']}"
-        idx_cols = ', '.join(quote_col(c) for c in idx['columns'])
-        cur.execute(f"CREATE INDEX IF NOT EXISTS {idx_name} ON {qualified} ({idx_cols})")
-    return len(fragments)
-
-
-def _create_stats_table(cur, league_key: str, table_name: str, meta: Dict[str, Any]) -> int:
-    """CREATE TABLE for a per-league stats table.  Returns column count."""
-    entity = meta['entity']
-    qualified = f'{league_key}.{table_name}'
-
-    # Emit FK columns first, in declaration order
-    fk_col_names = [fk['column'] for fk in meta.get('foreign_keys', [])]
-    seen: set = set()
-    unique_fk_cols = [c for c in fk_col_names if not (c in seen or seen.add(c))]
-
-    fragments: List[str] = []
-    for col in unique_fk_cols:
-        fragments.append(f"{quote_col(col)} {THE_GLASS_ID_TYPE} NOT NULL")
-
-    data_cols = _data_columns_for(scope='stats', entity=entity, table_name=table_name)
-    declared = {n for n, _ in data_cols}
-
-    fragments.extend(_column_ddl(name, m) for name, m in data_cols if name not in unique_fk_cols)
-
-    pk_cols = meta['primary_key']
-    pk_str = ', '.join(quote_col(c) for c in pk_cols)
-    fragments.append(f"PRIMARY KEY ({pk_str})")
-
+    # 2. Foreign Keys
     for fk in meta.get('foreign_keys', []):
-        fragments.append(_foreign_key_ddl(fk, default_schema=league_key))
+        col = fk['column']
+        if col not in seen_columns:
+            col_meta = DB_COLUMNS.get(col, {'type': 'BIGINT', 'nullable': False})
+            fragments.append(_column_ddl(col, col_meta))
+            seen_columns.add(col)
 
-    cur.execute(f"CREATE TABLE {qualified} (\n  " + ",\n  ".join(fragments) + "\n)")
+    # 3. Data Columns
+    col_scope = meta.get('scope', '')
+    for col_name, col_def in _data_columns_for(scope=col_scope, entity=meta.get('entity')):
+        if col_name not in seen_columns:
+            fragments.append(_column_ddl(col_name, col_def))
+            seen_columns.add(col_name)
 
-    for idx in meta.get('indexes', []):
-        cols = ', '.join(quote_col(c) for c in idx['columns'])
-        cur.execute(f"CREATE INDEX {idx['name']} ON {qualified} ({cols})")
+    # 4. Source IDs
+    if meta.get('source_ids', False) and meta.get('entity'):
+        for src_col, pg_type in _get_source_id_columns_for_entity(meta['entity']):
+            if src_col not in seen_columns:
+                fragments.append(f"{quote_col(src_col)} {pg_type}")
+                seen_columns.add(src_col)
 
-    return len(fragments)
+    # 5. Unique Constraints (Column Level)
+    for name, m in _data_columns_for(scope=col_scope, entity=meta.get('entity')):
+        if m.get('unique') and name not in pk_cols:
+            fragments.append(f"UNIQUE ({quote_col(name)})")
 
-
-def _create_operational_table(cur, league_key: str, table_name: str, meta: Dict[str, Any]) -> int:
-    """CREATE TABLE for an operational table (runs / tasks / backfill tracker)."""
-    qualified = f'{league_key}.{table_name}'
-    scope = meta.get('scope') or ('runs' if table_name == 'runs' else 'tasks')
-    columns = _data_columns_for(scope=scope, entity=None, table_name=table_name)
-    
-    fragments: List[str] = []
-
-    pk_cols = meta.get('primary_key', [])
-    for pk in pk_cols:
-        if pk in ('run_id', 'task_id', 'id'):
-            fragments.append(f'{quote_col(pk)} SERIAL')
-    
-    for col_name, col_def in columns:
-        parts = [quote_col(col_name), col_def['type']]
-        if not col_def.get('nullable', True):
-            parts.append('NOT NULL')
-        default_val = col_def.get('default')
-        if default_val is not None:
-            parts.append(f"DEFAULT {default_val}")
-        fragments.append(' '.join(parts))
-
+    # 6. Table Constraints (PK, FK, Unique Arrays)
     if pk_cols:
         pk_str = ', '.join(quote_col(c) for c in pk_cols)
         fragments.append(f"PRIMARY KEY ({pk_str})")
 
-    for uc in meta.get('unique_constraints') or []:
-        uc_str = ', '.join(quote_col(c) for c in uc)
-        fragments.append(f"UNIQUE ({uc_str})")
-
     for fk in meta.get('foreign_keys', []):
-        fragments.append(_foreign_key_ddl(fk, default_schema=league_key))
+        ref_schema = 'core' if fk['ref_schema'] == 'core' else schema_name
+        fragments.append(_foreign_key_ddl(fk, default_schema=ref_schema))
 
-    cur.execute(f"CREATE TABLE {qualified} (\n  " + ",\n  ".join(fragments) + "\n)")
-    
+    for uc in meta.get('unique_constraints') or []:
+        uc_cols = ', '.join(quote_col(c) for c in uc)
+        fragments.append(f"UNIQUE ({uc_cols})")
+
+    # Build Statement
+    cur.execute(f"CREATE TABLE {schema_name}.{table_name} (\n  " + ",\n  ".join(fragments) + "\n)")
+
+    # 7. Indexes
     for idx in meta.get('indexes', []):
+        idx_name = f"idx_{table_name}_{idx['name']}"
         cols = ', '.join(quote_col(c) for c in idx['columns'])
-        cur.execute(f"CREATE INDEX {idx['name']} ON {qualified} ({cols})")
+        cur.execute(f"CREATE INDEX IF NOT EXISTS {idx_name} ON {schema_name}.{table_name} ({cols})")
 
     return len(fragments)
 
@@ -347,147 +206,53 @@ def _create_operational_table(cur, league_key: str, table_name: str, meta: Dict[
 # Additive ALTER TABLE helpers
 # ---------------------------------------------------------------------------
 
-def _add_missing_columns(
-    cur,
-    schema: str,
-    table: str,
-    expected: Iterable[Tuple[str, str]],
-    actions: List[str],
-) -> None:
-    """Compare expected (name, pg_type) pairs against information_schema and
-    issue ``ADD COLUMN IF NOT EXISTS`` for anything missing.
-    """
-    existing = _existing_columns(cur, schema, table)
-    for col_name, pg_type in expected:
-        if col_name in existing:
-            continue
-        cur.execute(
-            f'ALTER TABLE {schema}.{table} '
-            f'ADD COLUMN IF NOT EXISTS {quote_col(col_name)} {pg_type}'
-        )
-        actions.append(f'added {col_name}')
-
-
-
-
-
-def _sync_profile_table(cur, table_name: str, meta: Dict[str, Any]) -> List[str]:
+def _sync_table(cur, table_name: str, meta: Dict[str, Any], schema_name: str) -> List[str]:
+    """Dynamically syncs table structure by diffing against config."""
     actions: List[str] = []
-    if not _table_exists(cur, CORE_SCHEMA, table_name):
-        n = _create_profile_table(cur, table_name, meta)
-        actions.append(f'created ({n} fragments)')
-        return actions
 
-    expected: List[Tuple[str, str]] = [(THE_GLASS_ID_COLUMN, THE_GLASS_ID_TYPE)]
-    profile_columns = _data_columns_for(
-        scope='profiles', entity=meta['entity'], table_name=table_name,
-    )
-    for name, m in profile_columns:
-        expected.append((name, m['type']))
-    source_id_columns = _get_source_id_columns_for_entity(meta['entity'])
-    for src_col, pg_type in source_id_columns:
-        expected.append((src_col, pg_type))
-
-    _add_missing_columns(cur, CORE_SCHEMA, table_name, expected, actions)
-
-    unique_cols = [src_col for src_col, _ in source_id_columns]
-    unique_cols.extend([name for name, col_meta in profile_columns if col_meta.get('unique')])
-    unique_cols.extend([])
-    return actions
-
-
-def _sync_roster_table(cur, table_name: str, meta: Dict[str, Any]) -> List[str]:
-    actions: List[str] = []
-    if not _table_exists(cur, CORE_SCHEMA, table_name):
-        n = _create_roster_table(cur, table_name, meta)
+    if not _table_exists(cur, schema_name, table_name):
+        n = _create_table(cur, schema_name, table_name, meta)
         actions.append(f'created ({n} columns)')
         return actions
 
-    # FK columns (BIGINT NOT NULL) derived from foreign_keys metadata
-    seen: set = set()
-    fk_expected = [
-        (fk['column'], 'BIGINT')
-        for fk in meta['foreign_keys']
-        if not (fk['column'] in seen or seen.add(fk['column']))
-    ]
-    # Operational data columns from DB_COLUMNS
-    roster_entity = meta['entity']
-    op_columns = _data_columns_for(
-        scope='rosters', entity=roster_entity, table_name=table_name,
-    )
-    fk_names = {c for c, _ in fk_expected}
-    op_expected = [
-        (name, col_meta['type'])
-        for name, col_meta in op_columns
-        if name not in fk_names
-    ]
-    expected = fk_expected + op_expected
-    _add_missing_columns(cur, CORE_SCHEMA, table_name, expected, actions)
-    return actions
+    expected: List[Tuple[str, str]] = []
 
+    for pk in meta.get('primary_key') or []:
+        pk_meta = DB_COLUMNS[pk] # STRICT enforcement
+        expected.append((pk, pk_meta['type']))
 
-def _sync_stats_table(cur, league_key: str, table_name: str,
-                      meta: Dict[str, Any]) -> List[str]:
-    actions: List[str] = []
-    if not _table_exists(cur, league_key, table_name):
-        n = _create_stats_table(cur, league_key, table_name, meta)
-        actions.append(f'created ({n} columns)')
-        return actions
+    for fk in meta.get('foreign_keys', []):
+        col = fk['column']
+        if not any(col == e[0] for e in expected):
+            fk_meta = DB_COLUMNS[col] # STRICT enforcement
+            expected.append((col, fk_meta['type']))
 
-    fk_col_names = [fk['column'] for fk in meta.get('foreign_keys', [])]
-    seen = set()
-    unique_fk_cols = [c for c in fk_col_names if not (c in seen or seen.add(c))]
-    
-    expected: List[Tuple[str, str]] = [(c, THE_GLASS_ID_TYPE) for c in unique_fk_cols]
-
-    for name, m in _data_columns_for(scope='stats', entity=meta['entity'],
-                                     table_name=table_name):
-        if name not in unique_fk_cols:
+    col_scope = meta.get('scope', '')
+    fk_set = {c for c, _ in expected}
+    for name, m in _data_columns_for(scope=col_scope, entity=meta.get('entity')):
+        if name not in fk_set:
             expected.append((name, m['type']))
 
-    _add_missing_columns(cur, league_key, table_name, expected, actions)
-    return actions
+    if meta.get('source_ids', False) and meta.get('entity'):
+        for src_col, pg_type in _get_source_id_columns_for_entity(meta['entity']):
+            if not any(src_col == e[0] for e in expected):
+                expected.append((src_col, pg_type))
 
-    expected: List[Tuple[str, str]] = [(THE_GLASS_ID_COLUMN, THE_GLASS_ID_TYPE)]
+    existing = _existing_columns(cur, schema_name, table_name)
+    for col_name, pg_type in expected:
+        if col_name not in existing:
+            cur.execute(f'ALTER TABLE {schema_name}.{table_name} ADD COLUMN IF NOT EXISTS {quote_col(col_name)} {pg_type}')
+            actions.append(f'added {col_name}')
 
-    for name, m in _data_columns_for(scope='stats', entity=meta['entity'],
-                                     has_opponent_columns=has_opp,
-                                     table_name=table_name):
-        expected.append((name, m['type']))
-
-    _add_missing_columns(cur, league_key, table_name, expected, actions)
-    return actions
-
-
-def _sync_operational_table(cur, league_key: str, table_name: str,
-                            meta: Dict[str, Any]) -> List[str]:
-    actions: List[str] = []
-    if not _table_exists(cur, league_key, table_name):
-        n = _create_operational_table(cur, league_key, table_name, meta)
-        actions.append(f'created ({n} columns)')
-        return actions
-
-    scope = meta.get('scope') or ('runs' if table_name == 'runs' else 'tasks')
-    columns = _data_columns_for(scope=scope, entity=None, table_name=table_name)
-    
-    pk_cols = meta.get('primary_key', [])
-    pk_expected = []
-    for pk in pk_cols:
-        if pk in ('run_id', 'task_id', 'id'):
-            pk_expected.append((pk, 'SERIAL'))
-            
-    expected = pk_expected + [(name, meta['type']) for name, meta in columns]
-    _add_missing_columns(cur, league_key, table_name, expected, actions)
     return actions
 
 
 # ---------------------------------------------------------------------------
-# Orchestrators
+# Unified Orchestrator
 # ---------------------------------------------------------------------------
 
-def ensure_core_schema(conn=None) -> Dict[str, List[str]]:
-    """Ensure the core schema, the_glass_id sequence, and profile + roster
-    tables all exist, applying any additive column changes."""
+def ensure_schema(schema_name: str, conn=None) -> Dict[str, List[str]]:
+    """Dynamically builds and validates any schema mapped in the TABLES config."""
     own = conn is None
     if own:
         conn = get_db_connection()
@@ -495,22 +260,20 @@ def ensure_core_schema(conn=None) -> Dict[str, List[str]]:
     actions: Dict[str, List[str]] = {}
     try:
         with conn.cursor() as cur:
-            cur.execute(f"CREATE SCHEMA IF NOT EXISTS {CORE_SCHEMA}")
-            _ensure_sequence(cur)
+            cur.execute(f"CREATE SCHEMA IF NOT EXISTS {schema_name}")
 
-            for name, meta in PROFILE_TABLES.items():
-                qualified = f'{CORE_SCHEMA}.{name}'
-                acts = _sync_profile_table(cur, name, meta)
-                actions[qualified] = acts
-                if acts:
-                    logger.info('Profile %s: %s', qualified, ', '.join(acts))
+            for name, meta in TABLES.items():
+                target_schema = 'core' if meta.get('schema') == 'core' else schema_name
+                
+                if target_schema != schema_name:
+                    continue
 
-            for name, meta in ROSTER_TABLES.items():
-                qualified = f'{CORE_SCHEMA}.{name}'
-                acts = _sync_roster_table(cur, name, meta)
+                qualified = f'{target_schema}.{name}'
+                acts = _sync_table(cur, name, meta, schema_name=target_schema)
                 actions[qualified] = acts
+                
                 if acts:
-                    logger.info('Roster %s: %s', qualified, ', '.join(acts))
+                    logger.info('Table %s: %s', qualified, ', '.join(acts))
 
         conn.commit()
         return actions
@@ -520,107 +283,3 @@ def ensure_core_schema(conn=None) -> Dict[str, List[str]]:
     finally:
         if own:
             conn.close()
-
-
-def ensure_league_schema(league_key: str, conn=None) -> Dict[str, List[str]]:
-    """Ensure the league's schema + stats tables + ETL operational tables."""
-    own = conn is None
-    if own:
-        conn = get_db_connection()
-
-    actions: Dict[str, List[str]] = {}
-    try:
-        with conn.cursor() as cur:
-            cur.execute(f"CREATE SCHEMA IF NOT EXISTS {league_key}")
-
-            for name, meta in STATS_TABLES.items():
-                qualified = f'{league_key}.{name}'
-                acts = _sync_stats_table(cur, league_key, name, meta)
-                actions[qualified] = acts
-                if acts:
-                    logger.info('Stats %s: %s', qualified, ', '.join(acts))
-
-            for name, meta in OPERATIONAL_TABLES.items():
-                qualified = f'{league_key}.{name}'
-                acts = _sync_operational_table(cur, league_key, name, meta)
-                actions[qualified] = acts
-                if acts:
-                    logger.info('Operational %s: %s', qualified, ', '.join(acts))
-
-        conn.commit()
-        return actions
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        if own:
-            conn.close()
-
-
-def ensure_all(league_key: str, conn=None) -> Dict[str, List[str]]:
-    """Bootstrap entrypoint: core schema + the league's schema."""
-    out: Dict[str, List[str]] = {}
-    out.update(ensure_core_schema(conn))
-    out.update(ensure_league_schema(league_key, conn))
-    return out
-
-
-# ---------------------------------------------------------------------------
-# League profile row bootstrap
-# ---------------------------------------------------------------------------
-
-def ensure_league_profile(league_key: str, conn) -> int:
-    """Ensure ``core.league_profiles`` has a row for ``league_key``.
-
-    ``league_key`` is the pipeline's canonical identifier (e.g. ``'nba'``).
-    The persisted natural identifier is the league abbreviation (``abbr``),
-    which is UNIQUE on ``core.league_profiles``. Idempotent: if a row already
-    exists its the_glass_id is returned unchanged.
-
-    Columns to populate are auto-derived from DB_COLUMNS: any column whose
-    scope includes 'entities', entity_types includes 'league', and whose name
-    appears as a key in the LEAGUES config entry. This means adding a new
-    league-level field only requires updating DB_COLUMNS and LEAGUES — this
-    function never needs to change.
-    """
-    if league_key not in LEAGUES:
-        raise ValueError(f"Unknown league: {league_key!r}")
-
-    league = LEAGUES[league_key]
-    league_abbr = league['abbr']
-    with conn.cursor() as cur:
-        cur.execute(
-            f"SELECT {quote_col(THE_GLASS_ID_COLUMN)} "
-            f"FROM {CORE_SCHEMA}.league_profiles WHERE abbr = %s",
-            (league_abbr,),
-        )
-        row = cur.fetchone()
-        if row is not None:
-            return int(row[0])
-
-        # Derive columns that apply to league profiles and are present in
-        # LEAGUES[league_key].
-        profile_cols = {
-            col_name: league[col_name]
-            for col_name, col_meta in DB_COLUMNS.items()
-            if 'league' in (col_meta.get('entity_types') or [])
-            and 'profiles' in (col_meta.get('scope') or [])
-            and col_name in league
-        }
-
-        cols = list(profile_cols.keys())
-        values = list(profile_cols.values())
-        col_str = ', '.join(quote_col(c) for c in cols)
-        placeholders = ', '.join(['%s'] * len(cols))
-
-        cur.execute(
-            f"INSERT INTO {CORE_SCHEMA}.league_profiles ({col_str}) "
-            f"VALUES ({placeholders}) RETURNING {quote_col(THE_GLASS_ID_COLUMN)}",
-            values,
-        )
-        new_id = int(cur.fetchone()[0])
-        logger.info(
-            'Registered league %r in core.league_profiles (the_glass_id=%d)',
-            league_key, new_id,
-        )
-        return new_id

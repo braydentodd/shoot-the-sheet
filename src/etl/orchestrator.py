@@ -25,7 +25,7 @@ ExecutionContext) lives here.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict, List, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Tuple, Union
 
 from src.core.lib.terminal import progress
 from src.core.lib.ddl import ensure_all, ensure_league_profile

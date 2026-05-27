@@ -13,7 +13,7 @@ module source-agnostic.
 import logging
 from typing import Any, Dict, List, Set, Union
 
-from src.core.definitions.columns import DB_COLUMNS
+from src.core.definitions.db_columns import DB_COLUMNS
 
 logger = logging.getLogger(__name__)
 

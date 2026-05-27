@@ -114,7 +114,7 @@ def get_rosters_fields(league_key: str, source_key: str) -> Dict[str, str]:
         Dict mapping column names to their source field names, or empty dict
         if the league/source has no rosters-scoped columns.
     """
-    from src.core.definitions.columns import DB_COLUMNS
+    from src.core.definitions.db_columns import DB_COLUMNS
     result = {}
     
     for col_name, col_def in DB_COLUMNS.items():

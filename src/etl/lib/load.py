@@ -22,14 +22,11 @@ from typing import Any, Dict, Iterable, List, Set, Tuple, Union
 from psycopg2.extras import execute_values
 
 from src.core.lib.postgres import db_connection, quote_col
-from src.core.definitions.tables import (
-    PROFILE_TABLES,
-    STATS_TABLES,
-    THE_GLASS_ID_COLUMN,
-)
+from src.core.definitions.tables import TABLES, THE_GLASS_ID_COLUMN
 from src.etl.lib.sources_resolver import get_default_external_source, get_source_id_column
 from src.core.lib.tables_resolver import get_table_name
 from src.etl.lib.entity_matcher import approve_entities
+from src.core.lib.fk_resolver import load_fk_mapping, resolve_fk_value_columns
 
 logger = logging.getLogger(__name__)
 
@@ -138,99 +135,6 @@ def bulk_copy(
 # ID resolution helpers
 # ---------------------------------------------------------------------------
 
-def _load_glass_id_map(
-    conn: Any,
-    entity: str,
-    source_key: str,
-    source_ids: Iterable[Any] = None,
-) -> Dict[str, int]:
-    """Load ``{str(source_id): the_glass_id}`` mapping from a profile table.
-
-    If ``source_ids`` is provided, only rows for those IDs are fetched.
-    """
-    profile_table = get_table_name(entity, 'profiles')
-    src_col = get_source_id_column(source_key)
-
-    sql_base = (
-        f"SELECT {quote_col(src_col)}, {quote_col(THE_GLASS_ID_COLUMN)} "
-        f"FROM {profile_table}"
-    )
-
-    with conn.cursor() as cur:
-        if source_ids is None:
-            cur.execute(sql_base)
-        else:
-            ids_list = [v for v in source_ids if v is not None]
-            if not ids_list:
-                return {}
-            cur.execute(
-                sql_base + f" WHERE {quote_col(src_col)} = ANY(%s)",
-                (ids_list,),
-            )
-        return {str(row[0]): int(row[1]) for row in cur.fetchall()}
-
-
-def _resolve_fk_value_columns(
-    rows: Dict[Any, Dict[str, Any]],
-    conn: Any,
-    league_key: str,
-    source_key: str,
-    table_name: str,
-) -> Tuple[Dict[Any, Dict[str, Any]], int]:
-    """Translate source-id values in FK columns to the_glass_id values.
-
-    Looks at every FK on the stats table whose ``column`` is not the synthetic
-    ``the_glass_id`` and whose ``ref_table`` is a profile table.  For each
-    such column, the raw value in row data is treated as a source ID and
-    replaced with the profile's the_glass_id.
-
-    Rows whose FK columns cannot be resolved are dropped.
-
-    Returns ``(filtered_rows, dropped_count)``.
-    """
-    meta = STATS_TABLES[table_name]
-    fks = [
-        fk for fk in meta['foreign_keys']
-        if fk['column'] != THE_GLASS_ID_COLUMN
-        and fk['ref_table'].endswith('_profiles')
-    ]
-    if not fks:
-        return rows, 0
-
-    # Build {column -> ref_entity}
-    profile_to_entity = {name: m['entity'] for name, m in PROFILE_TABLES.items()}
-
-    # Batch: collect all raw values per FK column, then one query per FK column.
-    fk_maps: Dict[str, Dict[str, int]] = {}
-    for fk in fks:
-        col = fk['column']
-        raw_values = [row.get(col) for row in rows.values() if row.get(col) is not None]
-        ref_entity = profile_to_entity[fk['ref_table']]
-        fk_maps[col] = _load_glass_id_map(conn, ref_entity, source_key, raw_values)
-
-    dropped = 0
-    out: Dict[Any, Dict[str, Any]] = {}
-    for source_id, row in rows.items():
-        translated = dict(row)
-        keep = True
-        for fk in fks:
-            col = fk['column']
-            raw = translated.get(col)
-            if raw is None:
-                keep = False
-                break
-            glass_id = fk_maps[col].get(str(raw))
-            if glass_id is None:
-                keep = False
-                break
-            translated[col] = glass_id
-        if keep:
-            out[source_id] = translated
-        else:
-            dropped += 1
-    return out, dropped
-
-
 # ---------------------------------------------------------------------------
 # High-level row writers
 # ---------------------------------------------------------------------------
@@ -335,12 +239,12 @@ def _write_stats_rows(
     """
     table = get_table_name(entity, 'stats', league_key=league_key)
     bare_table = table.split('.', 1)[1]
-    meta = STATS_TABLES[bare_table]
+    meta = TABLES[bare_table]
     pk_columns: List[str] = meta['primary_key']
 
     with db_connection() as conn:
         # Resolve the row-key source ids -> the_glass_id for the entity
-        glass_ids = _load_glass_id_map(conn, entity, source_key, list(rows.keys()))
+        glass_ids = load_fk_mapping(conn, entity, source_key, list(rows.keys()))
 
         translated: Dict[Any, Dict[str, Any]] = {}
         unresolved_keys = 0
@@ -362,7 +266,7 @@ def _write_stats_rows(
             )
 
         # Translate any remaining source-id columns to the_glass_id (e.g. team_id)
-        translated, dropped = _resolve_fk_value_columns(
+        translated, dropped = resolve_fk_value_columns(
             translated, conn, league_key, source_key, bare_table,
         )
         if dropped:

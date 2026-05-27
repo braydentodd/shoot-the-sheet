@@ -41,10 +41,3 @@ SEASON_TYPE_GROUPS: Dict[str, tuple] = {
     'regular_season': ('rs',),
     'postseason':     ('po', 'pi', 'ct')
 }
-
-
-# ============================================================================
-# VALIDATION SCHEMAS  (consumed by src.core.config_validation)
-# ============================================================================
-
-

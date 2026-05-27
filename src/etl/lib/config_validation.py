@@ -154,6 +154,7 @@ def _validate_table_definitions(
     from src.core.definitions.tables import (
         VALID_SCOPES,
         VALID_FK_ACTIONS,
+        VALID_FK_STRATEGIES,
         THE_GLASS_ID_COLUMN,
     )
     errors = []
@@ -216,6 +217,12 @@ def _validate_table_definitions(
                         errors.append(
                             f"{fk_prefix}: {action} '{act}' not in {sorted(VALID_FK_ACTIONS)}"
                         )
+                # Validate strategy vocabulary when present
+                strat = fk.get('strategy')
+                if strat and strat not in VALID_FK_STRATEGIES:
+                    errors.append(
+                        f"{fk_prefix}: strategy '{strat}' not in {sorted(VALID_FK_STRATEGIES)}"
+                    )
 
         # 4. Unique Constraints validation
         ucs = meta.get('unique_constraints')
@@ -613,9 +620,9 @@ def _validate_pipeline_structure() -> List[str]:
 
 
 def validate_config() -> List[str]:
-    from src.core.definitions.columns import DB_COLUMNS
+    from src.core.definitions.db_columns import DB_COLUMNS
     from src.core.definitions.leagues import LEAGUES
-    from src.core.definitions.tables import TABLES, STATS_TABLES, ROSTER_TABLES, PROFILE_TABLES
+    from src.core.definitions.tables import TABLES
     from src.etl.definitions.sources import SOURCES
 
     errors: List[str] = []
@@ -628,7 +635,11 @@ def validate_config() -> List[str]:
     errors.extend(_validate_legacy_pipeline_fields(LEAGUES))
     errors.extend(_validate_domain_coverage(DB_COLUMNS))
     errors.extend(_validate_domain_primaries())
-    errors.extend(_validate_fk_targets(STATS_TABLES, ROSTER_TABLES, PROFILE_TABLES))
+    # Build filtered views for compatibility checks (derived from TABLES)
+    stats_tables = {k: v for k, v in TABLES.items() if v.get('scope') == 'stats'}
+    roster_tables = {k: v for k, v in TABLES.items() if v.get('scope') == 'roster'}
+    profile_tables = {k: v for k, v in TABLES.items() if v.get('scope') == 'profile'}
+    errors.extend(_validate_fk_targets(stats_tables, roster_tables, profile_tables))
     
     errors.extend(_validate_league_stage_definitions())
     errors.extend(_validate_entity_matcher_definitions())
@@ -671,7 +682,7 @@ def validate_all() -> List[str]:
             continue
         datasets = getattr(cfg_mod, 'DATASETS', None)
         if datasets is not None:
-            from src.core.definitions.columns import DB_COLUMNS
+            from src.core.definitions.db_columns import DB_COLUMNS
             aggregated.extend(_validate_dataset_refs(
                 DB_COLUMNS,
                 datasets,

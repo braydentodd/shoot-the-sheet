@@ -32,7 +32,7 @@ from src.core.definitions.tables import (
 from src.core.definitions.stats import STAT_DOMAINS
 from src.core.lib.leagues_resolver import get_oldest_retained_season
 from src.core.lib.tables_resolver import get_table_name
-from src.core.definitions.columns import DB_COLUMNS
+from src.core.definitions.db_columns import DB_COLUMNS
 
 logger = logging.getLogger(__name__)
 
