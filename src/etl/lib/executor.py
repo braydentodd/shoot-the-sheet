@@ -27,6 +27,7 @@ from src.etl.lib.extract import (
 )
 from src.etl.lib.load import write_entity_rows
 from src.etl.lib.transform import aggregate_team_rows, execute_pipeline
+from src.etl.definitions.execution import ENTITY_CHUNK_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 # EXECUTION CONTEXT
 # ============================================================================
+
 
 @dataclass
 class ExecutionContext:
@@ -57,11 +59,48 @@ class ExecutionContext:
     team_ids: Dict[str, int] = field(default_factory=dict)
     max_consecutive_failures: int = 5
     id_aliases: Dict[str, list] = field(default_factory=dict)
+    _null_entity_cache: Dict[frozenset, List[Any]] = field(default_factory=dict, init=False)
 
 
 # ============================================================================
 # EXECUTION STRATEGIES
 # ============================================================================
+
+def _fetch_null_entity_ids(ctx: ExecutionContext, columns: List[str]) -> List[Any]:
+    """Helper to fetch entity source IDs that have NULL values for any of the target columns,
+    with caching built into the ExecutionContext to prevent duplicate DB lookups.
+    """
+    cols_key = frozenset(columns)
+    if cols_key in ctx._null_entity_cache:
+        return ctx._null_entity_cache[cols_key]
+
+    source_id_col = get_source_id_column(ctx.source_key)
+    entity_table = get_table_name(ctx.entity, 'profiles')
+    target_table = get_table_name(ctx.entity, ctx.scope, ctx.db_schema)
+
+    with db_connection() as conn:
+        with conn.cursor() as cur:
+            if entity_table == target_table:
+                null_checks = ' OR '.join(f'{quote_col(c)} IS NULL' for c in columns)
+                cur.execute(
+                    f"SELECT {quote_col(source_id_col)} FROM {entity_table} "
+                    f"WHERE {null_checks}"
+                )
+            else:
+                tg_id = quote_col('the_glass_id')
+                null_checks = ' OR '.join(f't.{quote_col(c)} IS NULL' for c in columns)
+                cur.execute(
+                    f"SELECT e.{quote_col(source_id_col)} FROM {entity_table} e "
+                    f"LEFT JOIN {target_table} t "
+                    f"ON e.{tg_id} = t.{tg_id} AND t.season = %s AND t.season_type = %s "
+                    f"WHERE t.{tg_id} IS NULL OR {null_checks}",
+                    (ctx.season, ctx.season_type)
+                )
+            source_ids = [row[0] for row in cur.fetchall() if row[0] is not None]
+
+    ctx._null_entity_cache[cols_key] = source_ids
+    return source_ids
+
 
 def _execute_league_wide(
     dataset: str,
@@ -99,38 +138,17 @@ def _execute_pipeline_per_entity(
 ) -> int:
     pipeline_config = source['extraction_config']
     dataset = pipeline_config['dataset']
-    params = pipeline_config.get('params', {})
-    
-    source_id_col = get_source_id_column(ctx.source_key)
-    entity_table = get_table_name(ctx.entity, 'profiles')
-    
-    with db_connection() as conn:
-        with conn.cursor() as cur:
-            target_table = get_table_name(ctx.entity, ctx.scope, ctx.db_schema)
-            if entity_table == target_table:
-                cur.execute(
-                    f"SELECT {quote_col(source_id_col)} FROM {entity_table} "
-                    f"WHERE {quote_col(col_name)} IS NULL"
-                )
-            else:
-                from src.core.definitions.tables import THE_GLASS_ID_COLUMN
-                tg_id = quote_col(THE_GLASS_ID_COLUMN)
-                cur.execute(
-                    f"SELECT e.{quote_col(source_id_col)} FROM {entity_table} e "
-                    f"LEFT JOIN {target_table} t "
-                    f"ON e.{tg_id} = t.{tg_id} AND t.season = %s AND t.season_type = %s "
-                    f"WHERE t.{tg_id} IS NULL OR t.{quote_col(col_name)} IS NULL",
-                    (ctx.season, ctx.season_type)
-                )
-            source_ids = [row[0] for row in cur.fetchall()]
-            
+
+    source_ids = _fetch_null_entity_ids(ctx, [col_name])
+
     if not source_ids:
         return 0
 
     all_rows: Dict[int, Dict[str, Any]] = {}
+    written_count = 0
     consecutive_failures = 0
     id_param = f'{ctx.entity}_id'
-    
+
     for sid in source_ids:
         def single_entity_fetcher(ds, extra_params, tier):
             # inject the current entity id
@@ -139,7 +157,7 @@ def _execute_pipeline_per_entity(
                 return ctx.api_fetcher(ds, call_params)
             except Exception:
                 return {'resultSets': []}
-                
+
         try:
             result = execute_pipeline(
                 pipeline_config, single_entity_fetcher, ctx.entity,
@@ -159,13 +177,20 @@ def _execute_pipeline_per_entity(
                 break
             continue
 
-    if not all_rows:
-        return 0
-        
-    return write_entity_rows(
-        ctx.entity, ctx.scope, all_rows, ctx.season, ctx.season_type,
-        ctx.db_schema, ctx.source_key,
-    )
+        if len(all_rows) >= ENTITY_CHUNK_SIZE:
+            written_count += write_entity_rows(
+                ctx.entity, ctx.scope, all_rows, ctx.season, ctx.season_type,
+                ctx.db_schema, ctx.source_key,
+            )
+            all_rows = {}
+
+    if all_rows:
+        written_count += write_entity_rows(
+            ctx.entity, ctx.scope, all_rows, ctx.season, ctx.season_type,
+            ctx.db_schema, ctx.source_key,
+        )
+
+    return written_count
 
 def _execute_pipeline_column(
     col_name: str,
@@ -280,46 +305,23 @@ def _execute_per_entity(
     Iterates over all known entities in the DB, calls the dataset once
     per entity (passing the entity's source_id), and extracts simple columns.
     """
-    source_id_col = get_source_id_column(ctx.source_key)
-    entity_table = get_table_name(ctx.entity, 'profiles')
-
-    with db_connection() as conn:
-        with conn.cursor() as cur:
-            if removed_refresh_mode == 'always':
+    if removed_refresh_mode == 'always':
+        source_id_col = get_source_id_column(ctx.source_key)
+        entity_table = get_table_name(ctx.entity, 'profiles')
+        with db_connection() as conn:
+            with conn.cursor() as cur:
                 cur.execute(
                     f"SELECT {quote_col(source_id_col)} FROM {entity_table}"
                 )
-            else:
-                # Only fetch entities still missing data for any of the target columns
-                target_table = get_table_name(ctx.entity, ctx.scope, ctx.db_schema)
-                if entity_table == target_table:
-                    null_checks = ' OR '.join(
-                        f'{quote_col(col)} IS NULL' for col in columns
-                    )
-                    cur.execute(
-                        f"SELECT {quote_col(source_id_col)} FROM {entity_table}"
-                        f" WHERE {null_checks}"
-                    )
-                else:
-                    null_checks = ' OR '.join(
-                        f't.{quote_col(col)} IS NULL' for col in columns
-                    )
-                    from src.core.definitions.tables import THE_GLASS_ID_COLUMN
-                    tg_id = quote_col(THE_GLASS_ID_COLUMN)
-                    cur.execute(
-                        f"SELECT e.{quote_col(source_id_col)} FROM {entity_table} e "
-                        f"LEFT JOIN {target_table} t "
-                        f"ON e.{tg_id} = t.{tg_id} "
-                        f"AND t.season = %s AND t.season_type = %s "
-                        f"WHERE t.{tg_id} IS NULL OR {null_checks}",
-                        (ctx.season, ctx.season_type)
-                    )
-            source_ids = [row[0] for row in cur.fetchall()]
+                source_ids = [row[0] for row in cur.fetchall() if row[0] is not None]
+    else:
+        source_ids = _fetch_null_entity_ids(ctx, list(columns.keys()))
 
     if not source_ids:
         return 0
 
     all_rows: Dict[int, Dict[str, Any]] = {}
+    written_count = 0
     consecutive_failures = 0
     id_param = f'{ctx.entity}_id'  # e.g., 'player_id' or 'team_id'
 
@@ -358,13 +360,20 @@ def _execute_per_entity(
         )
         all_rows.update(extracted)
 
-    if not all_rows:
-        return 0
+        if len(all_rows) >= ENTITY_CHUNK_SIZE:
+            written_count += write_entity_rows(
+                ctx.entity, ctx.scope, all_rows,
+                ctx.season, ctx.season_type, ctx.db_schema, ctx.source_key,
+            )
+            all_rows = {}
 
-    return write_entity_rows(
-        ctx.entity, ctx.scope, all_rows,
-        ctx.season, ctx.season_type, ctx.db_schema, ctx.source_key,
-    )
+    if all_rows:
+        written_count += write_entity_rows(
+            ctx.entity, ctx.scope, all_rows,
+            ctx.season, ctx.season_type, ctx.db_schema, ctx.source_key,
+        )
+
+    return written_count
 
 
 # ============================================================================

@@ -11,6 +11,7 @@ from typing import List, Tuple
 
 from src.core.definitions.leagues import LEAGUES
 from src.core.lib.seasons_resolver import format_season_label, parse_season_end_year
+from src.etl.definitions.pipeline import RETENTION_SEASONS
 
 
 def _league_or_raise(league_key: str) -> dict:
@@ -43,9 +44,9 @@ def get_current_season(league_key: str, now: datetime = None) -> str:
 
 
 def get_retained_seasons(league_key: str, current_season: str) -> List[str]:
-    """Retained seasons (oldest -> newest) under ``LEAGUES[..].retention_seasons``."""
+    """Retained seasons (oldest -> newest) under global ``RETENTION_SEASONS``."""
     cfg = _league_or_raise(league_key)
-    count = cfg['retention_seasons']
+    count = RETENTION_SEASONS
     fmt = cfg['season_format']
     end_year = parse_season_end_year(current_season, fmt)
     return [

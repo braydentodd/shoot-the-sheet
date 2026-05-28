@@ -156,7 +156,6 @@ def _validate_table_definitions(
         VALID_SCHEMA_KINDS,
         VALID_FK_ACTIONS,
         VALID_FK_STRATEGIES,
-        THE_GLASS_ID_COLUMN,
     )
     errors = []
 
@@ -193,7 +192,7 @@ def _validate_table_definitions(
             errors.append(f"{prefix}: primary_key must be a list")
         else:
             for col in pk_cols:
-                if col == THE_GLASS_ID_COLUMN:
+                if col == 'the_glass_id':
                     continue
                 if col in surrogate_pks:
                     continue

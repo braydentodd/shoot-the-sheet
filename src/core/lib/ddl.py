@@ -267,12 +267,37 @@ def _create_table(cur, schema_name: str, table_name: str, meta: Dict[str, Any]) 
 # Additive ALTER TABLE
 # ---------------------------------------------------------------------------
 
+def _ensure_updated_at_trigger(cur, schema_name: str, table_name: str) -> None:
+    """Ensure the BEFORE UPDATE trigger for updated_at is present on the table."""
+    # 1. Create schema-level helper trigger function
+    cur.execute(f"""
+        CREATE OR REPLACE FUNCTION {schema_name}.update_updated_at_column()
+        RETURNS TRIGGER AS $$
+        BEGIN
+            NEW.updated_at = NOW();
+            RETURN NEW;
+        END;
+        $$ language 'plpgsql';
+    """)
+
+    # 2. Create standard BEFORE UPDATE trigger (idempotent setup)
+    trigger_name = f"trg_{table_name}_updated_at"
+    cur.execute(f"""
+        DROP TRIGGER IF EXISTS {trigger_name} ON {schema_name}.{table_name};
+        CREATE TRIGGER {trigger_name}
+        BEFORE UPDATE ON {schema_name}.{table_name}
+        FOR EACH ROW
+        EXECUTE FUNCTION {schema_name}.update_updated_at_column();
+    """)
+
+
 def _sync_table(cur, table_name: str, meta: Dict[str, Any], schema_name: str) -> List[str]:
     """Sync table structure against config; purely additive."""
     actions: List[str] = []
 
     if not _table_exists(cur, schema_name, table_name):
         n = _create_table(cur, schema_name, table_name, meta)
+        _ensure_updated_at_trigger(cur, schema_name, table_name)
         actions.append(f'created ({n} columns)')
         return actions
 
@@ -321,6 +346,7 @@ def _sync_table(cur, table_name: str, meta: Dict[str, Any], schema_name: str) ->
             )
             actions.append(f'added {col_name}')
 
+    _ensure_updated_at_trigger(cur, schema_name, table_name)
     return actions
 
 

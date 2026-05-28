@@ -29,7 +29,7 @@ VALID_SCOPES = frozenset({'profiles', 'stats', 'rosters', 'staging', 'runs', 'ta
 VALID_REFRESH_MODES = frozenset({'null_only', 'always'})
 VALID_SCHEMA_KINDS = frozenset({'core', 'league', 'staging'})
 VALID_FK_ACTIONS = frozenset({'CASCADE', 'RESTRICT', 'SET NULL', 'NO ACTION'})
-VALID_MANAGERS = frozenset({'db', 'execution_context', 'source'})
+VALID_MANAGERS = frozenset({'db', 'execution_context', 'in_season_source', 'off_season_source', 'perennial_source'})
 VALID_FK_STRATEGIES = frozenset({'direct', 'profile_lookup'})
 
 
@@ -72,7 +72,7 @@ TABLES: Dict[str, TableDef] = {
         'schema': 'core',
         'primary_key': ['the_glass_id'],
         'foreign_keys': [],
-        'unique_constraints': [['abbr']],
+        'unique_constraints': [['league_key'], ['abbr']],
         'indexes': [],
         'scope': 'profiles',
         'source_ids': True

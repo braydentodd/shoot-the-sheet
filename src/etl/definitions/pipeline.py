@@ -9,7 +9,9 @@ to ordered step keys.
 from typing import Any, Dict, List
 
 
-VALID_ETL_PHASES = frozenset({'full', 'prune'})
+RETENTION_SEASONS: int = 6
+
+VALID_ETL_PHASES = frozenset({'full', 'upsert', 'prune'})
 VALID_ETL_STEP_HANDLERS = frozenset({
     'stage_and_match_entities',
     'backfill_stats',
@@ -58,11 +60,18 @@ PIPELINE_STEPS: Dict[str, Dict[str, Any]] = {
 
 # Phases are ordered execution macros over shared step keys.
 PIPELINE_PHASES: Dict[str, List[str]] = {
-    'full': [
+    'upsert': [
         'stage_and_match_entities',
         'backfill_stats',
         'update_current_stats',
         'normalize_stats',
     ],
-    'prune': ['prune_stats', 'prune_orphans'],
+    'prune': [
+        'prune_stats',
+        'prune_orphans',
+    ],
 }
+
+# The 'full' phase executes both 'upsert' and 'prune' phases in sequence
+PIPELINE_PHASES['full'] = PIPELINE_PHASES['upsert'] + PIPELINE_PHASES['prune']
+

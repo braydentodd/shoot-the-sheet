@@ -26,7 +26,6 @@ HISTORICAL_TIMEFRAMES: Dict[int, str] = {
     1: '(Previous Season)',
     3: '(Previous 3 Seasons)',
     5: '(Previous 5 Seasons)',
-    7: '(Previous 7 Seasons)',
 }
 
 

@@ -9,20 +9,16 @@ arguments.
 
 Usage:
     python -m src.cli etl --league nba
-    python -m src.cli etl --league nba --phase backfill --season 2023-24
-    python -m src.cli etl --phase orphan
+    python -m src.cli etl --league nba --phase upsert
+    python -m src.cli etl --league nba --phase prune
     python -m src.cli publish --league nba
     python -m src.cli publish --league nba --tab BOS --stat-rate per_minute
     python -m src.cli publish --league nba --export-config
 
 Subcommand phases (etl):
-    full        discover -> rosters -> profile enrichment -> backfill -> update
-    discover    populate core profiles for the current season
-    rosters     league/team and team/player roster links
-    backfill    stats for every retained season
-    update      stats for the current season only
-    prune       per-league retention pruning (separate phase)
-    orphan      cross-league orphan profile sweep (no --league required)
+    full        runs upsert and prune in sequence (default)
+    upsert      stage and match entities, backfill and update stats
+    prune       retention stats pruning and orphan profiles sweep
 """
 
 from dotenv import load_dotenv
@@ -71,13 +67,12 @@ def _build_parser():
 def _run_etl(args) -> int:
     from src.etl.lib.config_validation import validate_all
 
-    print_banner('The Glass -- ETL', f'phase={args.phase}  league={args.league or "<n/a>"}')
+    print_banner('The Glass -- ETL', f'phase={args.phase}  league={args.league or "all"}')
     print_summary(
         {
             'phase':       args.phase,
-            'league':      args.league or '(orphan / cross-league)',
+            'league':      args.league or 'all (consecutive)',
             'season':      args.season or '(current)',
-            'season_type': args.season_type,
             'entity':      args.entity,
         },
         title='Run parameters',
@@ -95,15 +90,14 @@ def _run_etl(args) -> int:
             phase=args.phase,
             entity=args.entity,
             season=args.season,
-            season_type=args.season_type,
         )
+        return 0
     except KeyboardInterrupt:
         logger.warning('Interrupted by user.')
         return 130
     except Exception:
         logger.exception('ETL run failed.')
         return 1
-    return 0
 
 
 def _run_publish(args) -> int:

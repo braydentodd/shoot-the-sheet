@@ -27,12 +27,12 @@ from src.core.definitions.leagues import LEAGUES
 from src.core.definitions.tables import (
     CORE_SCHEMA,
     STATS_TABLES,
-    THE_GLASS_ID_COLUMN,
 )
 from src.core.definitions.stats import STAT_DOMAINS
 from src.core.lib.leagues_resolver import get_oldest_retained_season
 from src.core.lib.tables_resolver import get_table_name
 from src.core.definitions.db_columns import DB_COLUMNS
+from typing import Union
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # PHASE A.1 -- in-season stat coherency
 # ---------------------------------------------------------------------------
+
 
 def _collect_domain_columns(entity: str) -> Dict[str, List[str]]:
     """Return ``{domain_name: [counter columns]}`` for every non-primary
@@ -70,7 +71,7 @@ def _collect_domain_columns(entity: str) -> Dict[str, List[str]]:
 def normalize_stats_domains(
     league_key: str,
     entity: str,
-    season: str,
+    season: Union[str, List[str]],
     season_type: str,
 ) -> int:
     """Apply per-domain coherency rules to a stats-table slice.
@@ -81,6 +82,10 @@ def normalize_stats_domains(
 
     Returns the total number of UPDATE rows touched (counts both passes).
     """
+    seasons = [season] if isinstance(season, str) else list(season)
+    if not seasons:
+        return 0
+
     table = get_table_name(entity, 'stats', league_key)
     domain_cols = _collect_domain_columns(entity)
     if not domain_cols:
@@ -97,24 +102,25 @@ def normalize_stats_domains(
                 )
                 cur.execute(
                     f"UPDATE {table} SET {set_to_zero} "
-                    f"WHERE season = %s AND season_type = %s AND {minutes_col} > 0",
-                    (season, season_type),
+                    f"WHERE season = ANY(%s) AND season_type = %s AND {minutes_col} > 0",
+                    (seasons, season_type),
                 )
                 affected += cur.rowcount
 
                 set_to_null = ', '.join(f'{quote_col(c)} = NULL' for c in cols)
                 cur.execute(
                     f"UPDATE {table} SET {set_to_null} "
-                    f"WHERE season = %s AND season_type = %s "
+                    f"WHERE season = ANY(%s) AND season_type = %s "
                     f"  AND ({minutes_col} IS NULL OR {minutes_col} = 0)",
-                    (season, season_type),
+                    (seasons, season_type),
                 )
                 affected += cur.rowcount
 
     if affected:
+        seasons_str = ','.join(seasons) if len(seasons) <= 3 else f"{len(seasons)} seasons"
         logger.info(
-            'Domain cleanup %s/%s %s %s: %d rows updated',
-            league_key, entity, season, season_type, affected,
+            'Domain cleanup %s/%s [%s] %s: %d rows updated',
+            league_key, entity, seasons_str, season_type, affected,
         )
     return affected
 
@@ -127,7 +133,7 @@ def prune_stats_retention(league_key: str, current_season: str) -> int:
     """Delete stats rows older than the league's retention window.
 
     ``current_season`` defines the most recent season (e.g. ``'2025-26'``);
-    the retention window is ``LEAGUES[league_key]['retention_seasons']``.
+    the retention window is governed by the global ``RETENTION_SEASONS`` constant.
     """
     if league_key not in LEAGUES:
         raise ValueError(f"Unknown league: {league_key!r}")
@@ -169,7 +175,7 @@ def _profile_has_stats_predicate(entity: str) -> str:
             qualified = f'{league_key}.{table_name}'
             sub_selects.append(
                 f"SELECT 1 FROM {qualified} s "
-                f"WHERE s.{quote_col(THE_GLASS_ID_COLUMN)} = p.{quote_col(THE_GLASS_ID_COLUMN)}"
+                f"WHERE s.{quote_col('the_glass_id')} = p.{quote_col('the_glass_id')}"
             )
     if not sub_selects:
         return 'FALSE'
@@ -185,7 +191,7 @@ def _delete_pruned_players(cur) -> int:
         WHERE NOT EXISTS ({stats_pred})
           AND NOT EXISTS (
               SELECT 1 FROM {CORE_SCHEMA}.team_rosters tr
-              WHERE tr.player_id = p.{quote_col(THE_GLASS_ID_COLUMN)}
+              WHERE tr.player_id = p.{quote_col('the_glass_id')}
           )
         """
     )
@@ -201,11 +207,11 @@ def _delete_pruned_teams(cur) -> int:
         WHERE NOT EXISTS ({stats_pred})
           AND NOT EXISTS (
               SELECT 1 FROM {CORE_SCHEMA}.league_rosters lr
-              WHERE lr.team_id = p.{quote_col(THE_GLASS_ID_COLUMN)}
+              WHERE lr.team_id = p.{quote_col('the_glass_id')}
           )
           AND NOT EXISTS (
               SELECT 1 FROM {CORE_SCHEMA}.team_rosters tr
-              WHERE tr.team_id = p.{quote_col(THE_GLASS_ID_COLUMN)}
+              WHERE tr.team_id = p.{quote_col('the_glass_id')}
           )
         """
     )

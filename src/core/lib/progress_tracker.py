@@ -191,7 +191,7 @@ def mark_task_process_started(conn: Any, db_schema: str, task_process_id: int) -
     with conn.cursor() as cur:
         cur.execute(
             f"UPDATE {db_schema}.tasks "
-            f"SET status = 'running', started_at = NOW() "
+            f"SET status = 'running'"
             f"WHERE process_id = %s",
             (task_process_id,),
         )
@@ -287,7 +287,7 @@ def find_resumable_run(
     query = (
         f"SELECT process_id FROM {db_schema}.runs "
         f"WHERE {' AND '.join(where_clauses)} "
-        f"ORDER BY started_at DESC LIMIT 1"
+        f"ORDER BY created_at DESC LIMIT 1"
     )
     
     vals = [pipeline] + filter_vals
@@ -404,10 +404,3 @@ def resolve_work(
     run_process_id = create_run(conn, db_schema, pipeline, entity_type, len(items), **filters)
     task_process_ids = register_tasks(conn, db_schema, run_process_id, pipeline, item_keys)
     return run_process_id, list(zip(items, task_process_ids))
-
-
-# Backward-compatible aliases while call sites are migrated.
-mark_task_started = mark_task_process_started
-mark_task_completed = mark_task_process_completed
-mark_task_failed = mark_task_process_failed
-get_pending_task_ids = get_pending_task_process_ids

@@ -23,7 +23,6 @@ from typing import Any, Dict, List, Tuple
 from dotenv import load_dotenv
 load_dotenv()
 
-from src.core.definitions.tables import THE_GLASS_ID_COLUMN
 from src.core.lib.postgres import db_connection, quote_col
 from src.core.lib.tables_resolver import get_table_name
 from src.publish.definitions.columns import TAB_COLUMNS
@@ -42,7 +41,7 @@ logger = logging.getLogger(__name__)
 SOURCE_META: Dict[str, Any] = {
     'source_key': 'the_glass_sheets',
     # Column on every editable Sheets tab that anchors a row to the_glass_id.
-    'glass_id_column_key': THE_GLASS_ID_COLUMN,
+    'glass_id_column_key': 'the_glass_id',
 }
 
 
@@ -174,7 +173,7 @@ def _apply_updates(
                 sql = (
                     f'UPDATE {profile_table} '
                     f'SET {set_clause}, updated_at = NOW() '
-                    f'WHERE {quote_col(THE_GLASS_ID_COLUMN)} = %s'
+                    f'WHERE {quote_col("the_glass_id")} = %s'
                 )
                 if dry_run:
                     logger.info('[DRY RUN] %s | params=%s', sql, values)

@@ -44,7 +44,6 @@ class LeagueDef(TypedDict):
     regular_season_types: List[str]
     postseason_types: List[str]
     calendar_flip_md: str
-    retention_seasons: int
     source_roles: LeagueRoles
 
 LEAGUES: Dict[str, LeagueDef] = {
@@ -57,7 +56,6 @@ LEAGUES: Dict[str, LeagueDef] = {
         'regular_season_types':   ['rs'],
         'postseason_types':       ['po', 'pi'],
         'calendar_flip_md':       '08-01',
-        'retention_seasons':      8,
         'source_roles': {
             'roster_maintainer': {
                 'nba_api': {
@@ -72,7 +70,7 @@ LEAGUES: Dict[str, LeagueDef] = {
                     'dataset': 'leaguegamefinder',
                     'team_id_field': 'TEAM_ID',
                     'player_id_field': 'PLAYER_ID',
-                    'params': {'activity_window_days': 8},
+                    'params': {'activity_window_days': 2},
                 }
             }
         },

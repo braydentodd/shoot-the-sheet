@@ -1,32 +1,35 @@
 import logging
-from typing import Any, Union
 
 from src.core.definitions.leagues import LEAGUES
 
 logger = logging.getLogger(__name__)
 
 
-def is_league_in_season(league_key: str, source_key: str = 'nba_api') -> bool:
+def is_league_in_season(league_key: str) -> bool:
     """
     Check if a league is currently 'in season' based on recent activity.
 
     Uses the `season_detector` block from the league's source_roles config.
-    Dynamically delegates to the source client's ``check_activity`` function
-    if one is registered; defaults to ``True`` if no implementation exists.
+    Auto-detects the appropriate source from config. Dynamically delegates
+    to the source client's ``check_activity`` function if one is registered;
+    defaults to ``True`` if no implementation exists.
     """
     league = LEAGUES.get(league_key)
     if not league:
         raise ValueError(f"Unknown league_key: {league_key}")
 
-    detector_def = league.get('source_roles', {}).get('season_detector', {}).get(source_key)
-    if not detector_def:
+    detector_configs = league.get('source_roles', {}).get('season_detector', {})
+    if not detector_configs:
         logger.warning(
-            "No season_detector registered for league='%s' source='%s'. "
+            "No season_detector registered for league='%s'. "
             "Defaulting to in_season=True",
             league_key,
-            source_key,
         )
         return True
+    
+    # Use the first configured season_detector source
+    source_key = next(iter(detector_configs.keys()))
+    detector_def = detector_configs[source_key]
 
     dataset = detector_def['dataset']
     params = detector_def.get('params', {})

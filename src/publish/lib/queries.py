@@ -25,7 +25,7 @@ from psycopg2.extras import RealDictCursor
 
 from src.core.lib.postgres import get_db_connection
 from src.core.definitions.leagues import LEAGUES
-from src.core.definitions.tables import CORE_SCHEMA, THE_GLASS_ID_COLUMN
+from src.core.definitions.tables import CORE_SCHEMA
 from src.core.definitions.stats import SEASON_TYPE_GROUPS
 
 logger = logging.getLogger(__name__)
@@ -110,12 +110,12 @@ def get_teams_from_db(league_key: str) -> Dict[int, Tuple[str, str]]:
     """
     league_abbr = LEAGUES[league_key]['abbr']
     sql = f"""
-        SELECT t.{_quote_col(THE_GLASS_ID_COLUMN)}, t.abbr, t.name
+        SELECT t.{_quote_col('the_glass_id')}, t.abbr, t.name
           FROM {CORE_SCHEMA}.team_profiles t
           JOIN {CORE_SCHEMA}.league_rosters lr
-            ON lr.team_id = t.{_quote_col(THE_GLASS_ID_COLUMN)}
+            ON lr.team_id = t.{_quote_col('the_glass_id')}
           JOIN {CORE_SCHEMA}.league_profiles lp
-            ON lp.{_quote_col(THE_GLASS_ID_COLUMN)} = lr.league_id
+            ON lp.{_quote_col('the_glass_id')} = lr.league_id
                  WHERE lp.abbr = %s
           ORDER BY t.abbr
     """
@@ -156,7 +156,7 @@ def fetch_players_for_team(
     teams_tbl = ctx.team_entity_table
     stats_tbl = ctx.player_stats_table
     abbr_col = _quote_col(ctx.team_abbr_col)
-    glass_id = _quote_col(THE_GLASS_ID_COLUMN)
+    glass_id = _quote_col('the_glass_id')
 
     p_select, p_group = _build_entity_fields(ctx.player_entity_fields, 'p')
     team_abbr_select = f"t.{abbr_col} AS team_abbr"
@@ -230,7 +230,7 @@ def fetch_all_players(
     teams_tbl = ctx.team_entity_table
     stats_tbl = ctx.player_stats_table
     abbr_col = _quote_col(ctx.team_abbr_col)
-    glass_id = _quote_col(THE_GLASS_ID_COLUMN)
+    glass_id = _quote_col('the_glass_id')
 
     ent_select, ent_group = _build_entity_fields(ctx.player_entity_fields, 'p')
     team_abbr_select = f"t.{abbr_col} AS team_abbr"
@@ -299,7 +299,7 @@ def fetch_team_stats(
     teams_tbl = ctx.team_entity_table
     stats_tbl = ctx.team_stats_table
     abbr_col = _quote_col(ctx.team_abbr_col)
-    glass_id = _quote_col(THE_GLASS_ID_COLUMN)
+    glass_id = _quote_col('the_glass_id')
 
     entity_fields = [f for f in sorted(ctx.team_entity_fields) if f != 'updated_at']
     t_select, t_group = _build_entity_fields(entity_fields, 't')
@@ -366,7 +366,7 @@ def fetch_all_teams(
     teams_tbl = ctx.team_entity_table
     stats_tbl = ctx.team_stats_table
     abbr_col = _quote_col(ctx.team_abbr_col)
-    glass_id = _quote_col(THE_GLASS_ID_COLUMN)
+    glass_id = _quote_col('the_glass_id')
 
     entity_fields = [f for f in sorted(ctx.team_entity_fields) if f != 'updated_at']
     t_select, t_group = _build_entity_fields(entity_fields, 't')

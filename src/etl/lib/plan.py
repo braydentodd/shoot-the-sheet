@@ -11,11 +11,52 @@ module source-agnostic.
 """
 
 import logging
-from typing import Any, Dict, List, Set, Union
+from typing import Any, Dict, List, Tuple, Union
 
 from src.core.definitions.db_columns import DB_COLUMNS
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# MODULE-LEVEL PRE-INDEXED COLUMN REGISTRIES
+# ============================================================================
+
+# Index for get_all_sources_for_entity: {entity_type: [(col_name, col_meta), ...]}
+_COLUMNS_BY_ENTITY: Dict[str, List[Tuple[str, Dict[str, Any]]]] = {}
+# Index for build_call_groups: {(scope, entity_type): [(col_name, col_meta), ...]}
+_COLUMNS_BY_SCOPE_ENTITY: Dict[Tuple[str, str], List[Tuple[str, Dict[str, Any]]]] = {}
+
+for col_name, col_meta in DB_COLUMNS.items():
+    entity_types = col_meta.get('entity_types') or [None]
+    col_scopes = col_meta.get('scope', [])
+    if isinstance(col_scopes, str):
+        col_scopes = [col_scopes]
+
+    for ent in entity_types:
+        ent_key = ent if ent is not None else 'all'
+
+        # Populate _COLUMNS_BY_ENTITY
+        _COLUMNS_BY_ENTITY.setdefault(ent_key, []).append((col_name, col_meta))
+
+        # Also populate for 'player' and 'team' if ent is None/all-encompassing
+        if ent is None:
+            _COLUMNS_BY_ENTITY.setdefault('player', []).append((col_name, col_meta))
+            _COLUMNS_BY_ENTITY.setdefault('team', []).append((col_name, col_meta))
+
+        # Populate _COLUMNS_BY_SCOPE_ENTITY
+        for sc in col_scopes:
+            _COLUMNS_BY_SCOPE_ENTITY.setdefault((sc, ent_key), []).append((col_name, col_meta))
+            if ent is None:
+                _COLUMNS_BY_SCOPE_ENTITY.setdefault((sc, 'player'), []).append((col_name, col_meta))
+                _COLUMNS_BY_SCOPE_ENTITY.setdefault((sc, 'team'), []).append((col_name, col_meta))
+            # Support 'both' as a wildcard scope
+            if sc == 'both':
+                for s in ('stats', 'profiles', 'rosters', 'staging', 'runs', 'tasks', 'backfill'):
+                    _COLUMNS_BY_SCOPE_ENTITY.setdefault((s, ent_key), []).append((col_name, col_meta))
+                    if ent is None:
+                        _COLUMNS_BY_SCOPE_ENTITY.setdefault((s, 'player'), []).append((col_name, col_meta))
+                        _COLUMNS_BY_SCOPE_ENTITY.setdefault((s, 'team'), []).append((col_name, col_meta))
 
 
 # Default transform per PostgreSQL base type, applied when a source does not
@@ -121,8 +162,9 @@ def get_columns_for_dataset(
     Returns ``{col_name: enriched_source_dict}`` with default transforms injected.
     """
     matched: Dict[str, Dict[str, Any]] = {}
+    matched_cols = _COLUMNS_BY_ENTITY.get(entity, [])
 
-    for col_name, col_meta in DB_COLUMNS.items():
+    for col_name, col_meta in matched_cols:
         source = _get_source_definition(
             col_meta, entity, source_key, league_key=league_key,
         )
@@ -157,8 +199,9 @@ def get_all_sources_for_entity(
     If ``season`` is provided, excludes datasets not available for that season.
     """
     matched: Dict[str, Dict[str, Any]] = {}
+    matched_cols = _COLUMNS_BY_ENTITY.get(entity, [])
 
-    for col_name, col_meta in DB_COLUMNS.items():
+    for col_name, col_meta in matched_cols:
         source = _get_source_definition(
             col_meta, entity, source_key, league_key=league_key,
         )
@@ -213,7 +256,7 @@ def build_call_groups(
     datasets: Dict[str, Dict[str, Any]],
     scope: Union[str, None] = None,
     league_key: Union[str, None] = None,
-
+    in_season: bool = True,
 ) -> List[Dict[str, Any]]:
     """Group all columns for ``entity`` into API call batches.
 
@@ -224,7 +267,9 @@ def build_call_groups(
     Args:
         scope: If set, only include columns whose ``scope`` matches this
                value or is ``'both'``.
-
+        in_season: If True, excludes off_season_source columns; if False,
+                   excludes in_season_source columns. Columns with manager
+                   'db', 'execution_context', or 'perennial_source' are always included.
 
     Returns a list of dicts, each with:
         dataset, params, tier, columns ({col_name: enriched_source})
@@ -232,14 +277,18 @@ def build_call_groups(
     simple_groups: Dict[tuple, Dict[str, Dict[str, Any]]] = {}
     special: List[Dict[str, Any]] = []
 
-    for col_name, col_meta in DB_COLUMNS.items():
+    if scope:
+        matched_cols = _COLUMNS_BY_SCOPE_ENTITY.get((scope, entity), [])
+    else:
+        matched_cols = _COLUMNS_BY_ENTITY.get(entity, [])
 
-        if scope:
-            col_scopes = col_meta.get('scope', [])
-            if isinstance(col_scopes, str):
-                col_scopes = [col_scopes]
-            if scope not in col_scopes and 'both' not in col_scopes:
-                continue
+    for col_name, col_meta in matched_cols:
+        # Filter by manager type based on season state
+        manager = col_meta.get('manager', 'perennial_source')
+        if in_season and manager == 'off_season_source':
+            continue
+        if not in_season and manager == 'in_season_source':
+            continue
 
         source = _get_source_definition(
             col_meta, entity, source_key, league_key=league_key,

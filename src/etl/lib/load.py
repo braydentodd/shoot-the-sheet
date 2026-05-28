@@ -17,19 +17,18 @@ ID model:
 
 import logging
 from io import StringIO
-from typing import Any, Dict, Iterable, List, Set, Tuple, Union
+from typing import Any, Dict, List, Set, Union
 
 from psycopg2.extras import execute_values
 
 from src.core.lib.postgres import db_connection, quote_col
-from src.core.definitions.tables import TABLES, THE_GLASS_ID_COLUMN
+from src.core.definitions.tables import TABLES
 from src.etl.lib.sources_resolver import get_default_external_source, get_source_id_column
 from src.core.lib.tables_resolver import get_table_name
 from src.core.lib.fk_resolver import load_fk_mapping, resolve_fk_value_columns
+from src.etl.definitions.execution import DEFAULT_BATCH_SIZE
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_BATCH_SIZE = 500
 
 
 # ---------------------------------------------------------------------------
@@ -367,7 +366,7 @@ def _write_stats_rows(
                 unresolved_keys += 1
                 continue
             row = dict(vals)
-            row[THE_GLASS_ID_COLUMN] = glass_id
+            row['the_glass_id'] = glass_id
             row['season'] = season
             row['season_type'] = season_type
             translated[source_id] = row

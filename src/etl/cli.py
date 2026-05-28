@@ -19,18 +19,14 @@ def add_subparser(subparsers) -> None:
         formatter_class=HelpFormatter,
         epilog=(
             "Phases:\n"
-            "  full        full league run\n"
-            "  discover    profile rows for the current season\n"
-            "  rosters     league/team and team/player roster links\n"
-            "  backfill    stats for every previous season\n"
-            "  update      stats for the current season only\n"
-            "  prune       per-league retention pruning\n"
-            "  orphan      cross-league orphan profile sweep"
+            "  full        full league run (runs upsert and prune in sequence)\n"
+            "  upsert      stage and match entities, backfill and update stats\n"
+            "  prune       retention stats pruning and orphan profiles sweep"
         ),
     )
     p.add_argument(
         '--league', type=str, default=None, choices=sorted(LEAGUES),
-        help='League key. Required for every phase except "orphan".',
+        help='League key. If omitted, all leagues are executed consecutively in sorted order.',
     )
     p.add_argument(
         '--phase', type=str, default='full', choices=sorted(VALID_PHASES),
@@ -39,10 +35,6 @@ def add_subparser(subparsers) -> None:
     p.add_argument(
         '--season', type=str, default=None,
         help="Season label (e.g. 2024-25). Defaults to the league's current season.",
-    )
-    p.add_argument(
-        '--season-type', type=str, default='rs', choices=['rs', 'po', 'pi'],
-        help='Season type code.',
     )
     p.add_argument(
         '--entity', type=str, default='all', choices=['player', 'team', 'all'],
