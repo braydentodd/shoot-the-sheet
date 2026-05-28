@@ -228,7 +228,7 @@ def make_fetcher(season: str, season_type_name: str, entity: str) -> Callable:
 
     def fetch(dataset: str, extra_params: Union[Dict[str, Any], None] = None) -> Union[Dict, None]:
         ds_cfg = DATASETS.get(dataset, {})
-        if ds_cfg.get('virtual'):
+        if ds_cfg.get('dataset_type') == 'virtual':
             return _fetch_virtual(dataset, season)
 
         DatasetClass = load_dataset_class(dataset)
@@ -350,8 +350,11 @@ def _fetch_team_metadata(season: str) -> Dict:
 
     rate_limiter = get_rate_limiter('nba_api')
 
-    # Static abbreviations keyed by team ID
-    abbr_map = {t['id']: t['abbreviation'] for t in static_teams.get_teams()}
+    # Static team data keyed by team ID
+    teams_data = static_teams.get_teams()
+    abbr_map = {t['id']: t['abbreviation'] for t in teams_data}
+    city_map = {t['id']: t.get('city') for t in teams_data}
+    state_map = {t['id']: t.get('state') for t in teams_data}
 
     # Conference from standings
     _patch_nba_api_headers()
@@ -376,16 +379,16 @@ def _fetch_team_metadata(season: str) -> Dict:
             conf_map[row[tid_idx]] = row[conf_idx]
 
     # Build combined result in standard API format
-    all_ids = sorted(set(abbr_map) | set(conf_map))
+    all_ids = sorted(set(abbr_map) | set(conf_map) | set(city_map) | set(state_map))
     row_set = [
-        [tid, abbr_map.get(tid), conf_map.get(tid)]
+        [tid, abbr_map.get(tid), conf_map.get(tid), city_map.get(tid), state_map.get(tid)]
         for tid in all_ids
     ]
 
     return {
         'resultSets': [{
             'name': 'TeamMetadata',
-            'headers': ['TEAM_ID', 'TEAM_ABBREVIATION', 'TEAM_CONFERENCE'],
+            'headers': ['TEAM_ID', 'TEAM_ABBREVIATION', 'TEAM_CONFERENCE', 'TEAM_CITY', 'TEAM_STATE'],
             'rowSet': row_set,
         }]
     }

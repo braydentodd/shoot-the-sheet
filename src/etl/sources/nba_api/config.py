@@ -31,7 +31,7 @@ class DatasetDef(TypedDict):
     per_mode_param: Union[str, None]
     entity_types: List[str]
     requires_params: List[str]
-    virtual: bool
+    dataset_type: str
     season_param: str
 
 class SeasonTypeDef(TypedDict):
@@ -112,6 +112,7 @@ DATASETS: Dict[str, DatasetDef] = {
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_detailed',
         'entity_types': ['player'],
+        'dataset_type': 'api_endpoint',
     },
     'leaguedashteamstats': {
         'min_season': '2003-04',
@@ -120,6 +121,7 @@ DATASETS: Dict[str, DatasetDef] = {
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_detailed',
         'entity_types': ['team'],
+        'dataset_type': 'api_endpoint',
     },
 
     # --- Player tracking (since 2013-14) ---
@@ -132,6 +134,7 @@ DATASETS: Dict[str, DatasetDef] = {
         'per_mode_param': 'per_mode_simple',
         'requires_params': ['pt_measure_type'],
         'entity_types': ['player', 'team'],
+        'dataset_type': 'api_endpoint',
     },
 
     # --- Hustle stats (since 2015-16) ---
@@ -143,6 +146,7 @@ DATASETS: Dict[str, DatasetDef] = {
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_time',
         'entity_types': ['player'],
+        'dataset_type': 'api_endpoint',
     },
     'leaguehustlestatsteam': {
         'min_season': '2015-16',
@@ -151,6 +155,7 @@ DATASETS: Dict[str, DatasetDef] = {
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_time',
         'entity_types': ['team'],
+        'dataset_type': 'api_endpoint',
     },
 
     # --- Defensive matchup (since 2013-14) ---
@@ -163,6 +168,7 @@ DATASETS: Dict[str, DatasetDef] = {
         'per_mode_param': 'per_mode_simple',
         'requires_params': ['defense_category'],
         'entity_types': ['player'],
+        'dataset_type': 'api_endpoint',
     },
     'leaguedashptteamdefend': {
         'min_season': '2013-14',
@@ -172,6 +178,7 @@ DATASETS: Dict[str, DatasetDef] = {
         'per_mode_param': 'per_mode_simple',
         'requires_params': ['defense_category'],
         'entity_types': ['team'],
+        'dataset_type': 'api_endpoint',
     },
 
     # --- Shooting splits (since 2012-13) ---
@@ -183,6 +190,7 @@ DATASETS: Dict[str, DatasetDef] = {
         'season_type_param': 'season_type_playoffs',
         'per_mode_param': 'per_mode_detailed',
         'entity_types': ['player'],
+        'dataset_type': 'api_endpoint',
     },
     'teamdashboardbyshootingsplits': {
         'min_season': '2012-13',
@@ -191,6 +199,7 @@ DATASETS: Dict[str, DatasetDef] = {
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_detailed',
         'entity_types': ['team'],
+        'dataset_type': 'api_endpoint',
     },
 
     # --- Player info (all time) ---
@@ -202,6 +211,7 @@ DATASETS: Dict[str, DatasetDef] = {
         'season_type_param': None,
         'per_mode_param': None,
         'entity_types': ['player'],
+        'dataset_type': 'api_endpoint',
     },
 
     # --- Draft combine (since 2000-01) ---
@@ -214,6 +224,7 @@ DATASETS: Dict[str, DatasetDef] = {
         'season_type_param': None,
         'per_mode_param': None,
         'entity_types': ['player'],
+        'dataset_type': 'api_endpoint',
     },
 
     # --- On/Off court (since 2007-08) ---
@@ -225,6 +236,7 @@ DATASETS: Dict[str, DatasetDef] = {
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_detailed',
         'entity_types': ['player'],
+        'dataset_type': 'api_endpoint',
     },
     'teamplayeronoffdetails': {
         'min_season': '2007-08',
@@ -233,6 +245,7 @@ DATASETS: Dict[str, DatasetDef] = {
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_detailed',
         'entity_types': ['player'],
+        'dataset_type': 'api_endpoint',
     },
 
     # --- Virtual: team metadata (abbreviation + conference) ---
@@ -246,7 +259,7 @@ DATASETS: Dict[str, DatasetDef] = {
         'season_type_param': None,
         'per_mode_param': None,
         'entity_types': ['team'],
-        'virtual': True,
+        'dataset_type': 'virtual',
     },
 }
 

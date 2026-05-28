@@ -25,6 +25,7 @@ load_dotenv()
 
 from src.core.lib.postgres import db_connection, quote_col
 from src.core.lib.tables_resolver import get_table_name
+from src.etl.sources.the_glass_sheets.config import SOURCE_CONFIG
 from src.publish.definitions.columns import TAB_COLUMNS
 from src.publish.destinations.sheets.config import SHEETS_FORMATTING
 from src.publish.destinations.sheets.client import get_sheets_client
@@ -32,17 +33,6 @@ from src.publish.destinations.sheets.config import GOOGLE_SHEETS_CONFIG
 from src.publish.lib.column_structure import build_tab_columns, get_column_index
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# SOURCE METADATA
-# ---------------------------------------------------------------------------
-
-SOURCE_META: Dict[str, Any] = {
-    'source_key': 'the_glass_sheets',
-    # Column on every editable Sheets tab that anchors a row to the_glass_id.
-    'glass_id_column_key': 'the_glass_id',
-}
 
 
 # ---------------------------------------------------------------------------
@@ -249,7 +239,7 @@ def sync_edits(league_key: str, dry_run: bool = False) -> Dict[str, int]:
     player_field_map = _resolve_column_indices(specs, players_columns, 'player')
     team_field_map = _resolve_column_indices(specs, teams_columns, 'team')
 
-    glass_id_key = SOURCE_META['glass_id_column_key']
+    glass_id_key = SOURCE_CONFIG['glass_id_column_key']
     pid_idx = get_column_index(glass_id_key, players_columns)
     tid_idx = get_column_index(glass_id_key, teams_columns)
     if pid_idx is None and player_field_map:

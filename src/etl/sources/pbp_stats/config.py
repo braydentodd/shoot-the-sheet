@@ -22,6 +22,7 @@ class DatasetDef(TypedDict):
     per_mode_param: Union[str, None]
     entity_types: List[str]
     endpoint: str
+    url_suffix: Union[str, None]
 
 
 class SeasonTypeDef(TypedDict):
@@ -70,6 +71,7 @@ DATASETS: Dict[str, DatasetDef] = {
         'per_mode_param': None,
         'entity_types': ['team'],
         'endpoint': 'get-totals',
+        'url_suffix': None,
     },
     'pbp_player_totals': {
         'min_season': '2000-01',
@@ -79,6 +81,17 @@ DATASETS: Dict[str, DatasetDef] = {
         'per_mode_param': None,
         'entity_types': ['player'],
         'endpoint': 'get-totals',
+        'url_suffix': None,
+    },
+    'pbp_on_off': {
+        'min_season': '2000-01',
+        'execution_tier': 'team_call',
+        'default_result_set': 'OnOffStats',
+        'season_type_param': None,
+        'per_mode_param': None,
+        'entity_types': ['player'],
+        'endpoint': 'get-on-off',
+        'url_suffix': '/team',
     },
 }
 

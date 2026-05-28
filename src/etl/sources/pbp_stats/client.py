@@ -16,7 +16,7 @@ from src.etl.sources.pbp_stats.config import API_CONFIG, DATASETS
 logger = logging.getLogger(__name__)
 
 
-def _extract_rows(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _extract_rows(payload: Dict[str, Any], is_on_off: bool = False) -> List[Dict[str, Any]]:
     """Normalize known pbpstats payload shapes into a list of row dicts."""
     rows = payload.get('multi_row_table_data')
     if isinstance(rows, list):
@@ -24,6 +24,8 @@ def _extract_rows(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     rows = payload.get('results')
     if isinstance(rows, list):
+        if is_on_off and rows and 'Stat' in rows[0]:
+            return _transform_on_off_results(rows)
         return [row for row in rows if isinstance(row, dict)]
 
     single_row = payload.get('single_row_table_data')
@@ -31,6 +33,24 @@ def _extract_rows(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
         return [single_row]
 
     return []
+
+
+def _transform_on_off_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Transform on-off results from stat-per-row to single row with all stats."""
+    if not results:
+        return []
+    
+    row = {}
+    for stat_entry in results:
+        stat_name = stat_entry.get('Stat', '')
+        on_value = stat_entry.get('On')
+        off_value = stat_entry.get('Off')
+        if stat_name and on_value is not None:
+            row[f"{stat_name} - On"] = on_value
+        if stat_name and off_value is not None:
+            row[f"{stat_name} - Off"] = off_value
+    
+    return [row] if row else []
 
 
 def _to_result_set(
@@ -67,6 +87,7 @@ def _build_dataset_params(
     season_type_name: str,
     entity: str,
     extra_params: Union[Dict[str, Any], None] = None,
+    endpoint: Union[str, None] = None,
 ) -> Dict[str, Any]:
     """Build query params for pbpstats requests."""
     params: Dict[str, Any] = {
@@ -78,10 +99,13 @@ def _build_dataset_params(
         for k, v in extra_params.items():
             if k == 'team_id':
                 params['TeamId'] = v
+            elif k == 'player_id':
+                params['PlayerId'] = v
             else:
                 params[k] = v
 
-    if 'Type' not in params:
+    # get-on-off endpoint doesn't use Type parameter
+    if endpoint != 'get-on-off' and 'Type' not in params:
         params['Type'] = 'Team' if entity == 'team' else 'Player'
 
     return params
@@ -101,8 +125,9 @@ def make_fetcher(season: str, season_type_name: str, entity: str) -> Callable:
             return None
 
         endpoint = ds_cfg['endpoint']
-        url = f"{API_CONFIG['base_url']}/{endpoint}/{API_CONFIG['league']}"
-        params = _build_dataset_params(season, season_type_name, entity, extra_params)
+        url_suffix = ds_cfg.get('url_suffix') or ''
+        url = f"{API_CONFIG['base_url']}/{endpoint}/{API_CONFIG['league']}{url_suffix}"
+        params = _build_dataset_params(season, season_type_name, entity, extra_params, endpoint=endpoint)
 
         def _call() -> Dict[str, Any]:
             response = requests.get(
@@ -116,7 +141,8 @@ def make_fetcher(season: str, season_type_name: str, entity: str) -> Callable:
             if isinstance(payload, dict) and payload.get('detail'):
                 raise RuntimeError(f"PBP API error for {dataset}: {payload['detail']}")
 
-            rows = _extract_rows(payload)
+            is_on_off = endpoint == 'get-on-off'
+            rows = _extract_rows(payload, is_on_off=is_on_off)
             return _to_result_set(rows, ds_cfg['default_result_set'])
 
         return rate_limiter.with_retry(_call)
