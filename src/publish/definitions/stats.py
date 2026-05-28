@@ -34,13 +34,4 @@ HISTORICAL_TIMEFRAMES: Dict[int, str] = {
 # DERIVED CONSTANTS
 # ============================================================================
 
-DEFAULT_STAT_RATE: str = next(
-    (k for k, v in STAT_RATES.items() if v.get('default', False)),
-    'per_minute',
-)
-
-
-# ============================================================================
-# VALIDATION SCHEMAS
-# ============================================================================
-
+DEFAULT_STAT_RATE: str = 'per_possession'

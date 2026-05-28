@@ -5,11 +5,13 @@ Tab column definitions (TAB_COLUMNS) and the field-derivation logic that
 maps display columns back to database column references.
 """
 
-from typing import Any, Dict
+from typing import Any, Callable, Dict, List, Literal, Tuple, TypedDict, Union
 
 from src.publish.lib.formulas import (
     calculate_age,
     lookup,
+    PublishContext,
+    PublishRow,
     seasons_in_query,
     team_average,
 )
@@ -19,30 +21,62 @@ from src.publish.lib.formulas import (
 # ============================================================================
 
 # Valid attribute value sets (co-located with the schema they constrain)
-_VALID_SECTIONS = {
+TabName = Literal['all_teams', 'all_players', 'individual_team']
+StatsMode = Literal['basic', 'advanced', 'both']
+FormatType = Literal['text', 'number', 'percentage', 'measurement']
+AlignType = Literal['left', 'center']
+
+_VALID_SECTIONS = frozenset({
     'entities', 'profile', 'evaluation',
     'current_stats', 'historical_stats', 'postseason_stats', 'identity',
-}
-_VALID_SUBSECTIONS = {
+})
+_VALID_SUBSECTIONS = frozenset({
     'rates', 'scoring', 'ball_management', 'rebounding',
     'distance', 'defense', 'opponent', 'team_ratings', 'nba',
     'League', 'Player',
-}
-_VALID_TABS = {'all_teams', 'all_players', 'individual_team'}
-_VALID_STATS_MODES = {'basic', 'advanced', 'both'}
-_VALID_LINKS = {'team_link', None}
-_VALID_FORMATS = {'text', 'number', 'percentage', 'measurement'}
-_VALID_WIDTH_CLASSES = {
+})
+_VALID_TABS = frozenset({'all_teams', 'all_players', 'individual_team'})
+_VALID_STATS_MODES = frozenset({'basic', 'advanced', 'both'})
+_VALID_LINKS = frozenset({'team_link', None})
+_VALID_FORMATS = frozenset({'text', 'number', 'percentage', 'measurement'})
+_VALID_WIDTH_CLASSES = frozenset({
     'auto', 'measurement', 'four_char', 'four_char_dec',
     'three_char_dec', 'two_char', 'two_char_dec'
-}
+})
 _VALID_WIDTH_CLASS_TYPES = (str, int)
-_VALID_LEAGUES = {'nba', 'ncaa'}
+_VALID_LEAGUES = frozenset({'nba', 'ncaa'})
 
-_VALID_ALIGNS = {'left', 'center'}
-_VALID_EMPHASIS = {'bold', None}
+_VALID_ALIGNS = frozenset({'left', 'center'})
+_VALID_EMPHASIS = frozenset({'bold', None})
 
-TAB_COLUMNS: Dict[str, Any] = {
+
+class ValueDef(TypedDict):
+    fields: Tuple[str, ...]
+    fn: Callable[[PublishRow, PublishContext], Any]
+
+
+class TabColumnDef(TypedDict):
+    description: str
+    sections: List[str]
+    subsection: Union[str, None]
+    tabs: List[TabName]
+    stats_mode: StatsMode
+    percentile: Union[str, None]
+    editable: Union[List[str], None]
+    rate_domain: Union[str, None]
+    format: FormatType
+    decimal_places: Union[int, None]
+    width_class: Union[str, int]
+    link: Union[str, None]
+    leagues: List[str]
+    team_row_display: Union[str, None]
+    default: Union[str, int, float, None]
+    align: AlignType
+    emphasis: Union[str, None]
+    font_size: int
+    values: Dict[str, ValueDef]
+
+TAB_COLUMNS: Dict[str, TabColumnDef] = {
     'players': {
         'description': 'Player Name',
         'sections': ['entities'],
@@ -57,12 +91,13 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'auto',
         'link': None,
         'leagues': ['nba', 'ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'left',
         'emphasis': 'bold',
         'font_size': 10,
         'values': {
-            'player': {'fields': ('p.name',), 'fn': lambda row, ctx: row.get('name')},
+            'player': {'fields': ('p.name',), 'fn': lambda row, ctx: row['name']},
             'team': {'fields': (), 'fn': lambda row, ctx: 'TEAM'},
             'opponents': {'fields': (), 'fn': lambda row, ctx: 'OPPONENTS'}
         }
@@ -81,12 +116,13 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'auto',
         'link': 'team_link',
         'leagues': ['nba', 'ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'left',
         'emphasis': 'bold',
         'font_size': 10,
         'values': {
-            'all_teams': {'fields': ('t.name',), 'fn': lambda row, ctx: row.get('name')}
+            'all_teams': {'fields': ('t.name',), 'fn': lambda row, ctx: row['name']}
         }
     },
     'team': {
@@ -103,12 +139,13 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'four_char',
         'link': 'team_link',
         'leagues': ['nba', 'ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.team_id',), 'fn': lambda row, ctx: lookup(row.get('team_id'), 'teams', 'abbr', ctx)}
+            'player': {'fields': ('s.team_id',), 'fn': lambda row, ctx: lookup(row['team_id'], 'teams', 'abbr', ctx)}
         }
     },
     'conf': {
@@ -125,12 +162,13 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'four_char',
         'link': None,
         'leagues': ['nba', 'ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'all_teams': {'fields': ('t.conf',), 'fn': lambda row, ctx: row.get('conf')}
+            'all_teams': {'fields': ('t.conf',), 'fn': lambda row, ctx: row['conf']}
         }
     },
     'J#': {
@@ -147,12 +185,13 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'two_char',
         'link': None,
         'leagues': ['nba', 'ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('tr.jersey_num',), 'fn': lambda row, ctx: row.get('jersey_num')}
+            'player': {'fields': ('tr.jersey_num',), 'fn': lambda row, ctx: row['jersey_num']}
         }
     },
     'exp': {
@@ -175,9 +214,9 @@ TAB_COLUMNS: Dict[str, Any] = {
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('p.seasons_exp',), 'fn': lambda row, ctx: row.get('seasons_exp')},
-            'team': {'fields': ('p.seasons_exp',), 'fn': lambda row, ctx: team_average(lambda p, c: p.get('seasons_exp'), ctx)},
-            'all_teams': {'fields': ('p.seasons_exp',), 'fn': lambda row, ctx: team_average(lambda p, c: p.get('seasons_exp'), ctx)}
+            'player': {'fields': ('p.seasons_exp',), 'fn': lambda row, ctx: row['seasons_exp']},
+            'team': {'fields': ('p.seasons_exp',), 'fn': lambda row, ctx: team_average(lambda p, c: p['seasons_exp'], ctx)},
+            'all_teams': {'fields': ('p.seasons_exp',), 'fn': lambda row, ctx: team_average(lambda p, c: p['seasons_exp'], ctx)}
         }
     },
     'age': {
@@ -194,14 +233,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba', 'ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('p.birthdate',), 'fn': lambda row, ctx: calculate_age(row.get('birthdate'))},
-            'team': {'fields': ('p.birthdate',), 'fn': lambda row, ctx: team_average(lambda p, c: calculate_age(p.get('birthdate')), ctx)},
-            'all_teams': {'fields': ('p.birthdate',), 'fn': lambda row, ctx: team_average(lambda p, c: calculate_age(p.get('birthdate')), ctx)}
+            'player': {'fields': ('p.birthdate',), 'fn': lambda row, ctx: calculate_age(row['birthdate'])},
+            'team': {'fields': ('p.birthdate',), 'fn': lambda row, ctx: team_average(lambda p, c: calculate_age(p['birthdate']), ctx)},
+            'all_teams': {'fields': ('p.birthdate',), 'fn': lambda row, ctx: team_average(lambda p, c: calculate_age(p['birthdate']), ctx)}
         },
     },
     'ht': {
@@ -218,14 +258,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'measurement',
         'link': None,
         'leagues': ['nba', 'ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('p.height_ins_with_shoes',), 'fn': lambda row, ctx: row.get('height_ins_with_shoes')},
-            'team': {'fields': ('p.height_ins_with_shoes',), 'fn': lambda row, ctx: team_average(lambda p, c: p.get('height_ins_with_shoes'), ctx)},
-            'all_teams': {'fields': ('p.height_ins_with_shoes',), 'fn': lambda row, ctx: team_average(lambda p, c: p.get('height_ins_with_shoes'), ctx)}
+            'player': {'fields': ('p.height_ins_with_shoes',), 'fn': lambda row, ctx: row['height_ins_with_shoes']},
+            'team': {'fields': ('p.height_ins_with_shoes',), 'fn': lambda row, ctx: team_average(lambda p, c: p['height_ins_with_shoes'], ctx)},
+            'all_teams': {'fields': ('p.height_ins_with_shoes',), 'fn': lambda row, ctx: team_average(lambda p, c: p['height_ins_with_shoes'], ctx)}
         }
     },
     'wt': {
@@ -242,14 +283,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'four_char_dec',
         'link': None,
         'leagues': ['nba', 'ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('p.weight_lbs',), 'fn': lambda row, ctx: row.get('weight_lbs')},
-            'team': {'fields': ('p.weight_lbs',), 'fn': lambda row, ctx: team_average(lambda p, c: p.get('weight_lbs'), ctx)},
-            'all_teams': {'fields': ('p.weight_lbs',), 'fn': lambda row, ctx: team_average(lambda p, c: p.get('weight_lbs'), ctx)}
+            'player': {'fields': ('p.weight_lbs',), 'fn': lambda row, ctx: row['weight_lbs']},
+            'team': {'fields': ('p.weight_lbs',), 'fn': lambda row, ctx: team_average(lambda p, c: p['weight_lbs'], ctx)},
+            'all_teams': {'fields': ('p.weight_lbs',), 'fn': lambda row, ctx: team_average(lambda p, c: p['weight_lbs'], ctx)}
         }
     },
     'ws': {
@@ -266,14 +308,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'measurement',
         'link': None,
         'leagues': ['nba', 'ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('p.wingspan_ins',), 'fn': lambda row, ctx: row.get('wingspan_ins')},
-            'team': {'fields': ('p.wingspan_ins',), 'fn': lambda row, ctx: team_average(lambda p, c: p.get('wingspan_ins'), ctx)},
-            'all_teams': {'fields': ('p.wingspan_ins',), 'fn': lambda row, ctx: team_average(lambda p, c: p.get('wingspan_ins'), ctx)}
+            'player': {'fields': ('p.wingspan_ins',), 'fn': lambda row, ctx: row['wingspan_ins']},
+            'team': {'fields': ('p.wingspan_ins',), 'fn': lambda row, ctx: team_average(lambda p, c: p['wingspan_ins'], ctx)},
+            'all_teams': {'fields': ('p.wingspan_ins',), 'fn': lambda row, ctx: team_average(lambda p, c: p['wingspan_ins'], ctx)}
         }
     },
     '🖐️': {
@@ -290,12 +333,13 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'two_char',
         'link': None,
         'leagues': ['nba', 'ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('p.hand',), 'fn': lambda row, ctx: row.get('hand')}
+            'player': {'fields': ('p.hand',), 'fn': lambda row, ctx: row['hand']}
         }
     },
     'notes': {
@@ -318,9 +362,9 @@ TAB_COLUMNS: Dict[str, Any] = {
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('p.notes',), 'fn': lambda row, ctx: row.get('notes')},
-            'team': {'fields': ('t.notes',), 'fn': lambda row, ctx: row.get('notes')},
-            'all_teams': {'fields': ('t.notes',), 'fn': lambda row, ctx: row.get('notes')}
+            'player': {'fields': ('p.notes',), 'fn': lambda row, ctx: row['notes']},
+            'team': {'fields': ('t.notes',), 'fn': lambda row, ctx: row['notes']},
+            'all_teams': {'fields': ('t.notes',), 'fn': lambda row, ctx: row['notes']}
         }
     },
     'szn': {
@@ -337,6 +381,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba', 'ncaa'],
+        'team_row_display': None,
         'default': 0,
         'align': 'center',
         'emphasis': None,
@@ -361,14 +406,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba', 'ncaa'],
+        'team_row_display': None,
         'default': 0,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.games',), 'fn': lambda row, ctx: row.get('games') / seasons_in_query(ctx) if row.get('games') is not None else None},
-            'team': {'fields': ('s.games',), 'fn': lambda row, ctx: row.get('games') / seasons_in_query(ctx) if row.get('games') is not None else None},
-            'all_teams': {'fields': ('s.games',), 'fn': lambda row, ctx: row.get('games') / seasons_in_query(ctx) if row.get('games') is not None else None}
+            'player': {'fields': ('s.games',), 'fn': lambda row, ctx: row['games'] / seasons_in_query(ctx)},
+            'team': {'fields': ('s.games',), 'fn': lambda row, ctx: row['games'] / seasons_in_query(ctx)},
+            'all_teams': {'fields': ('s.games',), 'fn': lambda row, ctx: row['games'] / seasons_in_query(ctx)}
         },
     },
     'min': {
@@ -391,9 +437,9 @@ TAB_COLUMNS: Dict[str, Any] = {
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.minutes_x10', 's.games'), 'fn': lambda row, ctx: (row.get('minutes_x10') / 10) / row.get('games') if row.get('minutes_x10') is not None and row.get('games') else None},
-            'team': {'fields': ('s.minutes_x10', 's.games'), 'fn': lambda row, ctx: (row.get('minutes_x10') / 10) / row.get('games') if row.get('minutes_x10') is not None and row.get('games') else None},
-            'all_teams': {'fields': ('s.minutes_x10', 's.games'), 'fn': lambda row, ctx: (row.get('minutes_x10') / 10) / row.get('games') if row.get('minutes_x10') is not None and row.get('games') else None}
+            'player': {'fields': ('s.minutes_x10', 's.games'), 'fn': lambda row, ctx: (row['minutes_x10'] / 10) / row['games']},
+            'team': {'fields': ('s.minutes_x10', 's.games'), 'fn': lambda row, ctx: (row['minutes_x10'] / 10) / row['games']},
+            'all_teams': {'fields': ('s.minutes_x10', 's.games'), 'fn': lambda row, ctx: (row['minutes_x10'] / 10) / row['games']}
         }
     },
     'pace': {
@@ -410,14 +456,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'four_char_dec',
         'link': None,
         'leagues': ['nba', 'ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.possessions', 's.minutes_x10'), 'fn': lambda row, ctx: (row.get('possessions') * 40) / (row.get('minutes_x10') / 10) if row.get('possessions') is not None and row.get('minutes_x10') else None},
-            'team': {'fields': ('s.possessions', 's.minutes_x10'), 'fn': lambda row, ctx: (row.get('possessions') * 40) / (row.get('minutes_x10') / 10) if row.get('possessions') is not None and row.get('minutes_x10') else None},
-            'all_teams': {'fields': ('s.possessions', 's.minutes_x10'), 'fn': lambda row, ctx: (row.get('possessions') * 40) / (row.get('minutes_x10') / 10) if row.get('possessions') is not None and row.get('minutes_x10') else None}
+            'player': {'fields': ('s.possessions', 's.minutes_x10'), 'fn': lambda row, ctx: (row['possessions'] * 40) / (row['minutes_x10'] / 10)},
+            'team': {'fields': ('s.possessions', 's.minutes_x10'), 'fn': lambda row, ctx: (row['possessions'] * 40) / (row['minutes_x10'] / 10)},
+            'all_teams': {'fields': ('s.possessions', 's.minutes_x10'), 'fn': lambda row, ctx: (row['possessions'] * 40) / (row['minutes_x10'] / 10)}
         }
     },
     'pts': {
@@ -434,6 +481,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'four_char_dec',
         'link': None,
         'leagues': ['nba', 'ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
@@ -459,6 +507,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba', 'ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
@@ -484,15 +533,16 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba', 'ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.fg2a',), 'fn': lambda row, ctx: row.get('fg2a')},
-            'team': {'fields': ('s.fg2a',), 'fn': lambda row, ctx: row.get('fg2a')},
-            'all_teams': {'fields': ('s.fg2a',), 'fn': lambda row, ctx: row.get('fg2a')},
-            'opponents': {'fields': ('s.opp_fg2a',), 'fn': lambda row, ctx: row.get('opp_fg2a')}
+            'player': {'fields': ('s.fg2a',), 'fn': lambda row, ctx: row['fg2a']},
+            'team': {'fields': ('s.fg2a',), 'fn': lambda row, ctx: row['fg2a']},
+            'all_teams': {'fields': ('s.fg2a',), 'fn': lambda row, ctx: row['fg2a']},
+            'opponents': {'fields': ('s.opp_fg2a',), 'fn': lambda row, ctx: row['opp_fg2a']}
         }
     },
     'p/2': {
@@ -509,15 +559,16 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba', 'ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.fg2m', 's.fg2a'), 'fn': lambda row, ctx: 2 * (row.get('fg2m') / row.get('fg2a')) if row.get('fg2m') is not None and row.get('fg2a') else None},
-            'team': {'fields': ('s.fg2m', 's.fg2a'), 'fn': lambda row, ctx: 2 * (row.get('fg2m') / row.get('fg2a')) if row.get('fg2m') is not None and row.get('fg2a') else None},
-            'all_teams': {'fields': ('s.fg2m', 's.fg2a'), 'fn': lambda row, ctx: 2 * (row.get('fg2m') / row.get('fg2a')) if row.get('fg2m') is not None and row.get('fg2a') else None},
-            'opponents': {'fields': ('s.opp_fg2m', 's.opp_fg2a'), 'fn': lambda row, ctx: 2 * (row.get('opp_fg2m') / row.get('opp_fg2a')) if row.get('opp_fg2m') is not None and row.get('opp_fg2a') else None}
+            'player': {'fields': ('s.fg2m', 's.fg2a'), 'fn': lambda row, ctx: 2 * (row['fg2m'] / row['fg2a'])},
+            'team': {'fields': ('s.fg2m', 's.fg2a'), 'fn': lambda row, ctx: 2 * (row['fg2m'] / row['fg2a'])},
+            'all_teams': {'fields': ('s.fg2m', 's.fg2a'), 'fn': lambda row, ctx: 2 * (row['fg2m'] / row['fg2a'])},
+            'opponents': {'fields': ('s.opp_fg2m', 's.opp_fg2a'), 'fn': lambda row, ctx: 2 * (row['opp_fg2m'] / row['opp_fg2a'])}
         }
     },
     'ora': {
@@ -534,14 +585,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('p.open_rim_fga',), 'fn': lambda row, ctx: row.get('open_rim_fga')},
-            'team': {'fields': ('t.open_rim_fga',), 'fn': lambda row, ctx: row.get('open_rim_fga')},
-            'all_teams': {'fields': ('t.open_rim_fga',), 'fn': lambda row, ctx: row.get('open_rim_fga')}
+            'player': {'fields': ('p.open_rim_fga',), 'fn': lambda row, ctx: row['open_rim_fga']},
+            'team': {'fields': ('t.open_rim_fga',), 'fn': lambda row, ctx: row['open_rim_fga']},
+            'all_teams': {'fields': ('t.open_rim_fga',), 'fn': lambda row, ctx: row['open_rim_fga']}
         }
     },
     'p/or': {
@@ -558,14 +610,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('p.open_rim_fgm', 'p.open_rim_fga'), 'fn': lambda row, ctx: 2 * (row.get('open_rim_fgm') / row.get('open_rim_fga')) if row.get('open_rim_fgm') is not None and row.get('open_rim_fga') else None},
-            'team': {'fields': ('t.open_rim_fgm', 't.open_rim_fga'), 'fn': lambda row, ctx: 2 * (row.get('open_rim_fgm') / row.get('open_rim_fga')) if row.get('open_rim_fgm') is not None and row.get('open_rim_fga') else None},
-            'all_teams': {'fields': ('t.open_rim_fgm', 't.open_rim_fga'), 'fn': lambda row, ctx: 2 * (row.get('open_rim_fgm') / row.get('open_rim_fga')) if row.get('open_rim_fgm') is not None and row.get('open_rim_fga') else None}
+            'player': {'fields': ('p.open_rim_fgm', 'p.open_rim_fga'), 'fn': lambda row, ctx: 2 * (row['open_rim_fgm'] / row['open_rim_fga'])},
+            'team': {'fields': ('t.open_rim_fgm', 't.open_rim_fga'), 'fn': lambda row, ctx: 2 * (row['open_rim_fgm'] / row['open_rim_fga'])},
+            'all_teams': {'fields': ('t.open_rim_fgm', 't.open_rim_fga'), 'fn': lambda row, ctx: 2 * (row['open_rim_fgm'] / row['open_rim_fga'])}
         }
     },
     'cra': {
@@ -582,14 +635,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('p.cont_rim_fga',), 'fn': lambda row, ctx: row.get('cont_rim_fga')},
-            'team': {'fields': ('t.cont_rim_fga',), 'fn': lambda row, ctx: row.get('cont_rim_fga')},
-            'all_teams': {'fields': ('t.cont_rim_fga',), 'fn': lambda row, ctx: row.get('cont_rim_fga')}
+            'player': {'fields': ('p.cont_rim_fga',), 'fn': lambda row, ctx: row['cont_rim_fga']},
+            'team': {'fields': ('t.cont_rim_fga',), 'fn': lambda row, ctx: row['cont_rim_fga']},
+            'all_teams': {'fields': ('t.cont_rim_fga',), 'fn': lambda row, ctx: row['cont_rim_fga']}
         }
     },
     'p/cr': {
@@ -606,14 +660,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('p.cont_rim_fgm', 'p.cont_rim_fga'), 'fn': lambda row, ctx: 2 * (row.get('cont_rim_fgm') / row.get('cont_rim_fga')) if row.get('cont_rim_fgm') is not None and row.get('cont_rim_fga') else None},
-            'team': {'fields': ('t.cont_rim_fgm', 't.cont_rim_fga'), 'fn': lambda row, ctx: 2 * (row.get('cont_rim_fgm') / row.get('cont_rim_fga')) if row.get('cont_rim_fgm') is not None and row.get('cont_rim_fga') else None},
-            'all_teams': {'fields': ('t.cont_rim_fgm', 't.cont_rim_fga'), 'fn': lambda row, ctx: 2 * (row.get('cont_rim_fgm') / row.get('cont_rim_fga')) if row.get('cont_rim_fgm') is not None and row.get('cont_rim_fga') else None}
+            'player': {'fields': ('p.cont_rim_fgm', 'p.cont_rim_fga'), 'fn': lambda row, ctx: 2 * (row['cont_rim_fgm'] / row['cont_rim_fga'])},
+            'team': {'fields': ('t.cont_rim_fgm', 't.cont_rim_fga'), 'fn': lambda row, ctx: 2 * (row['cont_rim_fgm'] / row['cont_rim_fga'])},
+            'all_teams': {'fields': ('t.cont_rim_fgm', 't.cont_rim_fga'), 'fn': lambda row, ctx: 2 * (row['cont_rim_fgm'] / row['cont_rim_fga'])}
         }
     },
     'uar': {
@@ -630,14 +685,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.unassisted_rim_fgm',), 'fn': lambda row, ctx: row.get('unassisted_rim_fgm')},
-            'team': {'fields': ('s.unassisted_rim_fgm',), 'fn': lambda row, ctx: row.get('unassisted_rim_fgm')},
-            'all_teams': {'fields': ('s.unassisted_rim_fgm',), 'fn': lambda row, ctx: row.get('unassisted_rim_fgm')}
+            'player': {'fields': ('s.unassisted_rim_fgm',), 'fn': lambda row, ctx: row['unassisted_rim_fgm']},
+            'team': {'fields': ('s.unassisted_rim_fgm',), 'fn': lambda row, ctx: row['unassisted_rim_fgm']},
+            'all_teams': {'fields': ('s.unassisted_rim_fgm',), 'fn': lambda row, ctx: row['unassisted_rim_fgm']}
         }
     },
     'oma': {
@@ -654,14 +710,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.cont_fg2a', 'p.cont_rim_fga'), 'fn': lambda row, ctx: row.get('cont_fg2a') - row.get('cont_rim_fga') if row.get('cont_fg2a') is not None and row.get('cont_rim_fga') is not None else None},
-            'team': {'fields': ('s.cont_fg2a', 't.cont_rim_fga'), 'fn': lambda row, ctx: row.get('cont_fg2a') - row.get('cont_rim_fga') if row.get('cont_fg2a') is not None and row.get('cont_rim_fga') is not None else None},
-            'all_teams': {'fields': ('s.cont_fg2a', 't.cont_rim_fga'), 'fn': lambda row, ctx: row.get('cont_fg2a') - row.get('cont_rim_fga') if row.get('cont_fg2a') is not None and row.get('cont_rim_fga') is not None else None}
+            'player': {'fields': ('s.cont_fg2a', 'p.cont_rim_fga'), 'fn': lambda row, ctx: row['cont_fg2a'] - row['cont_rim_fga']},
+            'team': {'fields': ('s.cont_fg2a', 't.cont_rim_fga'), 'fn': lambda row, ctx: row['cont_fg2a'] - row['cont_rim_fga']},
+            'all_teams': {'fields': ('s.cont_fg2a', 't.cont_rim_fga'), 'fn': lambda row, ctx: row['cont_fg2a'] - row['cont_rim_fga']}
         }
     },
     'p/om': {
@@ -678,6 +735,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
@@ -702,14 +760,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.cont_fg2a', 'p.cont_rim_fga'), 'fn': lambda row, ctx: row.get('cont_fg2a') - row.get('cont_rim_fga') if row.get('cont_fg2a') is not None and row.get('cont_rim_fga') is not None else None},
-            'team': {'fields': ('s.cont_fg2a', 't.cont_rim_fga'), 'fn': lambda row, ctx: row.get('cont_fg2a') - row.get('cont_rim_fga') if row.get('cont_fg2a') is not None and row.get('cont_rim_fga') is not None else None},
-            'all_teams': {'fields': ('s.cont_fg2a', 't.cont_rim_fga'), 'fn': lambda row, ctx: row.get('cont_fg2a') - row.get('cont_rim_fga') if row.get('cont_fg2a') is not None and row.get('cont_rim_fga') is not None else None}
+            'player': {'fields': ('s.cont_fg2a', 'p.cont_rim_fga'), 'fn': lambda row, ctx: row['cont_fg2a'] - row['cont_rim_fga']},
+            'team': {'fields': ('s.cont_fg2a', 't.cont_rim_fga'), 'fn': lambda row, ctx: row['cont_fg2a'] - row['cont_rim_fga']},
+            'all_teams': {'fields': ('s.cont_fg2a', 't.cont_rim_fga'), 'fn': lambda row, ctx: row['cont_fg2a'] - row['cont_rim_fga']}
         }
     },
     'p/cm': {
@@ -726,6 +785,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
@@ -750,14 +810,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.unassisted_fg2m', 's.unassisted_rim_fgm'), 'fn': lambda row, ctx: row.get('unassisted_fg2m') - row.get('unassisted_rim_fgm') if row.get('unassisted_fg2m') is not None and row.get('unassisted_rim_fgm') is not None else None},
-            'team': {'fields': ('s.unassisted_fg2m', 's.unassisted_rim_fgm'), 'fn': lambda row, ctx: row.get('unassisted_fg2m') - row.get('unassisted_rim_fgm') if row.get('unassisted_fg2m') is not None and row.get('unassisted_rim_fgm') is not None else None},
-            'all_teams': {'fields': ('t.unassisted_fgm', 's.unassisted_rim_fgm'), 'fn': lambda row, ctx: row.get('unassisted_fgm') - row.get('unassisted_rim_fgm') if row.get('unassisted_fgm') is not None and row.get('unassisted_rim_fgm') is not None else None}
+            'player': {'fields': ('s.unassisted_fg2m', 's.unassisted_rim_fgm'), 'fn': lambda row, ctx: row['unassisted_fg2m'] - row['unassisted_rim_fgm']},
+            'team': {'fields': ('s.unassisted_fg2m', 's.unassisted_rim_fgm'), 'fn': lambda row, ctx: row['unassisted_fg2m'] - row['unassisted_rim_fgm']},
+            'all_teams': {'fields': ('t.unassisted_fgm', 's.unassisted_rim_fgm'), 'fn': lambda row, ctx: row['unassisted_fgm'] - row['unassisted_rim_fgm']}
         }
     },
     '3a': {
@@ -774,15 +835,16 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba', 'ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.fg3a',), 'fn': lambda row, ctx: row.get('fg3a')},
-            'team': {'fields': ('s.fg3a',), 'fn': lambda row, ctx: row.get('fg3a')},
-            'all_teams': {'fields': ('s.fg3a',), 'fn': lambda row, ctx: row.get('fg3a')},
-            'opponents': {'fields': ('s.opp_fg3a',), 'fn': lambda row, ctx: row.get('opp_fg3a')}
+            'player': {'fields': ('s.fg3a',), 'fn': lambda row, ctx: row['fg3a']},
+            'team': {'fields': ('s.fg3a',), 'fn': lambda row, ctx: row['fg3a']},
+            'all_teams': {'fields': ('s.fg3a',), 'fn': lambda row, ctx: row['fg3a']},
+            'opponents': {'fields': ('s.opp_fg3a',), 'fn': lambda row, ctx: row['opp_fg3a']}
         }
     },
     'p/3': {
@@ -799,15 +861,16 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba', 'ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.fg3m', 's.fg3a'), 'fn': lambda row, ctx: 3 * (row.get('fg3m') / row.get('fg3a')) if row.get('fg3m') is not None and row.get('fg3a') else None},
-            'team': {'fields': ('s.fg3m', 's.fg3a'), 'fn': lambda row, ctx: 3 * (row.get('fg3m') / row.get('fg3a')) if row.get('fg3m') is not None and row.get('fg3a') else None},
-            'all_teams': {'fields': ('s.fg3m', 's.fg3a'), 'fn': lambda row, ctx: 3 * (row.get('fg3m') / row.get('fg3a')) if row.get('fg3m') is not None and row.get('fg3a') else None},
-            'opponents': {'fields': ('s.opp_fg3m', 's.opp_fg3a'), 'fn': lambda row, ctx: 3 * (row.get('opp_fg3m') / row.get('opp_fg3a')) if row.get('opp_fg3m') is not None and row.get('opp_fg3a') else None}
+            'player': {'fields': ('s.fg3m', 's.fg3a'), 'fn': lambda row, ctx: 3 * (row['fg3m'] / row['fg3a'])},
+            'team': {'fields': ('s.fg3m', 's.fg3a'), 'fn': lambda row, ctx: 3 * (row['fg3m'] / row['fg3a'])},
+            'all_teams': {'fields': ('s.fg3m', 's.fg3a'), 'fn': lambda row, ctx: 3 * (row['fg3m'] / row['fg3a'])},
+            'opponents': {'fields': ('s.opp_fg3m', 's.opp_fg3a'), 'fn': lambda row, ctx: 3 * (row['opp_fg3m'] / row['opp_fg3a'])}
         }
     },
     'o3a': {
@@ -824,14 +887,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.open_fg3a',), 'fn': lambda row, ctx: row.get('open_fg3a')},
-            'team': {'fields': ('s.open_fg3a',), 'fn': lambda row, ctx: row.get('open_fg3a')},
-            'all_teams': {'fields': ('s.open_fg3a',), 'fn': lambda row, ctx: row.get('open_fg3a')}
+            'player': {'fields': ('s.open_fg3a',), 'fn': lambda row, ctx: row['open_fg3a']},
+            'team': {'fields': ('s.open_fg3a',), 'fn': lambda row, ctx: row['open_fg3a']},
+            'all_teams': {'fields': ('s.open_fg3a',), 'fn': lambda row, ctx: row['open_fg3a']}
         }
     },
     'p/o3': {
@@ -848,14 +912,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.open_fg3m', 's.open_fg3a'), 'fn': lambda row, ctx: 3 * (row.get('open_fg3m') / row.get('open_fg3a')) if row.get('open_fg3m') is not None and row.get('open_fg3a') else None},
-            'team': {'fields': ('s.open_fg3m', 's.open_fg3a'), 'fn': lambda row, ctx: 3 * (row.get('open_fg3m') / row.get('open_fg3a')) if row.get('open_fg3m') is not None and row.get('open_fg3a') else None},
-            'all_teams': {'fields': ('s.open_fg3m', 's.open_fg3a'), 'fn': lambda row, ctx: 3 * (row.get('open_fg3m') / row.get('open_fg3a')) if row.get('open_fg3m') is not None and row.get('open_fg3a') else None}
+            'player': {'fields': ('s.open_fg3m', 's.open_fg3a'), 'fn': lambda row, ctx: 3 * (row['open_fg3m'] / row['open_fg3a'])},
+            'team': {'fields': ('s.open_fg3m', 's.open_fg3a'), 'fn': lambda row, ctx: 3 * (row['open_fg3m'] / row['open_fg3a'])},
+            'all_teams': {'fields': ('s.open_fg3m', 's.open_fg3a'), 'fn': lambda row, ctx: 3 * (row['open_fg3m'] / row['open_fg3a'])}
         }
     },
     'c3a': {
@@ -872,14 +937,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.cont_fg3a',), 'fn': lambda row, ctx: row.get('cont_fg3a')},
-            'team': {'fields': ('s.cont_fg3a',), 'fn': lambda row, ctx: row.get('cont_fg3a')},
-            'all_teams': {'fields': ('s.cont_fg3a',), 'fn': lambda row, ctx: row.get('cont_fg3a')}
+            'player': {'fields': ('s.cont_fg3a',), 'fn': lambda row, ctx: row['cont_fg3a']},
+            'team': {'fields': ('s.cont_fg3a',), 'fn': lambda row, ctx: row['cont_fg3a']},
+            'all_teams': {'fields': ('s.cont_fg3a',), 'fn': lambda row, ctx: row['cont_fg3a']}
         }
     },
     'p/c3': {
@@ -896,14 +962,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.cont_fg3m', 's.cont_fg3a'), 'fn': lambda row, ctx: 3 * (row.get('cont_fg3m') / row.get('cont_fg3a')) if row.get('cont_fg3m') is not None and row.get('cont_fg3a') else None},
-            'team': {'fields': ('s.cont_fg3m', 's.cont_fg3a'), 'fn': lambda row, ctx: 3 * (row.get('cont_fg3m') / row.get('cont_fg3a')) if row.get('cont_fg3m') is not None and row.get('cont_fg3a') else None},
-            'all_teams': {'fields': ('s.cont_fg3m', 's.cont_fg3a'), 'fn': lambda row, ctx: 3 * (row.get('cont_fg3m') / row.get('cont_fg3a')) if row.get('cont_fg3m') is not None and row.get('cont_fg3a') else None}
+            'player': {'fields': ('s.cont_fg3m', 's.cont_fg3a'), 'fn': lambda row, ctx: 3 * (row['cont_fg3m'] / row['cont_fg3a'])},
+            'team': {'fields': ('s.cont_fg3m', 's.cont_fg3a'), 'fn': lambda row, ctx: 3 * (row['cont_fg3m'] / row['cont_fg3a'])},
+            'all_teams': {'fields': ('s.cont_fg3m', 's.cont_fg3a'), 'fn': lambda row, ctx: 3 * (row['cont_fg3m'] / row['cont_fg3a'])}
         }
     },
     'ua3': {
@@ -920,14 +987,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.unassisted_fg3m',), 'fn': lambda row, ctx: row.get('unassisted_fg3m')},
-            'team': {'fields': ('s.unassisted_fg3m',), 'fn': lambda row, ctx: row.get('unassisted_fg3m')},
-            'all_teams': {'fields': ('s.unassisted_fg3m',), 'fn': lambda row, ctx: row.get('unassisted_fg3m')}
+            'player': {'fields': ('s.unassisted_fg3m',), 'fn': lambda row, ctx: row['unassisted_fg3m']},
+            'team': {'fields': ('s.unassisted_fg3m',), 'fn': lambda row, ctx: row['unassisted_fg3m']},
+            'all_teams': {'fields': ('s.unassisted_fg3m',), 'fn': lambda row, ctx: row['unassisted_fg3m']}
         }
     },
     'tftr': {
@@ -944,6 +1012,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba', 'ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
@@ -975,10 +1044,10 @@ TAB_COLUMNS: Dict[str, Any] = {
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.ftm', 's.fta'), 'fn': lambda row, ctx: row.get('ftm') / row.get('fta') if row.get('ftm') is not None and row.get('fta') else None},
-            'team': {'fields': ('s.ftm', 's.fta'), 'fn': lambda row, ctx: row.get('ftm') / row.get('fta') if row.get('ftm') is not None and row.get('fta') else None},
-            'all_teams': {'fields': ('s.ftm', 's.fta'), 'fn': lambda row, ctx: row.get('ftm') / row.get('fta') if row.get('ftm') is not None and row.get('fta') else None},
-            'opponents': {'fields': ('s.opp_ftm', 's.opp_fta'), 'fn': lambda row, ctx: row.get('opp_ftm') / row.get('opp_fta') if row.get('opp_ftm') is not None and row.get('opp_fta') else None}
+            'player': {'fields': ('s.ftm', 's.fta'), 'fn': lambda row, ctx: row['ftm'] / row['fta']},
+            'team': {'fields': ('s.ftm', 's.fta'), 'fn': lambda row, ctx: row['ftm'] / row['fta']},
+            'all_teams': {'fields': ('s.ftm', 's.fta'), 'fn': lambda row, ctx: row['ftm'] / row['fta']},
+            'opponents': {'fields': ('s.opp_ftm', 's.opp_fta'), 'fn': lambda row, ctx: row['opp_ftm'] / row['opp_fta']}
         }
     },
     'dnk': {
@@ -995,14 +1064,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.dunks',), 'fn': lambda row, ctx: row.get('dunks')},
-            'team': {'fields': ('s.dunks',), 'fn': lambda row, ctx: row.get('dunks')},
-            'all_teams': {'fields': ('s.dunks',), 'fn': lambda row, ctx: row.get('dunks')}
+            'player': {'fields': ('s.dunks',), 'fn': lambda row, ctx: row['dunks']},
+            'team': {'fields': ('s.dunks',), 'fn': lambda row, ctx: row['dunks']},
+            'all_teams': {'fields': ('s.dunks',), 'fn': lambda row, ctx: row['dunks']}
         }
     },
     'tou': {
@@ -1019,14 +1089,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'four_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.touches',), 'fn': lambda row, ctx: row.get('touches')},
-            'team': {'fields': ('s.touches',), 'fn': lambda row, ctx: row.get('touches')},
-            'all_teams': {'fields': ('s.touches',), 'fn': lambda row, ctx: row.get('touches')}
+            'player': {'fields': ('s.touches',), 'fn': lambda row, ctx: row['touches']},
+            'team': {'fields': ('s.touches',), 'fn': lambda row, ctx: row['touches']},
+            'all_teams': {'fields': ('s.touches',), 'fn': lambda row, ctx: row['touches']}
         }
     },
     'spt': {
@@ -1043,14 +1114,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'two_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.time_on_ball', 's.touches'), 'fn': lambda row, ctx: (60 * row.get('time_on_ball')) / row.get('touches') if row.get('time_on_ball') is not None and row.get('touches') else None},
-            'team': {'fields': ('s.time_on_ball', 's.touches'), 'fn': lambda row, ctx: (60 * row.get('time_on_ball')) / row.get('touches') if row.get('time_on_ball') is not None and row.get('touches') else None},
-            'all_teams': {'fields': ('s.time_on_ball', 's.touches'), 'fn': lambda row, ctx: (60 * row.get('time_on_ball')) / row.get('touches') if row.get('time_on_ball') is not None and row.get('touches') else None}
+            'player': {'fields': ('s.time_on_ball', 's.touches'), 'fn': lambda row, ctx: (60 * row['time_on_ball']) / row['touches']},
+            'team': {'fields': ('s.time_on_ball', 's.touches'), 'fn': lambda row, ctx: (60 * row['time_on_ball']) / row['touches']},
+            'all_teams': {'fields': ('s.time_on_ball', 's.touches'), 'fn': lambda row, ctx: (60 * row['time_on_ball']) / row['touches']}
         }
     },
     '%trs': {
@@ -1067,6 +1139,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
@@ -1091,14 +1164,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.passes', 's.touches'), 'fn': lambda row, ctx: row.get('passes') / row.get('touches') if row.get('passes') is not None and row.get('touches') else None},
-            'team': {'fields': ('s.passes', 's.touches'), 'fn': lambda row, ctx: row.get('passes') / row.get('touches') if row.get('passes') is not None and row.get('touches') else None},
-            'all_teams': {'fields': ('s.passes', 's.touches'), 'fn': lambda row, ctx: row.get('passes') / row.get('touches') if row.get('passes') is not None and row.get('touches') else None}
+            'player': {'fields': ('s.passes', 's.touches'), 'fn': lambda row, ctx: row['passes'] / row['touches']},
+            'team': {'fields': ('s.passes', 's.touches'), 'fn': lambda row, ctx: row['passes'] / row['touches']},
+            'all_teams': {'fields': ('s.passes', 's.touches'), 'fn': lambda row, ctx: row['passes'] / row['touches']}
         }
     },
     '%trt': {
@@ -1115,14 +1189,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.turnovers', 's.touches'), 'fn': lambda row, ctx: row.get('turnovers') / row.get('touches') if row.get('turnovers') is not None and row.get('touches') else None},
-            'team': {'fields': ('s.turnovers', 's.touches'), 'fn': lambda row, ctx: row.get('turnovers') / row.get('touches') if row.get('turnovers') is not None and row.get('touches') else None},
-            'all_teams': {'fields': ('s.turnovers', 's.touches'), 'fn': lambda row, ctx: row.get('turnovers') / row.get('touches') if row.get('turnovers') is not None and row.get('touches') else None}
+            'player': {'fields': ('s.turnovers', 's.touches'), 'fn': lambda row, ctx: row['turnovers'] / row['touches']},
+            'team': {'fields': ('s.turnovers', 's.touches'), 'fn': lambda row, ctx: row['turnovers'] / row['touches']},
+            'all_teams': {'fields': ('s.turnovers', 's.touches'), 'fn': lambda row, ctx: row['turnovers'] / row['touches']}
         }
     },
     'ast': {
@@ -1139,15 +1214,16 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba', 'ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.assists',), 'fn': lambda row, ctx: row.get('assists')},
-            'team': {'fields': ('s.assists',), 'fn': lambda row, ctx: row.get('assists')},
-            'all_teams': {'fields': ('s.assists',), 'fn': lambda row, ctx: row.get('assists')},
-            'opponents': {'fields': ('s.opp_assists',), 'fn': lambda row, ctx: row.get('opp_assists')}
+            'player': {'fields': ('s.assists',), 'fn': lambda row, ctx: row['assists']},
+            'team': {'fields': ('s.assists',), 'fn': lambda row, ctx: row['assists']},
+            'all_teams': {'fields': ('s.assists',), 'fn': lambda row, ctx: row['assists']},
+            'opponents': {'fields': ('s.opp_assists',), 'fn': lambda row, ctx: row['opp_assists']}
         }
     },
     'past': {
@@ -1164,14 +1240,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.pot_assists',), 'fn': lambda row, ctx: row.get('pot_assists')},
-            'team': {'fields': ('s.pot_assists',), 'fn': lambda row, ctx: row.get('pot_assists')},
-            'all_teams': {'fields': ('s.pot_assists',), 'fn': lambda row, ctx: row.get('pot_assists')}
+            'player': {'fields': ('s.pot_assists',), 'fn': lambda row, ctx: row['pot_assists']},
+            'team': {'fields': ('s.pot_assists',), 'fn': lambda row, ctx: row['pot_assists']},
+            'all_teams': {'fields': ('s.pot_assists',), 'fn': lambda row, ctx: row['pot_assists']}
         }
     },
     '2ast': {
@@ -1194,9 +1271,9 @@ TAB_COLUMNS: Dict[str, Any] = {
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.sec_assists',), 'fn': lambda row, ctx: row.get('sec_assists')},
-            'team': {'fields': ('s.sec_assists',), 'fn': lambda row, ctx: row.get('sec_assists')},
-            'all_teams': {'fields': ('s.sec_assists',), 'fn': lambda row, ctx: row.get('sec_assists')}
+            'player': {'fields': ('s.sec_assists',), 'fn': lambda row, ctx: row['sec_assists']},
+            'team': {'fields': ('s.sec_assists',), 'fn': lambda row, ctx: row['sec_assists']},
+            'all_teams': {'fields': ('s.sec_assists',), 'fn': lambda row, ctx: row['sec_assists']}
         }
     },
     'tov': {
@@ -1213,15 +1290,16 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba', 'ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.turnovers',), 'fn': lambda row, ctx: row.get('turnovers')},
-            'team': {'fields': ('s.turnovers',), 'fn': lambda row, ctx: row.get('turnovers')},
-            'all_teams': {'fields': ('s.turnovers',), 'fn': lambda row, ctx: row.get('turnovers')},
-            'opponents': {'fields': ('s.opp_turnovers',), 'fn': lambda row, ctx: row.get('opp_turnovers')}
+            'player': {'fields': ('s.turnovers',), 'fn': lambda row, ctx: row['turnovers']},
+            'team': {'fields': ('s.turnovers',), 'fn': lambda row, ctx: row['turnovers']},
+            'all_teams': {'fields': ('s.turnovers',), 'fn': lambda row, ctx: row['turnovers']},
+            'opponents': {'fields': ('s.opp_turnovers',), 'fn': lambda row, ctx: row['opp_turnovers']}
         }
     },
     'or%': {
@@ -1238,14 +1316,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba', 'ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.o_reb_pct_x1000',), 'fn': lambda row, ctx: row.get('o_reb_pct_x1000') / 1000 if row.get('o_reb_pct_x1000') is not None else None},
-            'team': {'fields': ('s.o_reb_pct_x1000',), 'fn': lambda row, ctx: row.get('o_reb_pct_x1000') / 1000 if row.get('o_reb_pct_x1000') is not None else None},
-            'all_teams': {'fields': ('s.o_reb_pct_x1000',), 'fn': lambda row, ctx: row.get('o_reb_pct_x1000') / 1000 if row.get('o_reb_pct_x1000') is not None else None}
+            'player': {'fields': ('s.o_reb_pct_x1000',), 'fn': lambda row, ctx: row['o_reb_pct_x1000'] / 1000},
+            'team': {'fields': ('s.o_reb_pct_x1000',), 'fn': lambda row, ctx: row['o_reb_pct_x1000'] / 1000},
+            'all_teams': {'fields': ('s.o_reb_pct_x1000',), 'fn': lambda row, ctx: row['o_reb_pct_x1000'] / 1000}
         }
     },
     'cor%': {
@@ -1268,9 +1347,9 @@ TAB_COLUMNS: Dict[str, Any] = {
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.cont_o_rebs', 's.o_rebs'), 'fn': lambda row, ctx: row.get('cont_o_rebs') / row.get('o_rebs') if row.get('cont_o_rebs') is not None and row.get('o_rebs') else None},
-            'team': {'fields': ('s.cont_o_rebs', 's.o_rebs'), 'fn': lambda row, ctx: row.get('cont_o_rebs') / row.get('o_rebs') if row.get('cont_o_rebs') is not None and row.get('o_rebs') else None},
-            'all_teams': {'fields': ('s.cont_o_rebs', 's.o_rebs'), 'fn': lambda row, ctx: row.get('cont_o_rebs') / row.get('o_rebs') if row.get('cont_o_rebs') is not None and row.get('o_rebs') else None}
+            'player': {'fields': ('s.cont_o_rebs', 's.o_rebs'), 'fn': lambda row, ctx: row['cont_o_rebs'] / row['o_rebs']},
+            'team': {'fields': ('s.cont_o_rebs', 's.o_rebs'), 'fn': lambda row, ctx: row['cont_o_rebs'] / row['o_rebs']},
+            'all_teams': {'fields': ('s.cont_o_rebs', 's.o_rebs'), 'fn': lambda row, ctx: row['cont_o_rebs'] / row['o_rebs']}
         }
     },
     'dr%': {
@@ -1287,14 +1366,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba', 'ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.d_reb_pct_x1000',), 'fn': lambda row, ctx: row.get('d_reb_pct_x1000') / 1000 if row.get('d_reb_pct_x1000') is not None else None},
-            'team': {'fields': ('s.d_reb_pct_x1000',), 'fn': lambda row, ctx: row.get('d_reb_pct_x1000') / 1000 if row.get('d_reb_pct_x1000') is not None else None},
-            'all_teams': {'fields': ('s.d_reb_pct_x1000',), 'fn': lambda row, ctx: row.get('d_reb_pct_x1000') / 10 if row.get('d_reb_pct_x1000') is not None else None}
+            'player': {'fields': ('s.d_reb_pct_x1000',), 'fn': lambda row, ctx: row['d_reb_pct_x1000'] / 1000},
+            'team': {'fields': ('s.d_reb_pct_x1000',), 'fn': lambda row, ctx: row['d_reb_pct_x1000'] / 1000},
+            'all_teams': {'fields': ('s.d_reb_pct_x1000',), 'fn': lambda row, ctx: row['d_reb_pct_x1000'] / 10}
         }
     },
     'cdr%': {
@@ -1311,14 +1391,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.cont_d_rebs', 's.d_rebs'), 'fn': lambda row, ctx: row.get('cont_d_rebs') / row.get('d_rebs') if row.get('cont_d_rebs') is not None and row.get('d_rebs') else None},
-            'team': {'fields': ('s.cont_d_rebs', 's.d_rebs'), 'fn': lambda row, ctx: row.get('cont_d_rebs') / row.get('d_rebs') if row.get('cont_d_rebs') is not None and row.get('d_rebs') else None},
-            'all_teams': {'fields': ('s.cont_d_rebs', 's.d_rebs'), 'fn': lambda row, ctx: row.get('cont_d_rebs') / row.get('d_rebs') if row.get('cont_d_rebs') is not None and row.get('d_rebs') else None}
+            'player': {'fields': ('s.cont_d_rebs', 's.d_rebs'), 'fn': lambda row, ctx: row['cont_d_rebs'] / row['d_rebs']},
+            'team': {'fields': ('s.cont_d_rebs', 's.d_rebs'), 'fn': lambda row, ctx: row['cont_d_rebs'] / row['d_rebs']},
+            'all_teams': {'fields': ('s.cont_d_rebs', 's.d_rebs'), 'fn': lambda row, ctx: row['cont_d_rebs'] / row['d_rebs']}
         }
     },
     'pbs': {
@@ -1335,14 +1416,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.putbacks',), 'fn': lambda row, ctx: row.get('putbacks')},
-            'team': {'fields': ('s.putbacks',), 'fn': lambda row, ctx: row.get('putbacks')},
-            'all_teams': {'fields': ('s.putbacks',), 'fn': lambda row, ctx: row.get('putbacks')}
+            'player': {'fields': ('s.putbacks',), 'fn': lambda row, ctx: row['putbacks']},
+            'team': {'fields': ('s.putbacks',), 'fn': lambda row, ctx: row['putbacks']},
+            'all_teams': {'fields': ('s.putbacks',), 'fn': lambda row, ctx: row['putbacks']}
         }
     },
     'odst': {
@@ -1359,14 +1441,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'four_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.o_dist_x10',), 'fn': lambda row, ctx: row.get('o_dist_x10') / 10 if row.get('o_dist_x10') is not None else None},
-            'team': {'fields': ('s.o_dist_x10',), 'fn': lambda row, ctx: row.get('o_dist_x10') / 10 if row.get('o_dist_x10') is not None else None},
-            'all_teams': {'fields': ('s.o_dist_x10',), 'fn': lambda row, ctx: row.get('o_dist_x10') / 10 if row.get('o_dist_x10') is not None else None}
+            'player': {'fields': ('s.o_dist_x10',), 'fn': lambda row, ctx: row['o_dist_x10'] / 10},
+            'team': {'fields': ('s.o_dist_x10',), 'fn': lambda row, ctx: row['o_dist_x10'] / 10},
+            'all_teams': {'fields': ('s.o_dist_x10',), 'fn': lambda row, ctx: row['o_dist_x10'] / 10}
         }
     },
     'ddst': {
@@ -1383,14 +1466,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'four_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.d_dist_x10',), 'fn': lambda row, ctx: row.get('d_dist_x10') / 10 if row.get('d_dist_x10') is not None else None},
-            'team': {'fields': ('s.d_dist_x10',), 'fn': lambda row, ctx: row.get('d_dist_x10') / 10 if row.get('d_dist_x10') is not None else None},
-            'all_teams': {'fields': ('s.d_dist_x10',), 'fn': lambda row, ctx: row.get('d_dist_x10') / 10 if row.get('d_dist_x10') is not None else None}
+            'player': {'fields': ('s.d_dist_x10',), 'fn': lambda row, ctx: row['d_dist_x10'] / 10},
+            'team': {'fields': ('s.d_dist_x10',), 'fn': lambda row, ctx: row['d_dist_x10'] / 10},
+            'all_teams': {'fields': ('s.d_dist_x10',), 'fn': lambda row, ctx: row['d_dist_x10'] / 10}
         }
     },
     'dra': {
@@ -1407,14 +1491,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('p.d_rim_fga',), 'fn': lambda row, ctx: row.get('d_rim_fga')},
-            'team': {'fields': ('t.d_rim_fga',), 'fn': lambda row, ctx: row.get('d_rim_fga')},
-            'all_teams': {'fields': ('t.d_rim_fga',), 'fn': lambda row, ctx: row.get('d_rim_fga')}
+            'player': {'fields': ('p.d_rim_fga',), 'fn': lambda row, ctx: row['d_rim_fga']},
+            'team': {'fields': ('t.d_rim_fga',), 'fn': lambda row, ctx: row['d_rim_fga']},
+            'all_teams': {'fields': ('t.d_rim_fga',), 'fn': lambda row, ctx: row['d_rim_fga']}
         }
     },
     'p/dr': {
@@ -1431,14 +1516,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('p.d_rim_fgm', 'p.d_rim_fga'), 'fn': lambda row, ctx: 2 * (row.get('d_rim_fgm') / row.get('d_rim_fga')) if row.get('d_rim_fgm') is not None and row.get('d_rim_fga') else None},
-            'team': {'fields': ('t.d_rim_fgm', 't.d_rim_fga'), 'fn': lambda row, ctx: 2 * (row.get('d_rim_fgm') / row.get('d_rim_fga')) if row.get('d_rim_fgm') is not None and row.get('d_rim_fga') else None},
-            'all_teams': {'fields': ('t.d_rim_fgm', 't.d_rim_fga'), 'fn': lambda row, ctx: 2 * (row.get('d_rim_fgm') / row.get('d_rim_fga')) if row.get('d_rim_fgm') is not None and row.get('d_rim_fga') else None}
+            'player': {'fields': ('p.d_rim_fgm', 'p.d_rim_fga'), 'fn': lambda row, ctx: 2 * (row['d_rim_fgm'] / row['d_rim_fga'])},
+            'team': {'fields': ('t.d_rim_fgm', 't.d_rim_fga'), 'fn': lambda row, ctx: 2 * (row['d_rim_fgm'] / row['d_rim_fga'])},
+            'all_teams': {'fields': ('t.d_rim_fgm', 't.d_rim_fga'), 'fn': lambda row, ctx: 2 * (row['d_rim_fgm'] / row['d_rim_fga'])}
         }
     },
     'dma': {
@@ -1455,14 +1541,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.d_fg2a', 'p.d_rim_fga'), 'fn': lambda row, ctx: row.get('d_fg2a') - row.get('d_rim_fga') if row.get('d_fg2a') is not None and row.get('d_rim_fga') is not None else None},
-            'team': {'fields': ('s.d_fg2a', 't.d_rim_fga'), 'fn': lambda row, ctx: row.get('d_fg2a') - row.get('d_rim_fga') if row.get('d_fg2a') is not None and row.get('d_rim_fga') is not None else None},
-            'all_teams': {'fields': ('s.d_fg2a', 't.d_rim_fga'), 'fn': lambda row, ctx: row.get('d_fg2a') - row.get('d_rim_fga') if row.get('d_fg2a') is not None and row.get('d_rim_fga') is not None else None}
+            'player': {'fields': ('s.d_fg2a', 'p.d_rim_fga'), 'fn': lambda row, ctx: row['d_fg2a'] - row['d_rim_fga']},
+            'team': {'fields': ('s.d_fg2a', 't.d_rim_fga'), 'fn': lambda row, ctx: row['d_fg2a'] - row['d_rim_fga']},
+            'all_teams': {'fields': ('s.d_fg2a', 't.d_rim_fga'), 'fn': lambda row, ctx: row['d_fg2a'] - row['d_rim_fga']}
         }
     },
     'p/dm': {
@@ -1479,6 +1566,7 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
@@ -1503,14 +1591,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.d_fg3a',), 'fn': lambda row, ctx: row.get('d_fg3a')},
-            'team': {'fields': ('s.d_fg3a',), 'fn': lambda row, ctx: row.get('d_fg3a')},
-            'all_teams': {'fields': ('s.d_fg3a',), 'fn': lambda row, ctx: row.get('d_fg3a')}
+            'player': {'fields': ('s.d_fg3a',), 'fn': lambda row, ctx: row['d_fg3a']},
+            'team': {'fields': ('s.d_fg3a',), 'fn': lambda row, ctx: row['d_fg3a']},
+            'all_teams': {'fields': ('s.d_fg3a',), 'fn': lambda row, ctx: row['d_fg3a']}
         }
     },
     'p/d3': {
@@ -1527,14 +1616,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.d_fg3m', 's.d_fg3a'), 'fn': lambda row, ctx: 3 * (row.get('d_fg3m') / row.get('d_fg3a')) if row.get('d_fg3m') is not None and row.get('d_fg3a') else None},
-            'team': {'fields': ('s.d_fg3m', 's.d_fg3a'), 'fn': lambda row, ctx: 3 * (row.get('d_fg3m') / row.get('d_fg3a')) if row.get('d_fg3m') is not None and row.get('d_fg3a') else None},
-            'all_teams': {'fields': ('s.d_fg3m', 's.d_fg3a'), 'fn': lambda row, ctx: 3 * (row.get('d_fg3m') / row.get('d_fg3a')) if row.get('d_fg3m') is not None and row.get('d_fg3a') else None}
+            'player': {'fields': ('s.d_fg3m', 's.d_fg3a'), 'fn': lambda row, ctx: 3 * (row['d_fg3m'] / row['d_fg3a'])},
+            'team': {'fields': ('s.d_fg3m', 's.d_fg3a'), 'fn': lambda row, ctx: 3 * (row['d_fg3m'] / row['d_fg3a'])},
+            'all_teams': {'fields': ('s.d_fg3m', 's.d_fg3a'), 'fn': lambda row, ctx: 3 * (row['d_fg3m'] / row['d_fg3a'])}
         }
     },
     'cont': {
@@ -1551,14 +1641,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.contests',), 'fn': lambda row, ctx: row.get('contests')},
-            'team': {'fields': ('s.contests',), 'fn': lambda row, ctx: row.get('contests')},
-            'all_teams': {'fields': ('s.contests',), 'fn': lambda row, ctx: row.get('contests')}
+            'player': {'fields': ('s.contests',), 'fn': lambda row, ctx: row['contests']},
+            'team': {'fields': ('s.contests',), 'fn': lambda row, ctx: row['contests']},
+            'all_teams': {'fields': ('s.contests',), 'fn': lambda row, ctx: row['contests']}
         }
     },
     'blk': {
@@ -1575,14 +1666,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba', 'ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.blocks',), 'fn': lambda row, ctx: row.get('blocks')},
-            'team': {'fields': ('s.blocks',), 'fn': lambda row, ctx: row.get('blocks')},
-            'all_teams': {'fields': ('s.blocks',), 'fn': lambda row, ctx: row.get('blocks')}
+            'player': {'fields': ('s.blocks',), 'fn': lambda row, ctx: row['blocks']},
+            'team': {'fields': ('s.blocks',), 'fn': lambda row, ctx: row['blocks']},
+            'all_teams': {'fields': ('s.blocks',), 'fn': lambda row, ctx: row['blocks']}
         }
     },
     'defl': {
@@ -1599,14 +1691,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.deflections',), 'fn': lambda row, ctx: row.get('deflections')},
-            'team': {'fields': ('s.deflections',), 'fn': lambda row, ctx: row.get('deflections')},
-            'all_teams': {'fields': ('s.deflections',), 'fn': lambda row, ctx: row.get('deflections')}
+            'player': {'fields': ('s.deflections',), 'fn': lambda row, ctx: row['deflections']},
+            'team': {'fields': ('s.deflections',), 'fn': lambda row, ctx: row['deflections']},
+            'all_teams': {'fields': ('s.deflections',), 'fn': lambda row, ctx: row['deflections']}
         }
     },
     'stl': {
@@ -1623,14 +1716,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.steals',), 'fn': lambda row, ctx: row.get('steals')},
-            'team': {'fields': ('s.steals',), 'fn': lambda row, ctx: row.get('steals')},
-            'all_teams': {'fields': ('s.steals',), 'fn': lambda row, ctx: row.get('steals')}
+            'player': {'fields': ('s.steals',), 'fn': lambda row, ctx: row['steals']},
+            'team': {'fields': ('s.steals',), 'fn': lambda row, ctx: row['steals']},
+            'all_teams': {'fields': ('s.steals',), 'fn': lambda row, ctx: row['steals']}
         }
     },
     'st+c': {
@@ -1647,14 +1741,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.steals', 's.charges_drawn'), 'fn': lambda row, ctx: row.get('steals') + row.get('charges_drawn') if row.get('steals') is not None and row.get('charges_drawn') is not None else None},
-            'team': {'fields': ('s.steals', 's.charges_drawn'), 'fn': lambda row, ctx: row.get('steals') + row.get('charges_drawn') if row.get('steals') is not None and row.get('charges_drawn') is not None else None},
-            'all_teams': {'fields': ('s.steals', 's.charges_drawn'), 'fn': lambda row, ctx: row.get('steals') + row.get('charges_drawn') if row.get('steals') is not None and row.get('charges_drawn') is not None else None}
+            'player': {'fields': ('s.steals', 's.charges_drawn'), 'fn': lambda row, ctx: row['steals'] + row['charges_drawn']},
+            'team': {'fields': ('s.steals', 's.charges_drawn'), 'fn': lambda row, ctx: row['steals'] + row['charges_drawn']},
+            'all_teams': {'fields': ('s.steals', 's.charges_drawn'), 'fn': lambda row, ctx: row['steals'] + row['charges_drawn']}
         }
     },
     'fls': {
@@ -1671,15 +1766,16 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba', 'ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.fouls',), 'fn': lambda row, ctx: row.get('fouls')},
-            'team': {'fields': ('s.fouls',), 'fn': lambda row, ctx: row.get('fouls')},
-            'all_teams': {'fields': ('s.fouls',), 'fn': lambda row, ctx: row.get('fouls')},
-            'opponents': {'fields': ('s.opp_fouls',), 'fn': lambda row, ctx: row.get('opp_fouls')}
+            'player': {'fields': ('s.fouls',), 'fn': lambda row, ctx: row['fouls']},
+            'team': {'fields': ('s.fouls',), 'fn': lambda row, ctx: row['fouls']},
+            'all_teams': {'fields': ('s.fouls',), 'fn': lambda row, ctx: row['fouls']},
+            'opponents': {'fields': ('s.opp_fouls',), 'fn': lambda row, ctx: row['opp_fouls']}
         }
     },
     'win%': {
@@ -1696,14 +1792,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'three_char_dec',
         'link': None,
         'leagues': ['nba', 'ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.wins', 's.games'), 'fn': lambda row, ctx: row.get('wins') / row.get('games') if row.get('wins') is not None and row.get('games') else None},
-            'team': {'fields': ('s.wins', 's.games'), 'fn': lambda row, ctx: row.get('wins') / row.get('games') if row.get('wins') is not None and row.get('games') else None},
-            'all_teams': {'fields': ('s.wins', 's.games'), 'fn': lambda row, ctx: row.get('wins') / row.get('games') if row.get('wins') is not None and row.get('games') else None}
+            'player': {'fields': ('s.wins', 's.games'), 'fn': lambda row, ctx: row['wins'] / row['games']},
+            'team': {'fields': ('s.wins', 's.games'), 'fn': lambda row, ctx: row['wins'] / row['games']},
+            'all_teams': {'fields': ('s.wins', 's.games'), 'fn': lambda row, ctx: row['wins'] / row['games']}
         }
     },
     'ortg': {
@@ -1726,9 +1823,9 @@ TAB_COLUMNS: Dict[str, Any] = {
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.o_rtg_x10',), 'fn': lambda row, ctx: row.get('o_rtg_x10') / 10 if row.get('o_rtg_x10') is not None else None},
-            'team': {'fields': ('s.o_rtg_x10',), 'fn': lambda row, ctx: row.get('o_rtg_x10') / 10 if row.get('o_rtg_x10') is not None else None},
-            'all_teams': {'fields': ('s.o_rtg_x10',), 'fn': lambda row, ctx: row.get('o_rtg_x10') / 10 if row.get('o_rtg_x10') is not None else None}
+            'player': {'fields': ('s.o_rtg_x10',), 'fn': lambda row, ctx: row['o_rtg_x10'] / 10},
+            'team': {'fields': ('s.o_rtg_x10',), 'fn': lambda row, ctx: row['o_rtg_x10'] / 10},
+            'all_teams': {'fields': ('s.o_rtg_x10',), 'fn': lambda row, ctx: row['o_rtg_x10'] / 10}
         }
     },
     'drtg': {
@@ -1745,14 +1842,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'four_char_dec',
         'link': None,
         'leagues': ['nba', 'ncaa'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.d_rtg_x10',), 'fn': lambda row, ctx: row.get('d_rtg_x10') / 10 if row.get('d_rtg_x10') is not None else None},
-            'team': {'fields': ('s.d_rtg_x10',), 'fn': lambda row, ctx: row.get('d_rtg_x10') / 10 if row.get('d_rtg_x10') is not None else None},
-            'all_teams': {'fields': ('s.d_rtg_x10',), 'fn': lambda row, ctx: row.get('d_rtg_x10') / 10 if row.get('d_rtg_x10') is not None else None}
+            'player': {'fields': ('s.d_rtg_x10',), 'fn': lambda row, ctx: row['d_rtg_x10'] / 10},
+            'team': {'fields': ('s.d_rtg_x10',), 'fn': lambda row, ctx: row['d_rtg_x10'] / 10},
+            'all_teams': {'fields': ('s.d_rtg_x10',), 'fn': lambda row, ctx: row['d_rtg_x10'] / 10}
         }
     },
     'nooo': {
@@ -1769,12 +1867,13 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'four_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.o_rtg_x10', 's.off_o_rtg_x10'), 'fn': lambda row, ctx: (row.get('o_rtg_x10') / 10) - (row.get('off_o_rtg_x10') / 10) if row.get('o_rtg_x10') is not None and row.get('off_o_rtg_x10') is not None else None}
+            'player': {'fields': ('s.o_rtg_x10', 's.off_o_rtg_x10'), 'fn': lambda row, ctx: (row['o_rtg_x10'] / 10) - (row['off_o_rtg_x10'] / 10)}
         }
     },
     'ndoo': {
@@ -1791,12 +1890,13 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'four_char_dec',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('s.d_rtg_x10', 's.off_d_rtg_x10'), 'fn': lambda row, ctx: (row.get('d_rtg_x10') / 10) - (row.get('off_d_rtg_x10') / 10) if row.get('d_rtg_x10') is not None and row.get('off_d_rtg_x10') is not None else None}
+            'player': {'fields': ('s.d_rtg_x10', 's.off_d_rtg_x10'), 'fn': lambda row, ctx: (row['d_rtg_x10'] / 10) - (row['off_d_rtg_x10'] / 10)}
         }
     },
     'ID': {
@@ -1813,14 +1913,15 @@ TAB_COLUMNS: Dict[str, Any] = {
         'width_class': 'auto',
         'link': None,
         'leagues': ['nba'],
+        'team_row_display': None,
         'default': None,
         'align': 'center',
         'emphasis': None,
         'font_size': 9,
         'values': {
-            'player': {'fields': ('p.the_glass_id',), 'fn': lambda row, ctx: row.get('the_glass_id')},
-            'team': {'fields': ('t.the_glass_id',), 'fn': lambda row, ctx: row.get('the_glass_id')},
-            'all_teams': {'fields': ('t.the_glass_id',), 'fn': lambda row, ctx: row.get('the_glass_id')}
+            'player': {'fields': ('p.the_glass_id',), 'fn': lambda row, ctx: row['the_glass_id']},
+            'team': {'fields': ('t.the_glass_id',), 'fn': lambda row, ctx: row['the_glass_id']},
+            'all_teams': {'fields': ('t.the_glass_id',), 'fn': lambda row, ctx: row['the_glass_id']}
         }
     }
 }

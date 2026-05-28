@@ -16,7 +16,96 @@ Null propagation contract:
 """
 
 from datetime import date, datetime
-from typing import Any, Callable, Union
+from typing import Any, Callable, Dict, List, TypedDict, Union
+
+
+class PublishRow(TypedDict, total=False):
+    assists: Any
+    birthdate: Any
+    blocks: Any
+    charges_drawn: Any
+    conf: Any
+    cont_d_rebs: Any
+    cont_fg2a: Any
+    cont_fg2m: Any
+    cont_fg3a: Any
+    cont_fg3m: Any
+    cont_o_rebs: Any
+    cont_rim_fga: Any
+    cont_rim_fgm: Any
+    contests: Any
+    d_dist_x10: Any
+    d_fg2a: Any
+    d_fg2m: Any
+    d_fg3a: Any
+    d_fg3m: Any
+    d_reb_pct_x1000: Any
+    d_rebs: Any
+    d_rim_fga: Any
+    d_rim_fgm: Any
+    d_rtg_x10: Any
+    deflections: Any
+    dunks: Any
+    fg2a: Any
+    fg2m: Any
+    fg3a: Any
+    fg3m: Any
+    fouls: Any
+    fta: Any
+    ftm: Any
+    games: Any
+    hand: Any
+    height_ins_with_shoes: Any
+    jersey_num: Any
+    minutes_x10: Any
+    name: Any
+    notes: Any
+    o_dist_x10: Any
+    o_reb_pct_x1000: Any
+    o_rebs: Any
+    o_rtg_x10: Any
+    off_d_rtg_x10: Any
+    off_o_rtg_x10: Any
+    open_fg2a: Any
+    open_fg2m: Any
+    open_fg3a: Any
+    open_fg3m: Any
+    open_rim_fga: Any
+    open_rim_fgm: Any
+    opp_assists: Any
+    opp_fg2a: Any
+    opp_fg2m: Any
+    opp_fg3a: Any
+    opp_fg3m: Any
+    opp_fouls: Any
+    opp_fta: Any
+    opp_ftm: Any
+    opp_turnovers: Any
+    passes: Any
+    possessions: Any
+    pot_assists: Any
+    putbacks: Any
+    seasons_exp: Any
+    sec_assists: Any
+    steals: Any
+    team_id: Any
+    the_glass_id: Any
+    time_on_ball: Any
+    touches: Any
+    turnovers: Any
+    unassisted_fg2m: Any
+    unassisted_fg3m: Any
+    unassisted_fgm: Any
+    unassisted_rim_fgm: Any
+    weight_lbs: Any
+    wingspan_ins: Any
+    wins: Any
+
+
+class PublishContext(TypedDict, total=False):
+    lookup_tables: Dict[str, Dict[Any, Dict[str, Any]]]
+    seasons_in_query: int
+    team_players: List[PublishRow]
 
 
 def calculate_age(birthdate: Any) -> Union[float, None]:
@@ -42,7 +131,7 @@ def calculate_age(birthdate: Any) -> Union[float, None]:
 
 
 def lookup(key_value: Any, table: str, field: str,
-           ctx: Union[dict, None]) -> Any:
+           ctx: Union[PublishContext, None]) -> Any:
     """Resolve a foreign-key style lookup against `ctx['lookup_tables']`.
 
     Lookup tables are structured `{table_name: {key: {field: value}}}`.
@@ -55,13 +144,13 @@ def lookup(key_value: Any, table: str, field: str,
     return entry.get(field) if entry else None
 
 
-def seasons_in_query(ctx: Union[dict, None]) -> int:
+def seasons_in_query(ctx: Union[PublishContext, None]) -> int:
     """Return the season count from runtime context (default 1)."""
     return (ctx or {}).get('seasons_in_query', 1)
 
 
-def team_average(value_fn: Callable[[dict, Union[dict, None]], Any],
-                 ctx: Union[dict, None]) -> Union[float, None]:
+def team_average(value_fn: Callable[[PublishRow, Union[PublishContext, None]], Any],
+                 ctx: Union[PublishContext, None]) -> Union[float, None]:
     """Minute-weighted average of `value_fn(player, ctx)` across the team.
 
     `ctx['team_players']` provides the iterable of player rows. Each player

@@ -44,17 +44,52 @@ def _validate_section_subsection(sheets_columns: dict) -> List[str]:
     return errors
 
 
+def _validate_tab_column_schema_uniformity(sheets_columns: dict) -> List[str]:
+    """All TAB_COLUMNS entries must expose the same top-level keys."""
+    errors: List[str] = []
+    expected_keys = None
+
+    for col_name, col_def in sheets_columns.items():
+        keys = set(col_def.keys())
+        if expected_keys is None:
+            expected_keys = keys
+            continue
+
+        missing = sorted(expected_keys - keys)
+        extra = sorted(keys - expected_keys)
+        if missing or extra:
+            errors.append(
+                f"TAB_COLUMNS['{col_name}']: schema mismatch; "
+                f"missing={missing!r}, extra={extra!r}"
+            )
+
+    return errors
+
+
 def _validate_width_classes(sheets_columns: dict) -> List[str]:
-    """String width_class values must be recognized names."""
+    """Width classes may be named tokens or positive integer overrides."""
     from src.publish.definitions.columns import _VALID_WIDTH_CLASSES
 
     errors: List[str] = []
     for col_name, col_def in sheets_columns.items():
         wc = col_def.get('width_class')
+        if isinstance(wc, int) and not isinstance(wc, bool):
+            if wc <= 0:
+                errors.append(
+                    f"TAB_COLUMNS['{col_name}']: 'width_class' integer override must be > 0, got {wc!r}"
+                )
+            continue
+
         if isinstance(wc, str) and wc not in _VALID_WIDTH_CLASSES:
             errors.append(
                 f"TAB_COLUMNS['{col_name}']: 'width_class' value {wc!r} "
                 f"not in {_VALID_WIDTH_CLASSES}"
+            )
+            continue
+
+        if wc is not None and not isinstance(wc, str):
+            errors.append(
+                f"TAB_COLUMNS['{col_name}']: 'width_class' must be a string token or positive integer override, got {type(wc).__name__}"
             )
     return errors
 
@@ -147,6 +182,7 @@ def validate_config(league_key: str = None) -> List[str]:
     from src.publish.definitions.columns import TAB_COLUMNS
     from src.publish.definitions.stats import STAT_RATES
     errors: List[str] = []
+    errors.extend(_validate_tab_column_schema_uniformity(TAB_COLUMNS))
     errors.extend(_validate_section_subsection(TAB_COLUMNS))
     errors.extend(_validate_width_classes(TAB_COLUMNS))
     errors.extend(_validate_column_section_refs(TAB_COLUMNS))
