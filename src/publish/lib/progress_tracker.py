@@ -13,7 +13,7 @@ from src.core.lib.progress_tracker import (
     mark_task_process_failed as _mark_task_failed,
     mark_task_process_started as _mark_task_started,
     resolve_work as _resolve_work,
-    update_run_completed_items as _update_run_completed_items,
+    update_run_completed_tasks as _update_run_completed_tasks,
 )
 
 _PIPELINE = 'publish'
@@ -30,11 +30,11 @@ def resolve_work(
     
     Returns (run_process_id, [(view_name, task_process_id), ...]).
     """
-    def item_key_fn(view: str) -> str:
+    def task_name_fn(view: str) -> str:
         return view
-    
+
     return _resolve_work(
-        conn, db_schema, _PIPELINE, views, item_key_fn, auto_resume,
+        conn, db_schema, _PIPELINE, views, task_name_fn, auto_resume,
         entity_type=league,
     )
 
@@ -55,8 +55,8 @@ def mark_view_failed(conn: Any, db_schema: str, task_process_id: int, error_mess
 
 
 def update_run_completed_views(conn: Any, db_schema: str, run_process_id: int) -> None:
-    """Sync the completed_items counter on the run record."""
-    _update_run_completed_items(conn, db_schema, run_process_id, _PIPELINE)
+    """Sync the completed_tasks counter on the run record."""
+    _update_run_completed_tasks(conn, db_schema, run_process_id, _PIPELINE)
 
 
 def complete_run(conn: Any, db_schema: str, run_process_id: int) -> None:

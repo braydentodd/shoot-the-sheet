@@ -12,7 +12,7 @@ import logging
 from typing import Any, Dict, List, Tuple
 
 from src.core.lib.postgres import get_db_connection, quote_col
-from src.core.definitions.tables import TABLES, _schemas
+from src.core.definitions.schema import TABLES, SCHEMAS, SEQUENCES
 from src.core.definitions.db_columns import DB_COLUMNS
 
 logger = logging.getLogger(__name__)
@@ -23,7 +23,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def _get_source_id_columns_for_entity(entity: str) -> List[Tuple[str, str]]:
-    """Source-id columns to add to ``entity``'s profile table, in stable order."""
+    """Source-id columns to add to ``entity``'s profile table, in stable order.
+
+    Imports are deferred to avoid making ``core.lib.ddl`` depend on ETL-layer
+    modules at import time. If ``SOURCES`` ever moves to ``core.definitions``,
+    these can be hoisted to module level.
+    """
     from src.etl.definitions.sources import SOURCES
     from src.etl.lib.sources_resolver import get_source_id_column
 
@@ -138,22 +143,22 @@ def _existing_columns(cur, schema: str, table: str) -> set:
 
 
 def _existing_unique_column_sets(cur, schema: str, table: str) -> set:
-        cur.execute(
-                """
-                SELECT tc.constraint_name, array_agg(kcu.column_name ORDER BY kcu.ordinal_position)
-                    FROM information_schema.table_constraints tc
-                    JOIN information_schema.key_column_usage kcu
-                        ON tc.constraint_name = kcu.constraint_name
-                     AND tc.table_schema = kcu.table_schema
-                     AND tc.table_name = kcu.table_name
-                 WHERE tc.table_schema = %s
-                     AND tc.table_name = %s
-                     AND tc.constraint_type IN ('PRIMARY KEY', 'UNIQUE')
-                 GROUP BY tc.constraint_name
-                """,
-                (schema, table),
-        )
-        return {tuple(row[1]) for row in cur.fetchall()}
+    cur.execute(
+        """
+        SELECT tc.constraint_name, array_agg(kcu.column_name ORDER BY kcu.ordinal_position)
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+            ON tc.constraint_name = kcu.constraint_name
+           AND tc.table_schema = kcu.table_schema
+           AND tc.table_name = kcu.table_name
+        WHERE tc.table_schema = %s
+          AND tc.table_name = %s
+          AND tc.constraint_type IN ('PRIMARY KEY', 'UNIQUE')
+        GROUP BY tc.constraint_name
+        """,
+        (schema, table),
+    )
+    return {tuple(row[1]) for row in cur.fetchall()}
 
 
 def _insert_row(
@@ -260,9 +265,9 @@ def _create_table(cur, schema_name: str, table_name: str, meta: Dict[str, Any]) 
         + "\n)"
     )
 
-    # Indexes
+    # Indexes — prefix with schema to avoid cross-schema name collisions
     for idx in meta.get('indexes', []):
-        idx_name = f"idx_{table_name}_{idx['name']}"
+        idx_name = f"idx_{schema_name}_{table_name}_{idx['name']}"
         cols = ', '.join(quote_col(c) for c in idx['columns'])
         cur.execute(
             f"CREATE INDEX IF NOT EXISTS {idx_name} "
@@ -340,6 +345,29 @@ def _sync_table(cur, table_name: str, meta: Dict[str, Any], schema_name: str) ->
 # Orchestrators
 # ---------------------------------------------------------------------------
 
+def _validate_sequence_coverage() -> None:
+    """Ensure every nextval() default in DB_COLUMNS has a matching SEQUENCES entry."""
+    import re
+    for col_name, col_meta in DB_COLUMNS.items():
+        default = col_meta.get('default') or ''
+        m = re.search(r"nextval\('([^']+)'\)", default)
+        if not m:
+            continue
+        seq_name = m.group(1)
+        if seq_name not in SEQUENCES:
+            raise RuntimeError(
+                f"Column '{col_name}' references sequence '{seq_name}' "
+                f"which is missing from SEQUENCES registry"
+            )
+
+
+def _ensure_sequences(cur, schema_name: str) -> None:
+    """Create sequences declared in SEQUENCES that belong to this schema."""
+    for seq_name, meta in SEQUENCES.items():
+        if meta['schema'] == schema_name:
+            cur.execute(f"CREATE SEQUENCE IF NOT EXISTS {seq_name}")
+
+
 def ensure_schema(schema_name: str, conn=None) -> Dict[str, List[str]]:
     """Build and validate any schema mapped in the TABLES config."""
     own = conn is None
@@ -350,6 +378,7 @@ def ensure_schema(schema_name: str, conn=None) -> Dict[str, List[str]]:
     try:
         with conn.cursor() as cur:
             cur.execute(f"CREATE SCHEMA IF NOT EXISTS {schema_name}")
+            _ensure_sequences(cur, schema_name)
 
             for name, meta in TABLES.items():
                 if meta.get('schema') != schema_name:
@@ -397,7 +426,7 @@ def ensure_league_profile(league_key: str, conn=None) -> Dict[str, List[str]]:
             if not vals:
                 raise ValueError(f"No seedable columns found for league {league_key!r}")
 
-            constraints = TABLES['profiles.leagues'].get('unique_constraints')
+            constraints = TABLES['leagues'].get('unique_constraints')
             conflict_cols = constraints[0] if constraints else ['league_key']
             _insert_row(cur, 'profiles', 'leagues', vals, conflict_cols)
             actions['profiles.leagues'] = [f"seeded ({', '.join(sorted(vals.keys()))})"]
@@ -412,16 +441,91 @@ def ensure_league_profile(league_key: str, conn=None) -> Dict[str, List[str]]:
             conn.close()
 
 
+def _topological_table_order() -> List[Tuple[str, Dict[str, Any]]]:
+    """Return all tables in dependency order based on foreign key references.
+
+    Uses Kahn's algorithm. Tables with no outbound FKs come first.
+    Cross-schema dependencies are handled naturally.
+    """
+    from collections import deque
+
+    # Build lookup from (schema, table_name) -> registry key
+    key_by_location: Dict[Tuple[str, str], str] = {}
+    for key, meta in TABLES.items():
+        schema = meta.get('schema')
+        if schema:
+            key_by_location[(schema, key)] = key
+
+    # Build dependency graph: table -> tables it depends on
+    in_degree: Dict[str, int] = {key: 0 for key in TABLES}
+    dependents: Dict[str, List[str]] = {key: [] for key in TABLES}
+
+    for key, meta in TABLES.items():
+        for fk in meta.get('foreign_keys', []):
+            ref_schema = fk.get('ref_schema')
+            ref_table = fk.get('ref_table')
+            if not ref_schema or not ref_table:
+                continue
+            # Find the referenced table in our registry
+            dep_key = key_by_location.get((ref_schema, ref_table))
+            if dep_key and dep_key != key:  # skip self-references
+                dependents[dep_key].append(key)
+                in_degree[key] += 1
+
+    # Kahn's algorithm
+    queue = deque([k for k, d in in_degree.items() if d == 0])
+    ordered: List[Tuple[str, Dict[str, Any]]] = []
+
+    while queue:
+        key = queue.popleft()
+        ordered.append((key, TABLES[key]))
+        for dependent in dependents[key]:
+            in_degree[dependent] -= 1
+            if in_degree[dependent] == 0:
+                queue.append(dependent)
+
+    if len(ordered) != len(TABLES):
+        # Cycle detected - log which tables weren't ordered
+        unresolved = set(TABLES.keys()) - {k for k, _ in ordered}
+        logger.error('Circular FK dependency detected among tables: %s', unresolved)
+        raise RuntimeError(f'Circular FK dependency in TABLES registry: {unresolved}')
+
+    return ordered
+
+
 def bootstrap_schema(league_key: str, conn=None) -> Dict[str, List[str]]:
-    """Unified bootstrap: ensure all schemas and seed the league profile row."""
+    """Unified bootstrap: ensure all schemas and seed the league profile row.
+
+    Tables are created in topological order so cross-schema foreign keys
+    are always valid by the time they are declared.
+    """
     own = conn is None
     if own:
         conn = get_db_connection()
 
     actions: Dict[str, List[str]] = {}
     try:
-        for schema_name in sorted(_schemas()):
-            actions.update(ensure_schema(schema_name, conn=conn))
+        # Validate config before touching the database
+        _validate_sequence_coverage()
+
+        with conn.cursor() as cur:
+            # 1. Create all schemas first
+            for schema_name in sorted(SCHEMAS):
+                cur.execute(f"CREATE SCHEMA IF NOT EXISTS {schema_name}")
+
+            # 2. Create all sequences
+            for schema_name in sorted(SCHEMAS):
+                _ensure_sequences(cur, schema_name)
+
+            # 3. Create tables in FK dependency order
+            for table_key, meta in _topological_table_order():
+                schema_name = meta['schema']
+                acts = _sync_table(cur, table_key, meta, schema_name=schema_name)
+                qualified = f"{schema_name}.{table_key}"
+                actions[qualified] = acts
+                if acts:
+                    logger.info('Table %s: %s', qualified, ', '.join(acts))
+
         actions.update(ensure_league_profile(league_key, conn=conn))
 
         if own:

@@ -4,12 +4,12 @@ The Glass - ETL Database Loader
 Bulk-write primitives and high-level row writers used by the executor.
 
 ID model:
-    Profile tables (``core.{entity}_profiles``)
-        - PK: ``the_glass_id`` (auto-allocated by ``core.the_glass_id_seq``)
+    Profile tables (``profiles.{entity}s`` — e.g. ``profiles.players``)
+        - PK: ``the_glass_id`` (auto-allocated by ``profiles.the_glass_id_seq``)
         - Per-source identity columns: ``{source_key}_id`` (UNIQUE)
         - Conflict key on upsert is the per-source identity column
 
-    Stats tables (``{league}.{entity}_season_stats``)
+    Stats tables (``stats.{entity}_seasons`` — e.g. ``stats.player_seasons``)
         - PK: composite, includes ``the_glass_id`` and (for player) ``team_id``
         - Source IDs are resolved to the_glass_id values before write
         - Rows that cannot resolve all FK references are dropped with a warning
@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Set, Union
 from psycopg2.extras import execute_values
 
 from src.core.lib.postgres import db_connection, quote_col
-from src.core.definitions.tables import TABLES
+from src.core.definitions.schema import TABLES
 from src.etl.lib.sources_resolver import get_default_external_source, get_source_id_column
 from src.core.lib.tables_resolver import get_table_name
 from src.core.lib.fk_resolver import load_fk_mapping, resolve_fk_value_columns

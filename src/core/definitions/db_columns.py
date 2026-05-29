@@ -47,10 +47,10 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
 
     'process_id': {
-        'type': 'BIGINT GENERATED ALWAYS AS IDENTITY',
-        'scope': ['ops'],
+        'type': 'BIGINT',
+        'scope': ['runs', 'tasks'],
         'nullable': False,
-        'default': None,
+        'default': "nextval('ops.process_id_seq')",
         'entity_types': None,
         'manager': 'db',
         'domain': None,
@@ -59,7 +59,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'run_id': {
         'type': 'BIGINT',
-        'scope': ['ops'],
+        'scope': ['tasks'],
         'nullable': False,
         'default': None,
         'entity_types': None,
@@ -69,10 +69,10 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'dataset_mapping': None,
     },
     'the_glass_id': {
-        'type': 'BIGINT GENERATED ALWAYS AS IDENTITY',
+        'type': 'BIGINT',
         'scope': ['profiles'],
         'nullable': False,
-        'default': None,
+        'default': "nextval('profiles.the_glass_id_seq')",
         'entity_types': None,
         'manager': 'db',
         'domain': None,
@@ -81,7 +81,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'entity_type': {
         'type': 'TEXT',
-        'scope': ['ops'],
+        'scope': ['tasks', 'coverages'],
         'nullable': False,
         'default': None,
         'entity_types': None,
@@ -92,7 +92,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'updated_at': {
         'type': 'TIMESTAMP',
-        'scope': ['profiles', 'stats', 'rosters', 'staging', 'ops'],
+        'scope': ['profiles', 'stats', 'rosters', 'staging', 'runs', 'tasks', 'coverages'],
         'nullable': False,
         'default': 'NOW()',
         'entity_types': ['league', 'player', 'team'],
@@ -103,7 +103,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'created_at': {
         'type': 'TIMESTAMP',
-        'scope': ['profiles', 'stats', 'rosters', 'staging', 'ops'],
+        'scope': ['profiles', 'stats', 'rosters', 'staging', 'runs', 'tasks', 'coverages'],
         'nullable': False,
         'default': 'NOW()',
         'entity_types': ['league', 'player', 'team'],
@@ -114,7 +114,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'season': {
         'type': 'TEXT',
-        'scope': ['stats', 'ops'],
+        'scope': ['stats', 'tasks', 'coverages'],
         'nullable': True,
         'default': None,
         'entity_types': ['player', 'team'],
@@ -125,7 +125,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'season_type': {
         'type': 'TEXT',
-        'scope': ['stats', 'ops'],
+        'scope': ['stats', 'tasks', 'coverages'],
         'nullable': True,
         'default': None,
         'entity_types': ['player', 'team'],
@@ -3157,7 +3157,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     'pipeline': {
         'type': 'TEXT',
-        'scope': ['ops'],
+        'scope': ['runs', 'tasks'],
         'nullable': False,
         'default': None,
         'entity_types': None,
@@ -3168,7 +3168,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'status': {
         'type': 'TEXT',
-        'scope': ['ops'],
+        'scope': ['runs', 'tasks'],
         'nullable': False,
         'default': "'pending'",
         'entity_types': None,
@@ -3179,7 +3179,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'completed_at': {
         'type': 'TIMESTAMP',
-        'scope': ['runs', 'tasks', 'backfill'],
+        'scope': ['runs', 'tasks', 'coverages'],
         'nullable': True,
         'default': None,
         'entity_types': None,
@@ -3188,9 +3188,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'comment': None,
         'dataset_mapping': None,
     },
-    'total_items': {
+    'total_tasks': {
         'type': 'INTEGER',
-        'scope': ['ops'],
+        'scope': ['runs'],
         'nullable': False,
         'default': '0',
         'entity_types': None,
@@ -3199,20 +3199,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'comment': None,
         'dataset_mapping': None,
     },
-    'completed_items': {
+    'completed_tasks': {
         'type': 'INTEGER',
-        'scope': ['ops'],
-        'nullable': False,
-        'default': '0',
-        'entity_types': None,
-        'manager': 'execution_context',
-        'domain': None,
-        'comment': None,
-        'dataset_mapping': None,
-    },
-    'total_rows': {
-        'type': 'INTEGER',
-        'scope': ['ops'],
+        'scope': ['runs'],
         'nullable': False,
         'default': '0',
         'entity_types': None,
@@ -3223,7 +3212,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'error_message': {
         'type': 'TEXT',
-        'scope': ['ops'],
+        'scope': ['runs', 'tasks'],
         'nullable': True,
         'default': None,
         'entity_types': None,
@@ -3261,7 +3250,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'league_id': {
         'type': 'BIGINT',
-        'scope': ['rosters', 'stats', 'ops', 'staging'],
+        'scope': ['rosters', 'stats', 'tasks', 'coverages', 'staging'],
         'nullable': False,
         'default': None,
         'entity_types': ['league'],
@@ -3272,7 +3261,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'source_key': {
         'type': 'TEXT',
-        'scope': ['ops', 'staging'],
+        'scope': ['tasks', 'coverages', 'staging'],
         'nullable': False,
         'default': None,
         'entity_types': ['team', 'player'],
@@ -3281,10 +3270,54 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'comment': None,
         'dataset_mapping': None,
     },
-    'item_key': {
+    'task_name': {
         'type': 'TEXT',
-        'scope': ['ops'],
+        'scope': ['tasks'],
         'nullable': False,
+        'default': None,
+        'entity_types': None,
+        'manager': 'execution_context',
+        'domain': None,
+        'comment': None,
+        'dataset_mapping': None,
+    },
+    'dataset': {
+        'type': 'TEXT',
+        'scope': ['tasks', 'coverages'],
+        'nullable': True,
+        'default': None,
+        'entity_types': None,
+        'manager': 'execution_context',
+        'domain': None,
+        'comment': None,
+        'dataset_mapping': None,
+    },
+    'tier': {
+        'type': 'TEXT',
+        'scope': ['tasks'],
+        'nullable': True,
+        'default': None,
+        'entity_types': None,
+        'manager': 'execution_context',
+        'domain': None,
+        'comment': None,
+        'dataset_mapping': None,
+    },
+    'field': {
+        'type': 'TEXT',
+        'scope': ['coverages'],
+        'nullable': False,
+        'default': None,
+        'entity_types': None,
+        'manager': 'execution_context',
+        'domain': None,
+        'comment': None,
+        'dataset_mapping': None,
+    },
+    'params': {
+        'type': 'TEXT',
+        'scope': ['tasks', 'coverages'],
+        'nullable': True,
         'default': None,
         'entity_types': None,
         'manager': 'execution_context',
@@ -3294,7 +3327,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'rows_written': {
         'type': 'INTEGER',
-        'scope': ['ops'],
+        'scope': ['tasks'],
         'nullable': False,
         'default': '0',
         'entity_types': None,
@@ -3305,7 +3338,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'retry_count': {
         'type': 'INTEGER',
-        'scope': ['ops'],
+        'scope': ['tasks'],
         'nullable': False,
         'default': '0',
         'entity_types': None,
@@ -3314,18 +3347,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'comment': None,
         'dataset_mapping': None,
     },
-    'coverage_signature': {
-        'type': 'TEXT',
-        'scope': ['ops'],
-        'nullable': False,
-        'default': None,
-        'entity_types': None,
-        'manager': 'execution_context',
-        'domain': None,
-        'comment': None,
-        'dataset_mapping': None,
-    },
-
     # ------------------------------------------------------------------
     # ROSTER COLUMNS (league_rosters, team_rosters)
     # Shared operational/data columns only.  FK columns (league_id, team_id,

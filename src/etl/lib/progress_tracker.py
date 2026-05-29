@@ -13,14 +13,14 @@ from src.core.lib.progress_tracker import (
     mark_task_process_failed as _mark_task_failed,
     mark_task_process_started as _mark_task_started,
     resolve_work as _resolve_work,
-    update_run_completed_items as _update_run_completed_items,
+    update_run_completed_tasks as _update_run_completed_tasks,
 )
 
 _PIPELINE = 'etl'
 
 
-def _make_item_key(entity_type: str, dataset: str, tier: str, columns: Dict) -> str:
-    """Encode a call-group work unit as a stable, opaque string key."""
+def _make_task_name(entity_type: str, dataset: str, tier: str, columns: Dict) -> str:
+    """Build a human-readable name for a call-group work unit."""
     col_part = ','.join(sorted(columns.keys())) if columns else ''
     return f'{entity_type}:{dataset}:{tier}:{col_part}'
 
@@ -43,14 +43,14 @@ def resolve_work(
 
     Returns (run_process_id, [(group_dict, task_process_id), ...]).
     """
-    def item_key_fn(group: Dict[str, Any]) -> str:
-        return _make_item_key(entity, group['dataset'], group['tier'], group.get('columns', {}))
-    
+    def task_name_fn(group: Dict[str, Any]) -> str:
+        return _make_task_name(entity, group['dataset'], group['tier'], group.get('columns', {}))
+
     filters = dict(entity_type=entity, season=season, season_type=season_type)
     if league_id is not None:
         filters['league_id'] = league_id
     return _resolve_work(
-        conn, db_schema, _PIPELINE, groups, item_key_fn, auto_resume,
+        conn, db_schema, _PIPELINE, groups, task_name_fn, auto_resume,
         **filters,
     )
 
@@ -62,9 +62,15 @@ def mark_group_started(conn: Any, db_schema: str, task_process_id: int) -> None:
 
 def mark_group_completed(
     conn: Any, db_schema: str, task_process_id: int, rows_written: int,
+    dataset: str = None, tier: str = None,
 ) -> None:
     """Mark a task entry as completed."""
-    _mark_task_completed(conn, db_schema, task_process_id, rows_written=rows_written)
+    metadata = dict(rows_written=rows_written)
+    if dataset is not None:
+        metadata['dataset'] = dataset
+    if tier is not None:
+        metadata['tier'] = tier
+    _mark_task_completed(conn, db_schema, task_process_id, **metadata)
 
 
 def mark_group_failed(
@@ -77,13 +83,13 @@ def mark_group_failed(
 def update_run_completed_groups(
     conn: Any, db_schema: str, run_process_id: int,
 ) -> None:
-    """Sync the completed_items counter on the run record."""
-    _update_run_completed_items(conn, db_schema, run_process_id, _PIPELINE)
+    """Sync the completed_tasks counter on the run record."""
+    _update_run_completed_tasks(conn, db_schema, run_process_id, _PIPELINE)
 
 
-def complete_run(conn: Any, db_schema: str, run_process_id: int, total_rows: int) -> None:
+def complete_run(conn: Any, db_schema: str, run_process_id: int) -> None:
     """Mark a run as completed."""
-    _complete_run(conn, db_schema, run_process_id, _PIPELINE, total_rows=total_rows)
+    _complete_run(conn, db_schema, run_process_id, _PIPELINE)
 
 
 def fail_run(conn: Any, db_schema: str, run_process_id: int, error_message: str) -> None:

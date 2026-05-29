@@ -14,6 +14,7 @@ import logging
 from typing import Any, Dict, List, Tuple, Union
 
 from src.core.definitions.db_columns import DB_COLUMNS
+from src.core.definitions.schema import VALID_SCOPES, DEFAULT_TYPE_TRANSFORMS
 
 logger = logging.getLogger(__name__)
 
@@ -52,24 +53,11 @@ for col_name, col_meta in DB_COLUMNS.items():
                 _COLUMNS_BY_SCOPE_ENTITY.setdefault((sc, 'team'), []).append((col_name, col_meta))
             # Support 'both' as a wildcard scope
             if sc == 'both':
-                for s in ('stats', 'profiles', 'rosters', 'staging', 'runs', 'tasks', 'backfill'):
+                for s in VALID_SCOPES:
                     _COLUMNS_BY_SCOPE_ENTITY.setdefault((s, ent_key), []).append((col_name, col_meta))
                     if ent is None:
                         _COLUMNS_BY_SCOPE_ENTITY.setdefault((s, 'player'), []).append((col_name, col_meta))
                         _COLUMNS_BY_SCOPE_ENTITY.setdefault((s, 'team'), []).append((col_name, col_meta))
-
-
-# Default transform per PostgreSQL base type, applied when a source does not
-# declare its own ``transform`` and is not a pipeline / multi-call shape.
-# Inlined here because :func:`_enrich_source` is the only consumer.
-_TYPE_TRANSFORMS: Dict[str, str] = {
-    'SMALLINT': 'safe_int',
-    'INTEGER':  'safe_int',
-    'BIGINT':   'safe_int',
-    'VARCHAR':  'safe_str',
-    'TEXT':     'safe_str',
-    'CHAR':     'safe_str',
-}
 
 
 # ============================================================================
@@ -81,7 +69,7 @@ def _enrich_source(source: Dict[str, Any], col_meta: Dict[str, Any]) -> Dict[str
     enriched = {**source}
     if 'transform' not in enriched and 'pipeline' not in enriched:
         base_type = col_meta.get('type', '').split('(')[0]
-        enriched['transform'] = _TYPE_TRANSFORMS.get(base_type, 'safe_int')
+        enriched['transform'] = DEFAULT_TYPE_TRANSFORMS.get(base_type, 'safe_int')
     if 'removed_refresh_mode' not in enriched:
         enriched['removed_refresh_mode'] = col_meta.get('removed_refresh_mode', 'null_only')
     return enriched
@@ -91,39 +79,21 @@ def _get_source_definition(
     col_meta: Dict[str, Any],
     entity: str,
     source_key: str,
-    league_key: Union[str, None] = None,
+    league_key: str,
 ) -> Union[Dict[str, Any], None]:
     """Resolve per-entity source definition for a column.
 
-    Supports both shapes:
-
-    1) League-nested: ``sources[league_key][source_key][entity]``
-    2) Flat:          ``sources[source_key][entity]`` (legacy)
+    Expected ``dataset_mapping`` shape:
+        ``sources[league_key][source_key][entity]``
     """
     all_sources = col_meta.get('dataset_mapping') or {}
-
-    # Preferred shape: sources[league_key][source_key][entity]
-    if league_key is not None:
-        league_sources = all_sources.get(league_key)
-        if isinstance(league_sources, dict):
-            provider_sources = league_sources.get(source_key)
-            if isinstance(provider_sources, dict):
-                return provider_sources.get(entity)
-
-    # Backward-compatible flat shape: sources[source_key][entity]
-    source_entries = all_sources.get(source_key)
-    if isinstance(source_entries, dict):
-        return source_entries.get(entity)
-
-    # Fallback: scan league buckets when caller didn't provide league_key.
-    for league_sources in all_sources.values():
-        if not isinstance(league_sources, dict):
-            continue
-        provider_sources = league_sources.get(source_key)
-        if isinstance(provider_sources, dict) and entity in provider_sources:
-            return provider_sources.get(entity)
-
-    return None
+    league_sources = all_sources.get(league_key)
+    if not isinstance(league_sources, dict):
+        return None
+    provider_sources = league_sources.get(source_key)
+    if not isinstance(provider_sources, dict):
+        return None
+    return provider_sources.get(entity)
 
 
 

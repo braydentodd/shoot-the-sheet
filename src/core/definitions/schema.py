@@ -1,14 +1,14 @@
 """
-The Glass - Database Table Registry
+The Glass - Database Schema Registry
 
-Unified registry of every table in the database: profiles, stats, rosters,
-and operational (run-tracking) tables.
+Unified registry of every table and shared sequence in the database:
+profiles, stats, rosters, and operational (run-tracking) tables.
 
 Operational tables use a ``pipeline`` discriminator column so both ETL and
 publish runs share single ``runs`` and ``tasks`` tables rather than
 maintaining four mirrored tables.
 
-Column definitions live in ``src.core.definitions.columns.DB_COLUMNS``.
+Column definitions live in ``src.core.definitions.db_columns.DB_COLUMNS``.
 Operational and roster tables reference columns by name; the DDL generator
 looks up type, nullable, default, and other metadata from the column registry.
 """
@@ -25,7 +25,7 @@ VALID_PG_TYPES = frozenset({
     'BOOLEAN', 'TIMESTAMP', 'DATE', 'NUMERIC', 'REAL', 'DOUBLE PRECISION',
 })
 VALID_ENTITY_TYPES = frozenset({'league', 'player', 'team'})
-VALID_SCOPES = frozenset({'profiles', 'stats', 'rosters', 'staging', 'ops'})
+VALID_SCOPES = frozenset({'profiles', 'stats', 'rosters', 'staging', 'runs', 'tasks', 'coverages'})
 VALID_REFRESH_MODES = frozenset({'null_only', 'always'})
 VALID_FK_ACTIONS = frozenset({'CASCADE', 'RESTRICT', 'SET NULL', 'NO ACTION'})
 VALID_MANAGERS = frozenset({'db', 'execution_context', 'in_season_source', 'perennial_source'})
@@ -33,14 +33,55 @@ VALID_FK_STRATEGIES = frozenset({'direct', 'profile_lookup'})
 
 THE_GLASS_ID = 'the_glass_id'
 
+# Default transform per PostgreSQL base type, applied when a source does not
+# declare its own ``transform`` and is not a pipeline / multi-call shape.
+DEFAULT_TYPE_TRANSFORMS: Dict[str, str] = {
+    'SMALLINT': 'safe_int',
+    'INTEGER':  'safe_int',
+    'BIGINT':   'safe_int',
+    'VARCHAR':  'safe_str',
+    'TEXT':     'safe_str',
+    'CHAR':     'safe_str',
+}
 
-def _schemas() -> frozenset:
-    """Derive the set of schema names from the TABLES registry."""
-    return frozenset(meta['schema'] for meta in TABLES.values() if meta.get('schema'))
+# Explicit mapping from scope label to PostgreSQL schema name.
+SCOPE_TO_SCHEMA: Dict[str, str] = {
+    'profiles': 'profiles',
+    'stats':    'stats',
+    'rosters':  'rosters',
+    'staging':  'staging',
+    'runs':     'ops',
+    'tasks':    'ops',
+    'coverages': 'ops',
+}
 
 
 # ============================================================================
-# DB_COLUMNS SCHEMA
+# SEQUENCE REGISTRY
+# ============================================================================
+# Shared sequences referenced by column defaults via nextval().
+# Kept explicit so DDL can validate coverage without regex scanning.
+# ============================================================================
+
+class SequenceDef(TypedDict):
+    schema: str
+    owner_columns: List[str]
+
+
+SEQUENCES: Dict[str, SequenceDef] = {
+    'ops.process_id_seq': {
+        'schema': 'ops',
+        'owner_columns': ['process_id'],
+    },
+    'profiles.the_glass_id_seq': {
+        'schema': 'profiles',
+        'owner_columns': ['the_glass_id'],
+    },
+}
+
+
+# ============================================================================
+# TABLE DEFINITION TYPES
 # ============================================================================
 
 class FKDef(TypedDict):
@@ -68,12 +109,16 @@ class TableDef(TypedDict):
     source_ids: Union[bool, None]
 
 
+# ============================================================================
+# TABLE REGISTRY
+# ============================================================================
+
 TABLES: Dict[str, TableDef] = {
 
     # ------------------------------------------------------------------
     # PROFILES SCHEMA
     # ------------------------------------------------------------------
-    'profiles.leagues': {
+    'leagues': {
         'entity': 'league',
         'schema': 'profiles',
         'primary_key': ['the_glass_id'],
@@ -83,7 +128,7 @@ TABLES: Dict[str, TableDef] = {
         'scope': 'profiles',
         'source_ids': True,
     },
-    'profiles.teams': {
+    'teams': {
         'entity': 'team',
         'schema': 'profiles',
         'primary_key': ['the_glass_id'],
@@ -93,7 +138,7 @@ TABLES: Dict[str, TableDef] = {
         'scope': 'profiles',
         'source_ids': True,
     },
-    'profiles.players': {
+    'players': {
         'entity': 'player',
         'schema': 'profiles',
         'primary_key': ['the_glass_id'],
@@ -106,9 +151,9 @@ TABLES: Dict[str, TableDef] = {
     # ------------------------------------------------------------------
     # STAGING TABLES (profiles schema, transient ingestion)
     # ------------------------------------------------------------------
-    'profiles.teams_staging': {
+    'unmatched_teams': {
         'entity': 'team',
-        'schema': 'profiles',
+        'schema': 'staging',
         'primary_key': ['league_id', 'source_id'],
         'foreign_keys': [],
         'unique_constraints': None,
@@ -120,9 +165,9 @@ TABLES: Dict[str, TableDef] = {
         'source_scopes': ['profiles', 'staging'],
         'source_ids': False,
     },
-    'profiles.players_staging': {
+    'unmatched_players': {
         'entity': 'player',
-        'schema': 'profiles',
+        'schema': 'staging',
         'primary_key': ['league_id', 'source_id'],
         'foreign_keys': [],
         'unique_constraints': None,
@@ -138,7 +183,7 @@ TABLES: Dict[str, TableDef] = {
     # ------------------------------------------------------------------
     # ROSTERS SCHEMA
     # ------------------------------------------------------------------
-    'rosters.leagues': {
+    'leagues_teams': {
         'entity': 'team',
         'schema': 'rosters',
         'primary_key': ['league_id', 'team_id'],
@@ -167,7 +212,7 @@ TABLES: Dict[str, TableDef] = {
         'scope': 'rosters',
         'source_ids': False,
     },
-    'rosters.teams': {
+    'teams_players': {
         'entity': 'player',
         'schema': 'rosters',
         'primary_key': ['team_id', 'player_id'],
@@ -199,7 +244,7 @@ TABLES: Dict[str, TableDef] = {
     # ------------------------------------------------------------------
     # STATS SCHEMA
     # ------------------------------------------------------------------
-    'stats.players': {
+    'player_seasons': {
         'entity': 'player',
         'schema': 'stats',
         'primary_key': ['player_id', 'team_id', 'season', 'season_type'],
@@ -239,7 +284,7 @@ TABLES: Dict[str, TableDef] = {
         'scope': 'stats',
         'source_ids': False,
     },
-    'stats.teams': {
+    'team_seasons': {
         'entity': 'team',
         'schema': 'stats',
         'primary_key': ['team_id', 'season', 'season_type'],
@@ -273,7 +318,7 @@ TABLES: Dict[str, TableDef] = {
     # ------------------------------------------------------------------
     # OPS SCHEMA
     # ------------------------------------------------------------------
-    'ops.runs': {
+    'runs': {
         'entity': None,
         'schema': 'ops',
         'primary_key': ['process_id'],
@@ -282,10 +327,10 @@ TABLES: Dict[str, TableDef] = {
         'indexes': [
             {'name': 'pipeline_status', 'columns': ['pipeline', 'status']},
         ],
-        'scope': 'ops',
+        'scope': 'runs',
         'source_ids': False,
     },
-    'ops.tasks': {
+    'tasks': {
         'entity': None,
         'schema': 'ops',
         'primary_key': ['process_id'],
@@ -309,17 +354,17 @@ TABLES: Dict[str, TableDef] = {
                 'on_delete':  'CASCADE',
             },
         ],
-        'unique_constraints': [['run_id', 'item_key']],
+        'unique_constraints': [['run_id', 'task_name']],
         'indexes': [
             {'name': 'run_id_status', 'columns': ['run_id', 'status']},
         ],
-        'scope': 'ops',
+        'scope': 'tasks',
         'source_ids': False,
     },
-    'ops.coverages': {
+    'coverages': {
         'entity': None,
         'schema': 'ops',
-        'primary_key': ['league_id', 'entity_type', 'season', 'season_type', 'source_key'],
+        'primary_key': ['league_id', 'entity_type', 'season', 'season_type', 'source_key', 'dataset', 'field'],
         'foreign_keys': [
             {
                 'column':     'league_id',
@@ -333,14 +378,16 @@ TABLES: Dict[str, TableDef] = {
         ],
         'unique_constraints': None,
         'indexes': [],
-        'scope': 'ops',
+        'scope': 'coverages',
         'source_ids': False,
     },
 }
 
 
+# Derived constants (computed once at import time)
+SCHEMAS = frozenset(meta['schema'] for meta in TABLES.values() if meta.get('schema'))
 PROFILE_TABLES = {name: meta for name, meta in TABLES.items() if meta.get('scope') == 'profiles'}
 STATS_TABLES = {name: meta for name, meta in TABLES.items() if meta.get('scope') == 'stats'}
 ROSTER_TABLES = {name: meta for name, meta in TABLES.items() if meta.get('scope') == 'rosters'}
 STAGING_TABLES = {name: meta for name, meta in TABLES.items() if meta.get('scope') == 'staging'}
-OPS_TABLES = {name: meta for name, meta in TABLES.items() if meta.get('scope') == 'ops'}
+OPS_TABLES = {name: meta for name, meta in TABLES.items() if meta.get('schema') == 'ops'}

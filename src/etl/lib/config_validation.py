@@ -35,7 +35,7 @@ VALID_TRANSFORMS = {
 
 def _validate_pg_types(db_columns: Dict[str, Dict]) -> List[str]:
     """Validate that all DB_COLUMNS types are valid PostgreSQL types."""
-    from src.core.definitions.tables import VALID_PG_TYPES
+    from src.core.definitions.schema import VALID_PG_TYPES
 
     errors = []
     for col_name, meta in db_columns.items():
@@ -57,7 +57,7 @@ def _validate_source_structure(
     source key (e.g., 'nba_api'). Provider maps may only contain entity
     keys; provider-level metadata keys are rejected.
     """
-    from src.core.definitions.tables import VALID_ENTITY_TYPES
+    from src.core.definitions.schema import VALID_ENTITY_TYPES
     errors = []
     for col_name, meta in db_columns.items():
         col_sources = meta.get('dataset_mapping')
@@ -109,7 +109,7 @@ def _validate_dataset_refs(
     provider_filter: Union[str, None] = None,
 ) -> List[str]:
     """Validate that source dataset references exist in DATASETS."""
-    from src.core.definitions.tables import VALID_ENTITY_TYPES
+    from src.core.definitions.schema import VALID_ENTITY_TYPES
 
     errors = []
     for col_name, meta in db_columns.items():
@@ -151,9 +151,9 @@ def _validate_table_definitions(
 
     Checks primary keys, indexes, foreign keys, unique constraints, and scopes.
     """
-    from src.core.definitions.tables import (
+    from src.core.definitions.schema import (
         VALID_SCOPES,
-        VALID_SCHEMA_KINDS,
+        SCHEMAS,
         VALID_FK_ACTIONS,
         VALID_FK_STRATEGIES,
     )
@@ -168,7 +168,7 @@ def _validate_table_definitions(
             errors.append(f"{prefix}: unknown scope {scope!r}")
             
         schema = meta.get('schema')
-        if schema not in VALID_SCHEMA_KINDS:
+        if schema not in SCHEMAS:
             errors.append(f"{prefix}: unknown schema {schema!r}")
 
         source_scopes = meta.get('source_scopes')
@@ -441,7 +441,7 @@ def _validate_fk_targets(
 ) -> List[str]:
     """Every FK ref_schema/ref_table must resolve to a known table, and the
     on_update / on_delete actions must be in the allowed set."""
-    from src.core.definitions.tables import VALID_FK_ACTIONS
+    from src.core.definitions.schema import VALID_FK_ACTIONS
 
     core_tables = set(profile_tables) | set(roster_tables)
     errors: List[str] = []
@@ -596,7 +596,7 @@ def _validate_pipeline_structure() -> List[str]:
 def validate_config() -> List[str]:
     from src.core.definitions.db_columns import DB_COLUMNS
     from src.core.definitions.leagues import LEAGUES
-    from src.core.definitions.tables import PROFILE_TABLES, ROSTER_TABLES, STATS_TABLES, TABLES
+    from src.core.definitions.schema import PROFILE_TABLES, ROSTER_TABLES, STATS_TABLES, TABLES
     from src.etl.definitions.sources import SOURCES
 
     errors: List[str] = []

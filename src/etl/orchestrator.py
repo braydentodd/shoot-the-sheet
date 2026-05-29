@@ -49,11 +49,11 @@ from src.etl.lib.cleanup import (
     prune_entities,
     prune_stats_retention,
 )
-from src.etl.lib.backfill_tracker import (
+from src.etl.lib.coverage_tracker import (
     _resolve_league_id,
-    compute_backfill_signature,
-    is_backfill_coverage_current,
-    upsert_backfill_coverage,
+    is_group_coverage_current,
+    prune_coverages,
+    upsert_group_coverage,
 )
 from src.etl.lib.executor import ExecutionContext, execute_group
 from src.etl.lib.plan import build_call_groups
@@ -144,7 +144,7 @@ def _run_groups(
     make_fetcher: Callable,
     groups_override: Union[Dict[Tuple[str, str], List[Dict[str, Any]]], None] = None,
     on_entity_finished: Union[
-        Callable[[str, str, List[Dict[str, Any]], int, bool], None]
+        Callable[[str, str, List[Dict[str, Any]], int, bool, Any], None]
     , None] = None,
     in_season: bool = True,
 ) -> int:
@@ -191,6 +191,7 @@ def _run_groups(
 
                 entity_rows = 0
                 failed_before = len(failed)
+                succeeded_groups: List[Dict[str, Any]] = []
                 bar_desc = f'{scope}/{ent}/{season}'
                 try:
                     with progress(
@@ -203,9 +204,14 @@ def _run_groups(
                             bar.set_postfix_str(group['dataset'], refresh=False)
                             mark_group_started(conn, OPS_SCHEMA, progress_id)
                             try:
-                                rows = execute_group(group, ctx, failed)
+                                rows = execute_group(group, ctx, failed, conn=conn)
                                 entity_rows += rows
-                                mark_group_completed(conn, OPS_SCHEMA, progress_id, rows)
+                                mark_group_completed(
+                                    conn, OPS_SCHEMA, progress_id, rows,
+                                    dataset=group.get('dataset'),
+                                    tier=group.get('tier'),
+                                )
+                                succeeded_groups.append(group)
                             except Exception as exc:
                                 logger.exception(
                                     'Group %s failed: %s', group['dataset'], exc,
@@ -218,14 +224,15 @@ def _run_groups(
 
                     total_rows += entity_rows
                     update_run_completed_groups(conn, OPS_SCHEMA, run_process_id)
-                    complete_run(conn, OPS_SCHEMA, run_process_id, entity_rows)
+                    complete_run(conn, OPS_SCHEMA, run_process_id)
                     if on_entity_finished is not None:
                         on_entity_finished(
                             ent,
                             season,
-                            groups,
+                            succeeded_groups,
                             entity_rows,
                             len(failed) > failed_before,
+                            conn,
                         )
                 except Exception as exc:
                     fail_run(conn, OPS_SCHEMA, run_process_id, str(exc))
@@ -351,7 +358,6 @@ def _backfill(
     logger.info(phase_marker('backfill', f'{len(seasons)} seasons'))
 
     in_season = source_kw.get('in_season', True)
-    signatures: Dict[Tuple[str, str], str] = {}
     groups_to_run: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
     with db_connection() as conn:
         for season in seasons:
@@ -367,71 +373,63 @@ def _backfill(
                 )
                 if not groups:
                     continue
-                signature = compute_backfill_signature(ent, groups)
-                if is_backfill_coverage_current(
-                    conn,
-                    source_kw['league_key'],
-                    ent,
-                    season,
-                    season_type,
-                    source_kw['source_key'],
-                    signature,
-                ):
-                    logger.info(
-                        'Skipping backfill %s/%s (%s): coverage already current',
+                non_current = [
+                    g for g in groups
+                    if not is_group_coverage_current(
+                        conn,
+                        source_kw['league_key'],
                         ent,
                         season,
+                        season_type,
                         source_kw['source_key'],
+                        g,
+                    )
+                ]
+                if not non_current:
+                    logger.info(
+                        'Skipping backfill %s/%s (%s): all groups current',
+                        ent, season, source_kw['source_key'],
                     )
                     continue
-                key = (ent, season)
-                groups_to_run[key] = groups
-                signatures[key] = signature
+                groups_to_run[(ent, season)] = non_current
 
     if not groups_to_run:
         logger.info('Backfill skipped: all previous seasons are already complete')
         return 0
 
-    def _record_backfill(
+    def _on_backfill_finished(
         ent: str,
         completed_season: str,
-        groups: List[Dict[str, Any]],
+        succeeded_groups: List[Dict[str, Any]],
         entity_rows: int,
         had_failures: bool,
+        tracker_conn,
     ) -> None:
         if had_failures:
             logger.warning(
-                'Backfill coverage not recorded for %s/%s due to group failures',
-                ent,
-                completed_season,
+                'Backfill coverage partially recorded for %s/%s (%d succeeded, had failures)',
+                ent, completed_season, len(succeeded_groups),
             )
-            return
-        signature = signatures.get((ent, completed_season))
-        if not signature:
-            return
-        with db_connection() as tracker_conn:
-            upsert_backfill_coverage(
+        for group in succeeded_groups:
+            upsert_group_coverage(
                 tracker_conn,
                 source_kw['league_key'],
                 ent,
                 completed_season,
                 season_type,
                 source_kw['source_key'],
-                signature,
+                group,
             )
         logger.info(
             'Backfill coverage recorded for %s/%s (%s groups, %s rows)',
-            ent,
-            completed_season,
-            len(groups),
-            entity_rows,
+            ent, completed_season, len(succeeded_groups), entity_rows,
         )
 
     return _run_groups(
         'stats', entities, seasons,
         season_type, season_type_name, team_ids, failed,
         groups_override=groups_to_run,
-        on_entity_finished=_record_backfill,
+        on_entity_finished=_on_backfill_finished,
         **source_kw,
     )
 
@@ -447,9 +445,39 @@ def _update_current(
 ) -> int:
     """Phase: refresh stats for the current season only."""
     logger.info(phase_marker('update', f'season={season}'))
+
+    def _on_update_finished(
+        ent: str,
+        completed_season: str,
+        succeeded_groups: List[Dict[str, Any]],
+        entity_rows: int,
+        had_failures: bool,
+        tracker_conn,
+    ) -> None:
+        if had_failures:
+            logger.warning(
+                'Update coverage partially recorded for %s/%s (%d succeeded, had failures)',
+                ent, completed_season, len(succeeded_groups),
+            )
+        for group in succeeded_groups:
+            upsert_group_coverage(
+                tracker_conn,
+                source_kw['league_key'],
+                ent,
+                completed_season,
+                season_type,
+                source_kw['source_key'],
+                group,
+            )
+        logger.info(
+            'Update coverage recorded for %s/%s (%s groups, %s rows)',
+            ent, completed_season, len(succeeded_groups), entity_rows,
+        )
+
     return _run_groups(
         'stats', entities, [season],
         season_type, season_type_name, team_ids, failed,
+        on_entity_finished=_on_update_finished,
         **source_kw,
     )
 
@@ -486,6 +514,15 @@ def _resolve_stage_season_type(
     return None, None
 
 
+def _resolve_stage_season_types(
+    stage: Dict[str, Any],
+    regular_st: str,
+    all_season_types: List[str],
+) -> List[str]:
+    """Return the list of season types to process for a stage."""
+    return all_season_types if stage['season_type_mode'] == 'requested' else [regular_st]
+
+
 def _resolve_source_season_type_names(
     source_bundle: Dict[str, Any],
     regular_st: str,
@@ -507,8 +544,6 @@ def _resolve_source_season_type_names(
 def run_etl(
     league_key: Union[str, None] = None,
     phase: str = 'full',
-    entity: str = 'all',
-    season: Union[str, None] = None,
 ) -> None:
     """Run one or more ETL phases for a league or all leagues.
 
@@ -516,8 +551,6 @@ def run_etl(
         league_key:      Registered league key (e.g. ``'nba'``). If None,
                          runs all leagues in sorted order.
         phase:           Execution phase (see VALID_PHASES).
-        entity:          ``'player'``, ``'team'``, or ``'all'``.
-        season:          Season label.  Defaults to the league's current season.
 
     Caller (the CLI) is expected to have already configured logging and run
     config validation; this function never touches stdout directly.
@@ -539,7 +572,7 @@ def run_etl(
             logger.info('Executing ETL for league: %s', lkey)
             logger.info('=' * 80)
             try:
-                run_etl(league_key=lkey, phase=phase, entity=entity, season=season)
+                run_etl(league_key=lkey, phase=phase)
                 success_count += 1
             except KeyboardInterrupt:
                 logger.warning('Interrupted by user.')
@@ -574,7 +607,7 @@ def run_etl(
             f"League {league_key!r} has no external sources available for ETL execution"
         )
 
-    season = season or get_current_season(league_key)
+    season = get_current_season(league_key)
 
     # Detect season state to filter columns by manager type
     from src.etl.lib.season_detector import is_league_in_season
@@ -586,20 +619,19 @@ def run_etl(
     all_season_types = league_cfg['regular_season_types'] + league_cfg['postseason_types']
 
     logger.info(
-        'ETL starting: league=%s sources=%s phase=%s season=%s types=%s entity=%s state=%s',
+        'ETL starting: league=%s sources=%s phase=%s season=%s types=%s state=%s',
         league_key,
         ','.join(execution_source_keys),
         phase,
         season,
         ','.join(all_season_types),
-        entity,
         season_state_str,
     )
 
     with db_connection() as conn:
         bootstrap_schema(league_key, conn=conn)
 
-    requested_entities = ['team', 'player'] if entity == 'all' else [entity]
+    requested_entities = ['team', 'player']
     season_range = get_retained_seasons(league_key, season)
     failed: List[Dict[str, Any]] = []
     total_rows = 0
@@ -645,13 +677,7 @@ def run_etl(
                 stage_bundle = _get_source_bundle(stage_source_key)
                 stage_team_ids = _get_team_ids_for_source(stage_source_key)
 
-                # Determine which season types to run for this stage and source
-                if stage['season_type_mode'] == 'requested':
-                    sts = all_season_types
-                else:
-                    sts = [regular_st]
-
-                for st in sts:
+                for st in _resolve_stage_season_types(stage, regular_st, all_season_types):
                     regular_st_name, requested_st_name = _resolve_source_season_type_names(
                         stage_bundle,
                         regular_st,
@@ -711,8 +737,7 @@ def run_etl(
                         )
         elif handler == 'normalize_stats_domains':
             logger.info(phase_marker(stage_name))
-            sts = all_season_types if stage['season_type_mode'] == 'requested' else [regular_st]
-            for st in sts:
+            for st in _resolve_stage_season_types(stage, regular_st, all_season_types):
                 for ent in stage_entities:
                     # Item 5: batch normalize_stats by season list
                     total_rows += normalize_stats_domains(league_key, ent, stage_seasons, st)
@@ -722,6 +747,9 @@ def run_etl(
         elif handler == 'prune_entities':
             logger.info(phase_marker(stage_name))
             total_rows += prune_entities()
+        elif handler == 'prune_coverages':
+            logger.info(phase_marker(stage_name))
+            total_rows += prune_coverages(league_key)
         else:
             raise ValueError(
                 f"Unknown ETL stage handler {handler!r} for league {league_key!r}"

@@ -32,11 +32,3 @@ def add_subparser(subparsers) -> None:
         '--phase', type=str, default='full', choices=sorted(VALID_PHASES),
         help='ETL phase to run.',
     )
-    p.add_argument(
-        '--season', type=str, default=None,
-        help="Season label (e.g. 2024-25). Defaults to the league's current season.",
-    )
-    p.add_argument(
-        '--entity', type=str, default='all', choices=['player', 'team', 'all'],
-        help='Limit to one entity type.',
-    )

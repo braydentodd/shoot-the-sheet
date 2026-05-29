@@ -9,7 +9,7 @@ from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 from psycopg2.extras import RealDictCursor
 
-from src.core.definitions.tables import THE_GLASS_ID
+from src.core.definitions.schema import THE_GLASS_ID
 from src.core.lib.tables_resolver import get_table_name
 from src.core.lib.fk_resolver import load_fk_mapping
 from src.core.lib.postgres import db_connection, quote_col

@@ -71,9 +71,7 @@ def _run_etl(args) -> int:
     print_summary(
         {
             'phase':       args.phase,
-            'league':      args.league or 'all (consecutive)',
-            'season':      args.season or '(current)',
-            'entity':      args.entity,
+            'league':      args.league or 'all',
         },
         title='Run parameters',
     )
@@ -88,8 +86,6 @@ def _run_etl(args) -> int:
         run_etl(
             league_key=args.league,
             phase=args.phase,
-            entity=args.entity,
-            season=args.season,
         )
         return 0
     except KeyboardInterrupt:

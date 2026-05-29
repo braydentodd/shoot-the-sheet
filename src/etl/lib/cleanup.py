@@ -24,7 +24,7 @@ from typing import Dict, List
 
 from src.core.lib.postgres import db_connection, get_db_connection, quote_col
 from src.core.definitions.leagues import LEAGUES
-from src.core.definitions.tables import (
+from src.core.definitions.schema import (
     STATS_TABLES,
 )
 from src.core.definitions.stats import STAT_DOMAINS

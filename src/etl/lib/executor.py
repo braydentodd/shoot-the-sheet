@@ -14,6 +14,7 @@ in :mod:`src.etl.orchestrator`; the CLI lives in :mod:`src.etl.cli`.
 
 import logging
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Any, Callable, Dict, List
 
 from src.core.lib.postgres import db_connection, quote_col
@@ -26,7 +27,11 @@ from src.etl.lib.extract import (
     get_simple_columns,
 )
 from src.etl.lib.load import write_entity_rows
-from src.etl.lib.transform import aggregate_team_rows, execute_pipeline
+from src.etl.lib.transform import (
+    aggregate_multi_season_most_recent_non_null,
+    aggregate_team_rows,
+    execute_pipeline,
+)
 from src.etl.definitions.execution import ENTITY_CHUNK_SIZE
 
 logger = logging.getLogger(__name__)
@@ -62,13 +67,34 @@ class ExecutionContext:
     _null_entity_cache: Dict[frozenset, List[Any]] = field(default_factory=dict, init=False)
 
 
+def _should_abort(
+    consecutive_failures: int,
+    max_failures: int,
+    dataset: str,
+) -> bool:
+    """Return True when consecutive failures exceed the abort threshold."""
+    if consecutive_failures >= max_failures:
+        logger.error(
+            'Aborting %s after %d consecutive failures',
+            dataset, consecutive_failures,
+        )
+        return True
+    return False
+
+
 # ============================================================================
 # EXECUTION STRATEGIES
 # ============================================================================
 
-def _fetch_null_entity_ids(ctx: ExecutionContext, columns: List[str]) -> List[Any]:
-    """Helper to fetch entity source IDs that have NULL values for any of the target columns,
-    with caching built into the ExecutionContext to prevent duplicate DB lookups.
+def _fetch_null_entity_ids(
+    ctx: ExecutionContext,
+    columns: List[str],
+    conn=None,
+) -> List[Any]:
+    """Fetch entity source IDs that have NULL values for target columns.
+
+    Uses ``conn`` when provided; otherwise opens a fresh ``db_connection()``.
+    Results are cached in ``ctx._null_entity_cache``.
     """
     cols_key = frozenset(columns)
     if cols_key in ctx._null_entity_cache:
@@ -78,25 +104,32 @@ def _fetch_null_entity_ids(ctx: ExecutionContext, columns: List[str]) -> List[An
     entity_table = get_table_name(ctx.entity, 'profiles')
     target_table = get_table_name(ctx.entity, ctx.scope)
 
-    with db_connection() as conn:
+    def _query(cur):
+        if entity_table == target_table:
+            null_checks = ' OR '.join(f'{quote_col(c)} IS NULL' for c in columns)
+            cur.execute(
+                f"SELECT {quote_col(source_id_col)} FROM {entity_table} "
+                f"WHERE {null_checks}"
+            )
+        else:
+            tg_id = quote_col('the_glass_id')
+            null_checks = ' OR '.join(f't.{quote_col(c)} IS NULL' for c in columns)
+            cur.execute(
+                f"SELECT e.{quote_col(source_id_col)} FROM {entity_table} e "
+                f"LEFT JOIN {target_table} t "
+                f"ON e.{tg_id} = t.{tg_id} AND t.season = %s AND t.season_type = %s "
+                f"WHERE t.{tg_id} IS NULL OR {null_checks}",
+                (ctx.season, ctx.season_type),
+            )
+        return [row[0] for row in cur.fetchall() if row[0] is not None]
+
+    if conn is not None:
         with conn.cursor() as cur:
-            if entity_table == target_table:
-                null_checks = ' OR '.join(f'{quote_col(c)} IS NULL' for c in columns)
-                cur.execute(
-                    f"SELECT {quote_col(source_id_col)} FROM {entity_table} "
-                    f"WHERE {null_checks}"
-                )
-            else:
-                tg_id = quote_col('the_glass_id')
-                null_checks = ' OR '.join(f't.{quote_col(c)} IS NULL' for c in columns)
-                cur.execute(
-                    f"SELECT e.{quote_col(source_id_col)} FROM {entity_table} e "
-                    f"LEFT JOIN {target_table} t "
-                    f"ON e.{tg_id} = t.{tg_id} AND t.season = %s AND t.season_type = %s "
-                    f"WHERE t.{tg_id} IS NULL OR {null_checks}",
-                    (ctx.season, ctx.season_type)
-                )
-            source_ids = [row[0] for row in cur.fetchall() if row[0] is not None]
+            source_ids = _query(cur)
+    else:
+        with db_connection() as fresh_conn:
+            with fresh_conn.cursor() as cur:
+                source_ids = _query(cur)
 
     ctx._null_entity_cache[cols_key] = source_ids
     return source_ids
@@ -109,10 +142,9 @@ def _execute_multi_season_league_wide(
     ctx: ExecutionContext,
     failed: List[Dict[str, Any]],
     multi_season_config: Dict[str, Any],
+    conn=None,
 ) -> int:
     """Fetch data across multiple years and aggregate using most_recent_non_null."""
-    from src.etl.lib.transform import aggregate_multi_season_most_recent_non_null
-    
     start_year = multi_season_config['start_year']
     current_year = int(ctx.season.split('-')[0])
     
@@ -169,6 +201,7 @@ def _execute_league_wide(
     columns: Dict[str, Dict[str, Any]],
     ctx: ExecutionContext,
     failed: List[Dict[str, Any]],
+    conn=None,
 ) -> int:
     """One API call returns all entities -- extract, transform, write."""
     # Check if any column requires multi-season aggregation
@@ -180,7 +213,7 @@ def _execute_league_wide(
     
     if multi_season_config:
         return _execute_multi_season_league_wide(
-            dataset, params, columns, ctx, failed, multi_season_config
+            dataset, params, columns, ctx, failed, multi_season_config, conn=conn,
         )
     
     try:
@@ -203,16 +236,33 @@ def _execute_league_wide(
     )
 
 
+def _single_entity_fetcher(
+    ctx: ExecutionContext,
+    ds: str,
+    extra_params: Dict[str, Any],
+    tier: str,
+    id_param: str,
+    sid: Any,
+) -> Any:
+    """Fetch wrapper that injects the current entity id into API params."""
+    call_params = {**extra_params, id_param: sid}
+    try:
+        return ctx.api_fetcher(ds, call_params)
+    except Exception:
+        return {'resultSets': []}
+
+
 def _execute_pipeline_per_entity(
     col_name: str,
     source: Dict[str, Any],
     ctx: ExecutionContext,
     failed: List[Dict[str, Any]],
+    conn=None,
 ) -> int:
     pipeline_config = source['extraction_config']
     dataset = pipeline_config['dataset']
 
-    source_ids = _fetch_null_entity_ids(ctx, [col_name])
+    source_ids = _fetch_null_entity_ids(ctx, [col_name], conn=conn)
 
     if not source_ids:
         return 0
@@ -223,20 +273,13 @@ def _execute_pipeline_per_entity(
     id_param = f'{ctx.entity}_id'
 
     for sid in source_ids:
-        def single_entity_fetcher(ds, extra_params, tier):
-            # inject the current entity id
-            call_params = {**extra_params, id_param: sid}
-            try:
-                return ctx.api_fetcher(ds, call_params)
-            except Exception:
-                return {'resultSets': []}
-
+        fetcher = partial(_single_entity_fetcher, ctx, id_param=id_param, sid=sid)
         try:
             result = execute_pipeline(
-                pipeline_config, single_entity_fetcher, ctx.entity,
+                pipeline_config, fetcher, ctx.entity,
                 ctx.season, ctx.season_type_name,
                 entity_id_field=ctx.entity_id_field,
-                default_entity_id=sid
+                default_entity_id=sid,
             )
             consecutive_failures = 0
             if result:
@@ -244,8 +287,7 @@ def _execute_pipeline_per_entity(
                     all_rows[eid] = {col_name: val}
         except Exception as exc:
             consecutive_failures += 1
-            if consecutive_failures >= ctx.max_consecutive_failures:
-                logger.error('Aborting %s per-entity after %d consecutive failures', dataset, consecutive_failures)
+            if _should_abort(consecutive_failures, ctx.max_consecutive_failures, dataset):
                 failed.append({'column': col_name, 'error': str(exc)})
                 break
             continue
@@ -270,13 +312,14 @@ def _execute_pipeline_column(
     source: Dict[str, Any],
     ctx: ExecutionContext,
     failed: List[Dict[str, Any]],
+    conn=None,
 ) -> int:
     """Execute a transformation pipeline for a single column."""
     pipeline_config = source['extraction_config']
     tier = pipeline_config.get('tier', 'per_league')
     
     if tier in ('player', 'team'):
-        return _execute_pipeline_per_entity(col_name, source, ctx, failed)
+        return _execute_pipeline_per_entity(col_name, source, ctx, failed, conn=conn)
 
     def pipeline_fetcher(ds, extra_params, tr):
         try:
@@ -311,6 +354,7 @@ def _execute_team_call(
     columns: Dict[str, Dict[str, Any]],
     ctx: ExecutionContext,
     failed: List[Dict[str, Any]],
+    conn=None,
 ) -> int:
     """Per-team calls returning player-level data (e.g. on/off court).
 
@@ -341,11 +385,7 @@ def _execute_team_call(
         except Exception as exc:
             consecutive_failures += 1
             logger.warning('Team %d failed for %s: %s', team_id, dataset, exc)
-            if consecutive_failures >= ctx.max_consecutive_failures:
-                logger.error(
-                    'Aborting %s after %d consecutive failures',
-                    dataset, consecutive_failures,
-                )
+            if _should_abort(consecutive_failures, ctx.max_consecutive_failures, dataset):
                 break
             continue
 
@@ -373,6 +413,7 @@ def _execute_per_entity(
     failed: List[Dict[str, Any]],
     tier: str = 'player',
     removed_refresh_mode: str = 'null_only',
+    conn=None,
 ) -> int:
     """Per-entity API calls for simple columns.
 
@@ -390,14 +431,18 @@ def _execute_per_entity(
     elif removed_refresh_mode == 'always':
         source_id_col = get_source_id_column(ctx.source_key)
         entity_table = get_table_name(ctx.entity, 'profiles')
-        with db_connection() as conn:
+        def _query_all(cur):
+            cur.execute(f"SELECT {quote_col(source_id_col)} FROM {entity_table}")
+            return [row[0] for row in cur.fetchall() if row[0] is not None]
+        if conn is not None:
             with conn.cursor() as cur:
-                cur.execute(
-                    f"SELECT {quote_col(source_id_col)} FROM {entity_table}"
-                )
-                source_ids = [row[0] for row in cur.fetchall() if row[0] is not None]
+                source_ids = _query_all(cur)
+        else:
+            with db_connection() as fresh_conn:
+                with fresh_conn.cursor() as cur:
+                    source_ids = _query_all(cur)
     else:
-        source_ids = _fetch_null_entity_ids(ctx, list(columns.keys()))
+        source_ids = _fetch_null_entity_ids(ctx, list(columns.keys()), conn=conn)
 
     if not source_ids:
         return 0
@@ -424,11 +469,7 @@ def _execute_per_entity(
             logger.warning(
                 'Per-entity %s for %s=%s failed: %s', dataset, id_param, sid, exc,
             )
-            if consecutive_failures >= ctx.max_consecutive_failures:
-                logger.error(
-                    'Aborting %s after %d consecutive failures',
-                    dataset, consecutive_failures,
-                )
+            if _should_abort(consecutive_failures, ctx.max_consecutive_failures, dataset):
                 failed.append({'dataset': dataset, 'error': str(exc)})
                 break
             continue
@@ -466,6 +507,7 @@ def execute_group(
     group: Dict[str, Any],
     ctx: ExecutionContext,
     failed: List[Dict[str, Any]],
+    conn=None,
 ) -> int:
     """Execute a single call group and return rows written."""
     dataset = group['dataset']
@@ -489,19 +531,20 @@ def execute_group(
         tier = tier[4:]
 
     if tier == 'team_call':
-        written += _execute_team_call(dataset, params, columns, ctx, failed)
+        written += _execute_team_call(dataset, params, columns, ctx, failed, conn=conn)
     elif tier in ('team', 'player'):
         if simple:
             written += _execute_per_entity(
                 dataset, simple, ctx, failed, tier,
                 removed_refresh_mode=group.get('removed_refresh_mode', 'null_only'),
+                conn=conn,
             )
         for col_name, source in pipelines.items():
-            written += _execute_pipeline_column(col_name, source, ctx, failed)
+            written += _execute_pipeline_column(col_name, source, ctx, failed, conn=conn)
     else:
         if simple:
-            written += _execute_league_wide(dataset, params, simple, ctx, failed)
+            written += _execute_league_wide(dataset, params, simple, ctx, failed, conn=conn)
         for col_name, source in pipelines.items():
-            written += _execute_pipeline_column(col_name, source, ctx, failed)
+            written += _execute_pipeline_column(col_name, source, ctx, failed, conn=conn)
 
     return written

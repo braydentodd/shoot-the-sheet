@@ -2,10 +2,12 @@
 The Glass - Schema Helpers
 
 Pure resolvers over the table registries in
-:mod:`src.core.definitions.tables`.  Builds qualified table names.
+:mod:`src.core.definitions.schema`.  Builds qualified table names.
 """
 
-from src.core.definitions.tables import TABLES
+from typing import Dict, Tuple
+
+from src.core.definitions.schema import TABLES
 
 
 def _normalize_scope(s: str) -> str:
@@ -14,33 +16,24 @@ def _normalize_scope(s: str) -> str:
     return s if s.endswith('s') else f"{s}s"
 
 
+# Pre-computed O(1) lookup: {(entity, scope): (table_name, schema)}
+_TABLE_BY_ENTITY_SCOPE: Dict[Tuple[str, str], Tuple[str, str]] = {}
+for _name, _meta in TABLES.items():
+    _entity = _meta.get('entity')
+    _scope = _meta.get('scope')
+    if _entity and _scope:
+        _TABLE_BY_ENTITY_SCOPE[(_entity, _scope)] = (_name, _meta['schema'])
+
+
 def get_table_name(entity: str, scope: str, _league_key: str = None) -> str:
-    """Resolve the schema-qualified table name for an entity / scope.
-
-    ``scope == 'profiles'`` -> ``profiles.{entity}``
-    ``scope == 'stats'``    -> ``stats.{entity}``
-    ``scope == 'rosters'``  -> ``rosters.{entity}``
-    ``scope == 'staging'``  -> ``profiles.{entity}_staging``
-    """
+    """Resolve the schema-qualified table name for an entity / scope."""
     norm_scope = _normalize_scope(scope)
+    key = (entity, norm_scope)
 
-    candidates = []
-    for name, meta in TABLES.items():
-        meta_scope = _normalize_scope(meta.get('scope') or '')
-        if meta.get('entity') != entity:
-            continue
-        if meta_scope != norm_scope:
-            continue
-        candidates.append((name, meta))
-
-    if not candidates:
+    if key not in _TABLE_BY_ENTITY_SCOPE:
         raise ValueError(f"No table for entity {entity!r} scope {scope!r}")
-    if len(candidates) > 1:
-        raise ValueError(f"Ambiguous table resolution for entity {entity!r} scope {scope!r}")
 
-    _name, meta = candidates[0]
-    schema = meta.get('schema')
+    table_name, schema = _TABLE_BY_ENTITY_SCOPE[key]
     if not schema:
         raise ValueError(f"No schema defined for entity {entity!r} scope {scope!r}")
-    bare_name = _name.split('.', 1)[1] if '.' in _name else _name
-    return f"{schema}.{bare_name}"
+    return f"{schema}.{table_name}"

@@ -19,6 +19,7 @@ VALID_ETL_STEP_HANDLERS = frozenset({
     'normalize_stats_domains',
     'prune_stats_retention',
     'prune_entities',
+    'prune_coverages',
 })
 VALID_SEASON_WINDOWS = frozenset({'none', 'current', 'previous', 'all'})
 VALID_SEASON_TYPE_MODES = frozenset({'none', 'regular', 'requested'})
@@ -55,6 +56,11 @@ PIPELINE_STEPS: Dict[str, Dict[str, Any]] = {
         'season_window': 'none',
         'season_type_mode': 'none',
     },
+    'prune_coverage': {
+        'handler': 'prune_coverages',
+        'season_window': 'none',
+        'season_type_mode': 'none',
+    },
 }
 
 
@@ -69,6 +75,7 @@ PIPELINE_PHASES: Dict[str, List[str]] = {
     'prune': [
         'prune_stats',
         'prune_orphans',
+        'prune_coverage',
     ],
 }
 
