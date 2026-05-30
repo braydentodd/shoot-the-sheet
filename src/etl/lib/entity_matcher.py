@@ -13,9 +13,33 @@ from src.core.definitions.schema import THE_GLASS_ID
 from src.core.lib.tables_resolver import get_table_name
 from src.core.lib.fk_resolver import load_fk_mapping
 from src.core.lib.postgres import db_connection, quote_col
+from src.core.definitions.db_columns import DB_COLUMNS
 from src.etl.lib.load import write_core_profile_rows
 
 logger = logging.getLogger(__name__)
+
+# Cache for config-driven column scope lookups
+_SCOPED_CACHE: Dict[Tuple[str, str], set] = {}
+
+
+def _get_scoped_columns(scope: str, entity_type: str) -> set:
+    """Return column names that have *scope* in their scope and apply to *entity_type*."""
+    cache_key = (scope, entity_type)
+    if cache_key not in _SCOPED_CACHE:
+        _SCOPED_CACHE[cache_key] = {
+            col_name
+            for col_name, col_def in DB_COLUMNS.items()
+            if scope in col_def.get('scope', [])
+            and _entity_type_matches(col_def.get('entity_types'), entity_type)
+        }
+    return _SCOPED_CACHE[cache_key]
+
+
+def _entity_type_matches(entity_types, entity_type: str) -> bool:
+    """Check if *entity_type* is covered by *entity_types* (None means all types)."""
+    if entity_types is None:
+        return True
+    return entity_type in entity_types
 
 
 def _fetch_staged_rows(
@@ -39,8 +63,18 @@ def _fetch_staged_rows(
         return list(cur.fetchall())
 
 
-def _stage_rows_to_profile_rows(rows: Sequence[Dict[str, Any]]) -> Dict[Any, Dict[str, Any]]:
-    profile_rows: Dict[Any, Dict[str, Any]] = {}
+def _filter_staged_rows_by_scope(
+    entity: str,
+    rows: Sequence[Dict[str, Any]],
+    scope: str,
+) -> Dict[Any, Dict[str, Any]]:
+    """Filter staged rows down to columns defined for the given entity and scope.
+
+    The returned mapping is keyed by ``source_id`` so that downstream writers
+    can resolve each row to a ``the_glass_id``.
+    """
+    scoped_cols = _get_scoped_columns(scope, entity)
+    result: Dict[Any, Dict[str, Any]] = {}
     for row in rows:
         source_id = row.get('source_id')
         if source_id is None:
@@ -48,10 +82,10 @@ def _stage_rows_to_profile_rows(rows: Sequence[Dict[str, Any]]) -> Dict[Any, Dic
         payload = {
             key: value
             for key, value in row.items()
-            if key not in {'league_key', 'source_key', 'source_id', 'team_source_id', 'matched_glass_id'}
+            if key in scoped_cols
         }
-        profile_rows[source_id] = payload
-    return profile_rows
+        result[source_id] = payload
+    return result
 
 
 def _league_glass_id(conn: Any, league_key: str) -> int:
@@ -88,21 +122,49 @@ def _upsert_pairs(conn: Any, table_name: str, column_names: Tuple[str, str], pai
     return len(values)
 
 
-def _upsert_roster_rows(conn: Any, rows: Iterable[Tuple[int, int, Any]]) -> int:
+def _upsert_roster_rows(conn: Any, rows: Iterable[Dict[str, Any]]) -> int:
+    """Upsert roster rows into the player rosters table with all rosters-scoped columns."""
     values = list(rows)
     if not values:
         return 0
 
+    pk_cols = ['team_id', 'player_id']
+    table = get_table_name('player', 'rosters')
+
+    extra_cols = sorted({
+        k for row in values for k in row.keys()
+        if k not in pk_cols
+    })
+
+    all_cols = pk_cols + extra_cols
+    col_list = ', '.join(quote_col(c) for c in all_cols)
+    placeholders = ', '.join('%s' for _ in all_cols)
+    conflict_cols = ', '.join(quote_col(c) for c in pk_cols)
+
+    if extra_cols:
+        updates = [
+            f"{quote_col(c)} = COALESCE(EXCLUDED.{quote_col(c)}, {table}.{quote_col(c)})"
+            for c in extra_cols
+        ]
+        update_clause = ', '.join(updates)
+        sql = f"""
+            INSERT INTO {table} ({col_list})
+            VALUES ({placeholders})
+            ON CONFLICT ({conflict_cols}) DO UPDATE
+            SET {update_clause}
+        """
+    else:
+        sql = f"""
+            INSERT INTO {table} ({col_list})
+            VALUES ({placeholders})
+            ON CONFLICT ({conflict_cols}) DO NOTHING
+        """
+
+    params = [tuple(row.get(c) for c in all_cols) for row in values]
+
     with conn.cursor() as cur:
-        cur.executemany(
-            f"""
-            INSERT INTO rosters.teams (team_id, player_id, jersey_num)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (team_id, player_id) DO UPDATE
-            SET jersey_num = COALESCE(EXCLUDED.jersey_num, rosters.teams.jersey_num)
-            """,
-            values,
-        )
+        cur.executemany(sql, params)
+
     return len(values)
 
 
@@ -121,8 +183,8 @@ def promote_staged_entities(league_key: str, source_key: str) -> Dict[str, int]:
                 'team_rosters_written': 0,
             }
 
-        teams_promoted = write_core_profile_rows('team', _stage_rows_to_profile_rows(team_rows), source_key)
-        players_promoted = write_core_profile_rows('player', _stage_rows_to_profile_rows(player_rows), source_key)
+        teams_promoted = write_core_profile_rows('team', _filter_staged_rows_by_scope('team', team_rows, 'profiles'), source_key)
+        players_promoted = write_core_profile_rows('player', _filter_staged_rows_by_scope('player', player_rows, 'profiles'), source_key)
 
         team_source_ids = [row['source_id'] for row in team_rows if row.get('source_id') is not None]
         player_source_ids = [row['source_id'] for row in player_rows if row.get('source_id') is not None]
@@ -148,12 +210,19 @@ def promote_staged_entities(league_key: str, source_key: str) -> Dict[str, int]:
             for row in team_rows
             if row.get('source_id') is not None and str(row['source_id']) in team_map
         ]
+        rosters_cols = _get_scoped_columns('rosters', 'player')
+        roster_value_cols = {c for c in rosters_cols if c not in {'team_id', 'player_id', 'league_id'}}
+
         roster_pairs = [
-            (
-                team_map[str(row['team_source_id'])],
-                player_map[str(row['source_id'])],
-                row.get('jersey_num'),
-            )
+            {
+                'team_id': team_map[str(row['team_source_id'])],
+                'player_id': player_map[str(row['source_id'])],
+                **{
+                    col: row.get(col)
+                    for col in roster_value_cols
+                    if col in row
+                },
+            }
             for row in player_rows
             if row.get('source_id') is not None
             and row.get('team_source_id') is not None

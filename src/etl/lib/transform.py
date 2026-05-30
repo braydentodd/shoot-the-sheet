@@ -383,47 +383,43 @@ def aggregate_multi_season_most_recent_non_null(values_by_year: Dict[int, Any]) 
 
 
 # ============================================================================
-# TEAM-CALL AGGREGATION
+# PER-TEAM AGGREGATION (used by team_call pattern)
 # ============================================================================
 
-def aggregate_team_rows(
-    entity_team_rows: Dict[int, List[Dict[str, Any]]],
+DEFAULT_MINUTES_FIELD = 'MIN'
+
+
+def _aggregate_per_team(
+    raw_rows: List[Dict[str, Any]],
     columns: Dict[str, Dict[str, Any]],
-    minutes_field: str = 'MIN',
-) -> Dict[int, Dict[str, Any]]:
-    """Aggregate per-team rows into per-entity values.
+    minutes_field: Union[str, None] = None,
+) -> Dict[str, Any]:
+    """Aggregate a list of raw API rows into one dict of column values.
 
-    For traded entities who appear on multiple teams, supports two
-    aggregation modes per column (set via ``source['aggregation']``):
-
-      - ``'sum'``: simple sum across all team stints (default)
-      - ``'minute_weighted'``: weighted average by minutes played
+    Supports ``sum`` (default) and ``minute_weighted`` aggregation modes
+    configured via ``source['aggregation']``.
     """
-    rows: Dict[int, Dict[str, Any]] = {}
+    minutes_field = minutes_field or DEFAULT_MINUTES_FIELD
+    total_minutes = sum(float(r.get(minutes_field) or 0) for r in raw_rows)
+    values: Dict[str, Any] = {}
 
-    for entity_id, team_rows in entity_team_rows.items():
-        total_minutes = sum(float(r.get(minutes_field) or 0) for r in team_rows)
-        values: Dict[str, Any] = {}
+    for col_name, source in columns.items():
+        nba_field = source.get('field')
+        scale = source.get('scale', 1)
+        transform_name = source.get('transform', 'safe_int')
+        aggregation = source.get('aggregation', 'sum')
 
-        for col_name, source in columns.items():
-            nba_field = source.get('field')
-            scale = source.get('scale', 1)
-            transform_name = source.get('transform', 'safe_int')
-            aggregation = source.get('aggregation', 'sum')
+        if aggregation == 'minute_weighted' and total_minutes > 0:
+            weighted_sum = 0.0
+            for r in raw_rows:
+                val = r.get(nba_field)
+                mins = float(r.get(minutes_field) or 0)
+                if val is not None and mins > 0:
+                    weighted_sum += float(val) * mins
+            raw = weighted_sum / total_minutes
+        else:
+            raw = sum(float(r.get(nba_field) or 0) for r in raw_rows)
 
-            if aggregation == 'minute_weighted' and total_minutes > 0:
-                weighted_sum = 0.0
-                for r in team_rows:
-                    val = r.get(nba_field)
-                    mins = float(r.get(minutes_field) or 0)
-                    if val is not None and mins > 0:
-                        weighted_sum += float(val) * mins
-                raw = weighted_sum / total_minutes
-            else:
-                raw = sum(float(r.get(nba_field) or 0) for r in team_rows)
+        values[col_name] = apply_transform(raw, transform_name, scale)
 
-            values[col_name] = apply_transform(raw, transform_name, scale)
-
-        rows[entity_id] = values
-
-    return rows
+    return values

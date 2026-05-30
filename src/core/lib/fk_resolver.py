@@ -98,5 +98,5 @@ def resolve_fk_value_columns(
             out[source_id] = translated
         else:
             dropped += 1
-            
+
     return out, dropped

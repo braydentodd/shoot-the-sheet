@@ -245,13 +245,19 @@ def extract_raw_rows(
     api_result: Dict[str, Any],
     entity_id_field: str,
     result_set_name: Union[str, None] = None,
+    filter_field: Union[str, None] = None,
+    filter_values: Union[List[str], None] = None,
 ) -> Dict[int, List[Dict[str, Any]]]:
     """Extract raw row dicts from an API result, grouped by entity ID.
 
     Returns ``{entity_id: [row_dict, ...]}``.
     Used by team-call patterns that collect per-team rows for later aggregation.
+
+    Optional *filter_field* and *filter_values* restrict rows to those whose
+    *filter_field* value is in *filter_values*.
     """
     grouped: Dict[int, List[Dict[str, Any]]] = {}
+    accepted = set(filter_values) if filter_values else None
 
     for rs in api_result.get('resultSets', []):
         if result_set_name and rs['name'] != result_set_name:
@@ -260,7 +266,11 @@ def extract_raw_rows(
         if entity_id_field not in headers:
             continue
         id_idx = headers.index(entity_id_field)
+        filter_idx = headers.index(filter_field) if filter_field and filter_field in headers else None
         for row in rs['rowSet']:
+            if filter_idx is not None and accepted is not None:
+                if row[filter_idx] not in accepted:
+                    continue
             eid = row[id_idx]
             if eid is not None:
                 grouped.setdefault(eid, []).append(dict(zip(headers, row)))

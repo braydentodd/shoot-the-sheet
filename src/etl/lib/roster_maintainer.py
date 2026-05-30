@@ -8,25 +8,26 @@ import logging
 from typing import Any, Dict, Iterable, List, Tuple
 
 from src.etl.lib.load import merge_staged_entity_rows
+from src.etl.lib.sources_resolver import get_rosters_fields
 
 logger = logging.getLogger(__name__)
 
 
 def _normalize_roster_snapshot(
     roster_pairs: Iterable[Tuple[Any, ...]],
-) -> List[Tuple[Any, Any, Any]]:
-    """Normalize roster snapshots to ``(team_source_id, player_source_id, jersey_num)``."""
-    normalized: List[Tuple[Any, Any, Any]] = []
+) -> List[Tuple[Any, Any, Tuple[Any, ...]]]:
+    """Normalize roster snapshots to ``(team_source_id, player_source_id, extra_fields)``."""
+    normalized: List[Tuple[Any, Any, Tuple[Any, ...]]] = []
     for entry in roster_pairs:
         if not isinstance(entry, (tuple, list)):
             continue
         if len(entry) < 2:
             continue
         team_source_id, player_source_id = entry[0], entry[1]
-        jersey_num = entry[2] if len(entry) >= 3 else None
+        extra_fields = entry[2:] if len(entry) > 2 else ()
         if team_source_id is None or player_source_id is None:
             continue
-        normalized.append((team_source_id, player_source_id, jersey_num))
+        normalized.append((team_source_id, player_source_id, extra_fields))
     return normalized
 
 
@@ -38,15 +39,23 @@ def stage_rosters(
 ) -> Dict[str, int]:
     """Merge roster snapshots into ``staging.teams`` and ``staging.players``."""
     pairs = _normalize_roster_snapshot(roster_pairs)
+    rosters_fields = get_rosters_fields(league_key, source_key)
+    rosters_col_names = list(rosters_fields.keys())
+
     team_rows: Dict[Any, Dict[str, Any]] = {}
     player_rows: Dict[Any, Dict[str, Any]] = {}
 
-    for team_source_id, player_source_id, jersey_num in pairs:
+    for team_source_id, player_source_id, extra_fields in pairs:
         team_rows.setdefault(team_source_id, {})
-        player_rows[player_source_id] = {
+        player_data: Dict[str, Any] = {
             'team_source_id': str(team_source_id),
-            'jersey_num': str(jersey_num) if jersey_num is not None else None,
         }
+        for idx, col_name in enumerate(rosters_col_names):
+            if idx < len(extra_fields):
+                val = extra_fields[idx]
+                if val is not None:
+                    player_data[col_name] = val
+        player_rows[player_source_id] = player_data
 
     teams_staged = merge_staged_entity_rows('team', team_rows, league_key, source_key)
     players_staged = merge_staged_entity_rows('player', player_rows, league_key, source_key)

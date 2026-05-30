@@ -191,6 +191,11 @@ def build_dataset_params(
     if pm_param and pm_param in API_CONFIG:
         params[pm_param] = API_CONFIG[pm_param]
 
+    # Context measure (e.g. for shot charts)
+    cm_param = ds_cfg.get('context_measure_param')
+    if cm_param and cm_param in API_CONFIG:
+        params[cm_param] = API_CONFIG[cm_param]
+
     # Player / Team discriminator for shared datasets
     if (
         'player' in ds_cfg.get('entity_types', [])

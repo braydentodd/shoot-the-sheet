@@ -307,13 +307,17 @@ def build_call_groups(
             'removed_refresh_mode': removed_refresh_mode,
         })
 
-    # Merge team_call columns that share dataset + params into one group.
-    team_call_merged: Dict[tuple, Dict[str, Any]] = {}
+    # Merge special-tier columns that share dataset + params into one group.
+    special_merged: Dict[str, Dict[tuple, Dict[str, Any]]] = {
+        'per_team': {},
+        'team_call': {},
+    }
     for item in special:
-        if item['tier'] == 'team_call':
+        tier = item['tier']
+        if tier in special_merged:
             params = item.get('params', {})
             key = (item['dataset'], frozenset(sorted(params.items())))
-            bucket = team_call_merged.setdefault(
+            bucket = special_merged[tier].setdefault(
                 key,
                 {
                     'dataset': item['dataset'],
@@ -324,13 +328,15 @@ def build_call_groups(
             bucket['columns'].update(item['columns'])
         else:
             groups.append(item)
-    for bucket in team_call_merged.values():
-        groups.append({
-            'dataset': bucket['dataset'],
-            'params': bucket['params'],
-            'tier': 'team_call',
-            'columns': bucket['columns'],
-            'removed_refresh_mode': 'null_only',
-        })
+
+    for tier, merged in special_merged.items():
+        for bucket in merged.values():
+            groups.append({
+                'dataset': bucket['dataset'],
+                'params': bucket['params'],
+                'tier': tier,
+                'columns': bucket['columns'],
+                'removed_refresh_mode': 'null_only',
+            })
 
     return groups

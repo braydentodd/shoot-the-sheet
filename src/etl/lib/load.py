@@ -343,21 +343,26 @@ def _write_stats_rows(
     league_key: str,
     source_key: str,
 ) -> int:
-    """Upsert source-id-keyed stats rows into ``{league}.{entity}_season_stats``.
+    """Upsert source-id-keyed stats rows into ``stats.{entity}_seasons``.
 
-    Resolves the row key (entity source_id) to ``the_glass_id`` and translates
-    every FK-bearing data column from source-id to the_glass_id form.  Rows
-    that cannot be fully resolved are skipped.
+    Resolves the row key (entity source_id) to ``{entity}_id`` (the internal
+    ``the_glass_id``) and translates every FK-bearing data column from source-id
+    to ``the_glass_id`` form.  Rows that cannot be fully resolved are skipped.
     """
     table = get_table_name(entity, 'stats')
     schema_name, bare_name = table.split('.', 1)
     qualified_key = f'{schema_name}.{bare_name}'
     meta = TABLES[qualified_key]
     pk_columns: List[str] = meta['primary_key']
+    entity_id_col = f'{entity}_id'
 
     with db_connection() as conn:
-        # Resolve the row-key source ids -> the_glass_id for the entity
-        glass_ids = load_fk_mapping(conn, 'profiles', bare_name, 'the_glass_id', source_key, list(rows.keys()))
+        # Resolve the row-key source ids -> the_glass_id via the profile table
+        entity_table = get_table_name(entity, 'profiles')
+        _, entity_bare = entity_table.split('.', 1)
+        glass_ids = load_fk_mapping(
+            conn, 'profiles', entity_bare, 'the_glass_id', source_key, list(rows.keys()),
+        )
 
         translated: Dict[Any, Dict[str, Any]] = {}
         unresolved_keys = 0
@@ -367,7 +372,7 @@ def _write_stats_rows(
                 unresolved_keys += 1
                 continue
             row = dict(vals)
-            row['the_glass_id'] = glass_id
+            row[entity_id_col] = glass_id
             row['season'] = season
             row['season_type'] = season_type
             translated[source_id] = row
@@ -390,6 +395,20 @@ def _write_stats_rows(
 
         if not translated:
             return 0
+
+        # Inject league_id after FK resolution so it is not double-resolved.
+        # Leagues are keyed by league_key, not by source_id.
+        with conn.cursor() as cur:
+            cur.execute(
+                'SELECT the_glass_id FROM profiles.leagues WHERE league_key = %s',
+                (league_key,),
+            )
+            row = cur.fetchone()
+            league_id = int(row[0]) if row else None
+
+        if league_id is not None:
+            for row in translated.values():
+                row['league_id'] = league_id
 
         # Build the column order: PK first, then sorted data columns
         all_cols: Set[str] = set()

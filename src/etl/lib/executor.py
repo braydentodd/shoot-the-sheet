@@ -29,7 +29,6 @@ from src.etl.lib.extract import (
 from src.etl.lib.load import write_entity_rows
 from src.etl.lib.transform import (
     aggregate_multi_season_most_recent_non_null,
-    aggregate_team_rows,
     execute_pipeline,
 )
 from src.etl.definitions.execution import ENTITY_CHUNK_SIZE
@@ -356,15 +355,19 @@ def _execute_team_call(
     failed: List[Dict[str, Any]],
     conn=None,
 ) -> int:
-    """Per-team calls returning player-level data (e.g. on/off court).
+    """Per-team calls returning player-level data (e.g. shot-chart putbacks).
 
-    Aggregates across teams for traded players using per-column
-    aggregation setting (sum or minute_weighted).
+    Each team is queried independently; results are aggregated *within* that
+    team and written immediately so traded players get one row per stint.
     """
+    from src.etl.lib.transform import _aggregate_per_team
+
     first_source = next(iter(columns.values()))
     result_set_name = first_source.get('result_set')
     player_id_field = first_source.get('player_id_field')
-    minutes_field = first_source.get('minutes_field', 'MIN')
+    minutes_field = first_source.get('minutes_field')
+    filter_field = first_source.get('filter_field')
+    filter_values = first_source.get('filter_values')
 
     if not result_set_name or not player_id_field:
         logger.error(
@@ -374,7 +377,7 @@ def _execute_team_call(
         return 0
 
     consecutive_failures = 0
-    player_team_rows: Dict[int, list] = {}
+    written_count = 0
     team_ids = list(ctx.team_ids.values())
 
     for idx, team_id in enumerate(team_ids):
@@ -392,18 +395,26 @@ def _execute_team_call(
         if result is None:
             continue
 
-        new_rows = extract_raw_rows(result, player_id_field, result_set_name)
-        for pid, rows_list in new_rows.items():
-            player_team_rows.setdefault(pid, []).extend(rows_list)
+        new_rows = extract_raw_rows(
+            result, player_id_field, result_set_name,
+            filter_field=filter_field, filter_values=filter_values,
+        )
+        if not new_rows:
+            continue
 
-    if not player_team_rows:
-        return 0
+        # Aggregate within this team only, then inject the queried team_id
+        rows: Dict[int, Dict[str, Any]] = {}
+        for pid, raw_list in new_rows.items():
+            values = _aggregate_per_team(raw_list, columns, minutes_field)
+            values['team_id'] = team_id
+            rows[pid] = values
 
-    rows = aggregate_team_rows(player_team_rows, columns, minutes_field)
-    return write_entity_rows(
-        ctx.entity, ctx.scope, rows, ctx.season, ctx.season_type,
-        ctx.db_schema, ctx.source_key,
-    )
+        written_count += write_entity_rows(
+            ctx.entity, ctx.scope, rows,
+            ctx.season, ctx.season_type, ctx.db_schema, ctx.source_key,
+        )
+
+    return written_count
 
 
 def _execute_per_entity(
@@ -481,14 +492,25 @@ def _execute_per_entity(
             result, columns, ctx.entity, ctx.entity_id_field,
             id_aliases=ctx.id_aliases,
         )
-        all_rows.update(extracted)
 
-        if len(all_rows) >= ENTITY_CHUNK_SIZE:
+        if tier == 'team':
+            # Per-team calls: inject the queried team_id and write immediately
+            # so traded players get one row per stint instead of overwriting.
+            for row in extracted.values():
+                row['team_id'] = sid
             written_count += write_entity_rows(
-                ctx.entity, ctx.scope, all_rows,
+                ctx.entity, ctx.scope, extracted,
                 ctx.season, ctx.season_type, ctx.db_schema, ctx.source_key,
             )
-            all_rows = {}
+        else:
+            all_rows.update(extracted)
+
+            if len(all_rows) >= ENTITY_CHUNK_SIZE:
+                written_count += write_entity_rows(
+                    ctx.entity, ctx.scope, all_rows,
+                    ctx.season, ctx.season_type, ctx.db_schema, ctx.source_key,
+                )
+                all_rows = {}
 
     if all_rows:
         written_count += write_entity_rows(
