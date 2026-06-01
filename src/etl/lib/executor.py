@@ -23,6 +23,7 @@ from src.core.lib.tables_resolver import get_table_name
 from src.etl.lib.extract import (
     extract_columns_from_result,
     extract_raw_rows,
+    extract_value_from_raw_dict,
     get_pipeline_columns,
     get_simple_columns,
 )
@@ -355,17 +356,15 @@ def _execute_team_call(
     failed: List[Dict[str, Any]],
     conn=None,
 ) -> int:
-    """Per-team calls returning player-level data (e.g. shot-chart putbacks).
+    """Per-team calls returning player-level data (e.g. on/off splits).
 
-    Each team is queried independently; results are aggregated *within* that
-    team and written immediately so traded players get one row per stint.
+    Each team is queried independently; results are written immediately so
+    traded players get one row per stint. No aggregation — each player-team
+    combo should have exactly one raw row.
     """
-    from src.etl.lib.transform import _aggregate_per_team
-
     first_source = next(iter(columns.values()))
     result_set_name = first_source.get('result_set')
     player_id_field = first_source.get('player_id_field')
-    minutes_field = first_source.get('minutes_field')
     filter_field = first_source.get('filter_field')
     filter_values = first_source.get('filter_values')
 
@@ -402,10 +401,17 @@ def _execute_team_call(
         if not new_rows:
             continue
 
-        # Aggregate within this team only, then inject the queried team_id
+        # Extract column values directly from the first (and typically only)
+        # raw row per player per team, then inject the queried team_id.
         rows: Dict[int, Dict[str, Any]] = {}
         for pid, raw_list in new_rows.items():
-            values = _aggregate_per_team(raw_list, columns, minutes_field)
+            if not raw_list:
+                continue
+            raw_dict = raw_list[0]
+            values = {
+                col_name: extract_value_from_raw_dict(raw_dict, col_source)
+                for col_name, col_source in columns.items()
+            }
             values['team_id'] = team_id
             rows[pid] = values
 

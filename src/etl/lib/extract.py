@@ -241,6 +241,52 @@ def get_pipeline_columns(
     }
 
 
+def extract_value_from_raw_dict(
+    raw_dict: Dict[str, Any],
+    source: Dict[str, Any],
+) -> Any:
+    """Extract a single value from a raw row dict using source config.
+
+    Handles both direct 'field' and 'derived' math expressions.
+    Applies transforms and scaling just like extract_field/extract_derived_field.
+    """
+    derived = source.get('derived')
+    if derived and derived.get('math'):
+        math_expr = derived['math']
+        fields = derived.get('fields', [])
+        locals_dict: Dict[str, float] = {}
+        valid = True
+        for field_name in fields:
+            raw = raw_dict.get(field_name)
+            if raw is None:
+                valid = False
+                break
+            try:
+                locals_dict[field_name] = float(raw)
+            except (ValueError, TypeError):
+                valid = False
+                break
+        if not valid:
+            return None
+        try:
+            value = _eval_math_expr(math_expr, locals_dict)
+        except Exception:
+            return None
+        transform_name = source.get('transform', 'safe_int')
+        scale = source.get('scale', 1)
+        return apply_transform(value, transform_name, scale)
+
+    field = source.get('field')
+    if not field:
+        return None
+    raw_value = raw_dict.get(field)
+    if isinstance(raw_value, (dict, list)):
+        return None
+    transform_name = source.get('transform', 'safe_int')
+    scale = source.get('scale', 1)
+    return apply_transform(raw_value, transform_name, scale)
+
+
 def extract_raw_rows(
     api_result: Dict[str, Any],
     entity_id_field: str,

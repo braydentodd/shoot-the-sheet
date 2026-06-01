@@ -1293,7 +1293,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'derived': {'math': 'FGM - FG3M', 'fields': ['FGM', 'FG3M']},
-                        'aggregation': 'sum',
                     },
                 },
             },
@@ -1317,7 +1316,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'derived': {'math': 'FGA - FG3A', 'fields': ['FGA', 'FG3A']},
-                        'aggregation': 'sum',
                     },
                 },
             },
@@ -1341,7 +1339,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'FG3M',
-                        'aggregation': 'sum',
                     },
                 },
             },
@@ -1365,7 +1362,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'FG3A',
-                        'aggregation': 'sum',
                     },
                 },
             },
@@ -1389,7 +1385,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'FTA',
-                        'aggregation': 'sum',
                     },
                 },
             },
@@ -1413,7 +1408,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'FTM',
-                        'aggregation': 'sum',
                     },
                 },
             },
@@ -1437,7 +1431,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'TOV',
-                        'aggregation': 'sum',
                     },
                 },
             },
@@ -1461,7 +1454,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'BLK',
-                        'aggregation': 'sum',
                     },
                 },
             },
@@ -1485,7 +1477,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'derived': {'math': 'FGM - FG3M', 'fields': ['FGM', 'FG3M']},
-                        'aggregation': 'sum',
                     },
                 },
             },
@@ -1509,7 +1500,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'derived': {'math': 'FGA - FG3A', 'fields': ['FGA', 'FG3A']},
-                        'aggregation': 'sum',
                     },
                 },
             },
@@ -1533,7 +1523,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'FG3M',
-                        'aggregation': 'sum',
                     },
                 },
             },
@@ -1557,7 +1546,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'FG3A',
-                        'aggregation': 'sum',
                     },
                 },
             },
@@ -1581,7 +1569,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'FTA',
-                        'aggregation': 'sum',
                     },
                 },
             },
@@ -1605,7 +1592,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'FTM',
-                        'aggregation': 'sum',
                     },
                 },
             },
@@ -1629,7 +1615,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'TOV',
-                        'aggregation': 'sum',
                     },
                 },
             },
@@ -1653,7 +1638,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'BLK',
-                        'aggregation': 'sum',
                     },
                 },
             },
@@ -1676,9 +1660,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'tier': 'team_call',
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
-                        'derived': {'math': 'OPP_FGM - OPP_FG3M', 'fields': ['OPP_FGM', 'OPP_FG3M']},
+                        'derived': {'math': 'FGM - FG3M', 'fields': ['FGM', 'FG3M']},
                         'params': {'measure_type_detailed_defense': 'Opponent'},
-                        'aggregation': 'sum',
+
                     },
                 },
             },
@@ -1701,9 +1685,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'tier': 'team_call',
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
-                        'derived': {'math': 'OPP_FGA - OPP_FG3A', 'fields': ['OPP_FGA', 'OPP_FG3A']},
+                        'derived': {'math': 'FGA - FG3A', 'fields': ['FGA', 'FG3A']},
                         'params': {'measure_type_detailed_defense': 'Opponent'},
-                        'aggregation': 'sum',
+
                     },
                 },
             },
@@ -1726,9 +1710,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'tier': 'team_call',
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
-                        'field': 'OPP_FG3M',
+                        'field': 'FG3M',
                         'params': {'measure_type_detailed_defense': 'Opponent'},
-                        'aggregation': 'sum',
+
                     },
                 },
             },
@@ -1751,9 +1735,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'tier': 'team_call',
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
-                        'field': 'OPP_FG3A',
+                        'field': 'FG3A',
                         'params': {'measure_type_detailed_defense': 'Opponent'},
-                        'aggregation': 'sum',
+
                     },
                 },
             },
@@ -1776,9 +1760,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'tier': 'team_call',
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
-                        'field': 'OPP_FTA',
+                        'field': 'FTA',
                         'params': {'measure_type_detailed_defense': 'Opponent'},
-                        'aggregation': 'sum',
+
                     },
                 },
             },
@@ -1801,9 +1785,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'tier': 'team_call',
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
-                        'field': 'OPP_FTM',
+                        'field': 'FTM',
                         'params': {'measure_type_detailed_defense': 'Opponent'},
-                        'aggregation': 'sum',
+
                     },
                 },
             },
@@ -1826,9 +1810,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'tier': 'team_call',
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
-                        'field': 'OPP_TOV',
+                        'field': 'TOV',
                         'params': {'measure_type_detailed_defense': 'Opponent'},
-                        'aggregation': 'sum',
+
                     },
                 },
             },
@@ -1851,9 +1835,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'tier': 'team_call',
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
-                        'derived': {'math': 'OPP_FGM - OPP_FG3M', 'fields': ['OPP_FGM', 'OPP_FG3M']},
+                        'derived': {'math': 'FGM - FG3M', 'fields': ['FGM', 'FG3M']},
                         'params': {'measure_type_detailed_defense': 'Opponent'},
-                        'aggregation': 'sum',
+
                     },
                 },
             },
@@ -1876,9 +1860,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'tier': 'team_call',
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
-                        'derived': {'math': 'OPP_FGA - OPP_FG3A', 'fields': ['OPP_FGA', 'OPP_FG3A']},
+                        'derived': {'math': 'FGA - FG3A', 'fields': ['FGA', 'FG3A']},
                         'params': {'measure_type_detailed_defense': 'Opponent'},
-                        'aggregation': 'sum',
+
                     },
                 },
             },
@@ -1901,9 +1885,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'tier': 'team_call',
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
-                        'field': 'OPP_FG3M',
+                        'field': 'FG3M',
                         'params': {'measure_type_detailed_defense': 'Opponent'},
-                        'aggregation': 'sum',
+
                     },
                 },
             },
@@ -1926,9 +1910,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'tier': 'team_call',
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
-                        'field': 'OPP_FG3A',
+                        'field': 'FG3A',
                         'params': {'measure_type_detailed_defense': 'Opponent'},
-                        'aggregation': 'sum',
+
                     },
                 },
             },
@@ -1951,9 +1935,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'tier': 'team_call',
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
-                        'field': 'OPP_FTA',
+                        'field': 'FTA',
                         'params': {'measure_type_detailed_defense': 'Opponent'},
-                        'aggregation': 'sum',
+
                     },
                 },
             },
@@ -1976,9 +1960,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'tier': 'team_call',
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
-                        'field': 'OPP_FTM',
+                        'field': 'FTM',
                         'params': {'measure_type_detailed_defense': 'Opponent'},
-                        'aggregation': 'sum',
+
                     },
                 },
             },
@@ -2001,9 +1985,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         'tier': 'team_call',
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
-                        'field': 'OPP_TOV',
+                        'field': 'TOV',
                         'params': {'measure_type_detailed_defense': 'Opponent'},
-                        'aggregation': 'sum',
+
                     },
                 },
             },
@@ -2255,7 +2239,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'default': None,
         'entity_types': ['team'],
         'manager': 'in_season_source',
-        'domain': None,
+        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
             'nba': {
@@ -2533,17 +2517,17 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'nullable': True,
         'default': None,
         'entity_types': ['team'],
-        'manager': 'in_season',
-        'domain': None,
+        'manager': 'in_season_source',
+        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'team': {
                         'dataset': 'leaguedashteamstats',
-                        'field': 'OPP_FGM',
+                        'field': 'FGM',
                         'params': {'measure_type_detailed_defense': 'Opponent'},
-                        'derived': {'subtract': 'OPP_FG3M'}
+                        'derived': {'math': 'FGM - FG3M', 'fields': ['FGM', 'FG3M']}
                         }
                     }
                 }
@@ -2556,16 +2540,16 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'default': None,
         'entity_types': ['team'],
         'manager': 'in_season_source',
-        'domain': None,
+        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'team': {
                         'dataset': 'leaguedashteamstats',
-                        'field': 'OPP_FGA',
+                        'field': 'FGA',
                         'params': {'measure_type_detailed_defense': 'Opponent'},
-                        'derived': {'subtract': 'OPP_FG3A'}
+                        'derived': {'math': 'FGA - FG3A', 'fields': ['FGA', 'FG3A']}
                         }
                     }
                 }
@@ -2578,14 +2562,14 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'default': None,
         'entity_types': ['team'],
         'manager': 'in_season_source',
-        'domain': None,
+        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'team': {
                         'dataset': 'leaguedashteamstats',
-                        'field': 'OPP_FG3M',
+                        'field': 'FG3M',
                         'params': {'measure_type_detailed_defense': 'Opponent'}
                         }
                     }
@@ -2599,14 +2583,14 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'default': None,
         'entity_types': ['team'],
         'manager': 'in_season_source',
-        'domain': None,
+        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'team': {
                         'dataset': 'leaguedashteamstats',
-                        'field': 'OPP_FG3A',
+                        'field': 'FG3A',
                         'params': {'measure_type_detailed_defense': 'Opponent'}
                     }
                 }
@@ -2620,14 +2604,14 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'default': None,
         'entity_types': ['team'],
         'manager': 'in_season_source',
-        'domain': None,
+        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'team': {
                         'dataset': 'leaguedashteamstats',
-                        'field': 'OPP_FTM',
+                        'field': 'FTM',
                         'params': {'measure_type_detailed_defense': 'Opponent'}
                     }
                 }
@@ -2641,14 +2625,14 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'default': None,
         'entity_types': ['team'],
         'manager': 'in_season_source',
-        'domain': None,
+        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'team': {
                         'dataset': 'leaguedashteamstats',
-                        'field': 'OPP_FTA',
+                        'field': 'FTA',
                         'params': {'measure_type_detailed_defense': 'Opponent'}
                     }
                 }
@@ -2662,14 +2646,14 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'default': None,
         'entity_types': ['team'],
         'manager': 'in_season_source',
-        'domain': None,
+        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'team': {
                         'dataset': 'leaguedashteamstats',
-                        'field': 'OPP_AST',
+                        'field': 'AST',
                         'params': {'measure_type_detailed_defense': 'Opponent'}
                     }
                 }
@@ -2683,14 +2667,14 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'default': None,
         'entity_types': ['team'],
         'manager': 'in_season_source',
-        'domain': None,
+        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'team': {
                         'dataset': 'leaguedashteamstats',
-                        'field': 'OPP_TOV',
+                        'field': 'TOV',
                         'params': {'measure_type_detailed_defense': 'Opponent'}
                     }
                 }
@@ -2704,14 +2688,14 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'default': None,
         'entity_types': ['team'],
         'manager': 'in_season_source',
-        'domain': None,
+        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
             'nba': {
                 'nba_api': {
                     'team': {
                         'dataset': 'leaguedashteamstats',
-                        'field': 'OPP_PF',
+                        'field': 'PF',
                         'params': {'measure_type_detailed_defense': 'Opponent'}
                     }
                 }
@@ -2730,7 +2714,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 'nba_api': {
                     'team': {
                         'dataset': 'leaguedashteamstats',
-                        'field': 'OPP_STL',
+                        'field': 'STL',
                         'params': {'measure_type_detailed_defense': 'Opponent'}
                     }
                 }
@@ -2749,7 +2733,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 'nba_api': {
                     'team': {
                         'dataset': 'leaguedashteamstats',
-                        'field': 'OPP_BLK',
+                        'field': 'BLK',
                         'params': {'measure_type_detailed_defense': 'Opponent'}
                     }
                 }
