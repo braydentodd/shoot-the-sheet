@@ -28,10 +28,12 @@ import logging
 from typing import Any, Callable, Dict, List, Tuple, Union
 
 from src.core.lib.terminal import progress
-from src.core.lib.ddl import bootstrap_schema
+from src.core.lib.schema_builder import bootstrap_schema
 from src.core.lib.logging import phase_marker
 from src.core.lib.postgres import db_connection, quote_col
+from src.core.lib.tables_resolver import get_table_name
 from src.etl.lib.sources_resolver import (
+    build_source_id_columns,
     get_external_sources_for_league,
     get_source_id_column,
 )
@@ -56,7 +58,7 @@ from src.etl.lib.coverage_tracker import (
     upsert_group_coverage,
 )
 from src.etl.lib.executor import ExecutionContext, execute_group
-from src.etl.lib.plan import build_call_groups
+from src.etl.lib.call_groups import build_call_groups
 from src.etl.lib.progress_tracker import (
     complete_run,
     fail_run,
@@ -97,7 +99,7 @@ def _load_source(source_key: str):
 
 def _get_active_team_source_ids(league_key: str, source_key: str) -> Dict[str, int]:
     """Return ``{team_abbr: team_source_id}`` for teams currently active in
-    ``rosters.leagues`` for the given league.
+    the league-team roster table for the given league.
 
     Used by per-team execution strategies that need to iterate over the team
     list (e.g. on/off court datasets).
@@ -105,12 +107,12 @@ def _get_active_team_source_ids(league_key: str, source_key: str) -> Dict[str, i
     src_col = get_source_id_column(source_key)
     sql = f"""
         SELECT t.abbr, t.{quote_col(src_col)}
-          FROM profiles.teams t
-          JOIN rosters.leagues lr
+          FROM {get_table_name('team', 'profiles')} t
+          JOIN {get_table_name('team', 'rosters')} lr
             ON lr.team_id = t.{quote_col('the_glass_id')}
-          JOIN profiles.leagues lp
+          JOIN {get_table_name('league', 'profiles')} lp
             ON lp.{quote_col('the_glass_id')} = lr.league_id
-         WHERE lp.league_key = %s
+         WHERE lp.code = %s
          ORDER BY t.abbr
     """
     with db_connection() as conn:
@@ -254,7 +256,7 @@ def _stage_profiles(
     failed: List[Dict[str, Any]],
     **source_kw,
 ) -> int:
-    """Phase: extract and upsert core.{entity}_profiles rows."""
+    """Phase: extract and upsert profiles.{entity}s rows."""
     logger.info(phase_marker('stage_profiles', f'{len(seasons)} season(s)'))
     return _run_groups(
         'profiles', entities, seasons,
@@ -629,7 +631,7 @@ def run_etl(
     )
 
     with db_connection() as conn:
-        bootstrap_schema(league_key, conn=conn)
+        bootstrap_schema(league_key, conn=conn, source_id_columns=build_source_id_columns())
 
     requested_entities = ['team', 'player']
     season_range = get_retained_seasons(league_key, season)

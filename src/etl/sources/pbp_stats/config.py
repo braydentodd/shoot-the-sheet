@@ -17,6 +17,7 @@ class ApiConfigDef(TypedDict):
 class DatasetDef(TypedDict):
     min_season: Union[str, None]
     execution_tier: str
+    extraction_mode: str
     default_result_set: str
     season_type_param: Union[str, None]
     per_mode_param: Union[str, None]
@@ -65,7 +66,8 @@ DATASETS: Dict[str, DatasetDef] = {
     # Team and opponent aggregate totals from pbpstats API.
     'pbp_team_totals': {
         'min_season': '2000-01',
-        'execution_tier': 'league',
+        'execution_tier': 'per_league',
+        'extraction_mode': 'standard',
         'default_result_set': 'PbpTotals',
         'season_type_param': None,
         'per_mode_param': None,
@@ -75,7 +77,8 @@ DATASETS: Dict[str, DatasetDef] = {
     },
     'pbp_player_totals': {
         'min_season': '2000-01',
-        'execution_tier': 'team_call',
+        'execution_tier': 'per_team',
+        'extraction_mode': 'raw',
         'default_result_set': 'PbpTotals',
         'season_type_param': None,
         'per_mode_param': None,
@@ -85,7 +88,8 @@ DATASETS: Dict[str, DatasetDef] = {
     },
     'pbp_on_off': {
         'min_season': '2000-01',
-        'execution_tier': 'team_call',
+        'execution_tier': 'per_team',
+        'extraction_mode': 'raw',
         'default_result_set': 'OnOffStats',
         'season_type_param': None,
         'per_mode_param': None,

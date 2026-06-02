@@ -295,7 +295,7 @@ def sync_edits(league_key: str, dry_run: bool = False) -> Dict[str, int]:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
     parser = argparse.ArgumentParser(description='Sync editable fields from Sheets to DB')
-    parser.add_argument('--league', required=True, help='League key, e.g. "nba"')
+    parser.add_argument('--league', required=True, help='League key, e.g. "NBA"')
     parser.add_argument('--dry-run', action='store_true', help='Log SQL without executing')
     args = parser.parse_args()
 

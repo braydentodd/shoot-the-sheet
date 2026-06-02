@@ -38,7 +38,6 @@ class LeagueRoles(TypedDict, total=False):
 
 class LeagueDef(TypedDict):
     name: str
-    abbr: str
     gender: str
     season_format: str
     regular_season_types: List[str]
@@ -47,10 +46,8 @@ class LeagueDef(TypedDict):
     source_roles: LeagueRoles
 
 LEAGUES: Dict[str, LeagueDef] = {
-
-    'nba': {
+    'NBA': {
         'name':                   'National Basketball Association',
-        'abbr':                   'NBA',
         'gender':                 'M',
         'season_format':          'split_year',
         'regular_season_types':   ['rs'],

@@ -6,7 +6,7 @@ per-league source-role assignments in
 :data:`src.core.definitions.leagues.LEAGUES`.
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, List, Tuple
 
 from src.core.definitions.leagues import LEAGUES
 from src.etl.definitions.sources import SOURCES
@@ -96,45 +96,71 @@ def get_default_external_source(league_key: str) -> str:
 # ROSTER FIELD EXTRACTOR
 # ============================================================================
 
+def build_source_id_columns() -> Dict[str, List[Tuple[str, str]]]:
+    """Return ``{entity: [(col_name, pg_type), ...]}`` for all external sources.
+
+    Used by :func:`src.core.lib.ddl.bootstrap_schema` to know which
+    per-source identity columns to add to profile tables.
+    """
+    result: Dict[str, List[Tuple[str, str]]] = {}
+    seen: Dict[str, set] = {}
+    for source_key, meta in sorted(SOURCES.items()):
+        if meta.get('entity_id_type') is None:
+            continue
+        if not meta.get('external', False):
+            continue
+        col_name = get_source_id_column(source_key)
+        for entity in meta.get('applies_to', []):
+            seen.setdefault(entity, set())
+            if col_name in seen[entity]:
+                continue
+            seen[entity].add(col_name)
+            result.setdefault(entity, []).append((col_name, meta['entity_id_type']))
+    return result
+
+
 def get_rosters_fields(league_key: str, source_key: str) -> Dict[str, str]:
-    """Extract rosters-scoped column field mappings for a league/source.
-    
-    Returns a dict of column_name -> source_field_name for all columns with
-    'rosters' in their scope and a dataset_mapping for the given league/source.
-    
+    """Extract roster column field mappings for a league/source.
+
+    Returns a dict of column_name -> source_field_name for all columns whose
+    ``tables`` includes ``teams_players`` and that have a dataset_mapping for
+    the given league/source.
+
     Example:
         get_rosters_fields('nba', 'nba_api') returns
         {'jersey_num': 'JERSEY', 'seasons_exp': 'SEASON_EXP'}
-    
+
     Args:
         league_key: League identifier (e.g. 'nba')
         source_key: Source system identifier (e.g. 'nba_api')
-    
+
     Returns:
         Dict mapping column names to their source field names, or empty dict
-        if the league/source has no rosters-scoped columns.
+        if the league/source has no roster-scoped columns.
     """
     from src.core.definitions.db_columns import DB_COLUMNS
     result = {}
-    
+
     for col_name, col_def in DB_COLUMNS.items():
-        scope = col_def.get('scope', [])
-        if 'rosters' not in scope:
+        tables = col_def.get('tables', [])
+        if isinstance(tables, str):
+            tables = [tables]
+        if 'teams_players' not in tables:
             continue
-            
+
         dataset_mapping = col_def.get('dataset_mapping')
         if not dataset_mapping:
             continue
-            
+
         # Navigate: league -> source -> entity -> {dataset, field}
         league_mapping = dataset_mapping.get(league_key, {})
         source_mapping = league_mapping.get(source_key, {})
-        
+
         # For rosters, we typically only have 'player' entity
         player_mapping = source_mapping.get('player')
         if player_mapping:
             field = player_mapping.get('field')
             if field:
                 result[col_name] = field
-    
+
     return result

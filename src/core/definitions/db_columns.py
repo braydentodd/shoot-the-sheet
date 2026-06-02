@@ -31,10 +31,9 @@ class DatasetMapping(TypedDict, total=False):
 
 class ColumnDef(TypedDict):
     type: str
-    scope: Union[str, List[str]]
+    tables: Union[str, List[str]]
     nullable: bool
     default: Union[str, int, None]
-    entity_types: Union[List[str], None]
     manager: Literal['db', 'execution_context', 'in_season_source', 'perennial_source']
     domain: Union[str, None]
     comment: Union[str, None]
@@ -48,103 +47,85 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
 
     'process_id': {
         'type': 'BIGINT',
-        'scope': ['runs', 'tasks'],
+        'tables': ['runs', 'tasks'],
         'nullable': False,
         'default': "nextval('ops.process_id_seq')",
-        'entity_types': None,
         'manager': 'db',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None,
     },
     'run_id': {
         'type': 'BIGINT',
-        'scope': ['tasks'],
+        'tables': ['tasks'],
         'nullable': False,
         'default': None,
-        'entity_types': None,
         'manager': 'execution_context',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None,
     },
     'the_glass_id': {
         'type': 'BIGINT',
-        'scope': ['profiles'],
+        'tables': ['leagues', 'teams', 'players', 'countries'],
         'nullable': False,
         'default': "nextval('profiles.the_glass_id_seq')",
-        'entity_types': None,
         'manager': 'db',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None,
     },
     'entity_type': {
         'type': 'TEXT',
-        'scope': ['tasks', 'coverages'],
+        'tables': ['tasks', 'coverages'],
         'nullable': False,
         'default': None,
-        'entity_types': None,
         'manager': 'execution_context',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None,
     },
     'updated_at': {
         'type': 'TIMESTAMP',
-        'scope': ['profiles', 'stats', 'rosters', 'staging', 'runs', 'tasks', 'coverages'],
+        'tables': ['all'],
         'nullable': False,
         'default': 'NOW()',
-        'entity_types': ['league', 'player', 'team'],
         'manager': 'db',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None,
     },
     'created_at': {
         'type': 'TIMESTAMP',
-        'scope': ['profiles', 'stats', 'rosters', 'staging', 'runs', 'tasks', 'coverages'],
+        'tables': ['all'],
         'nullable': False,
         'default': 'NOW()',
-        'entity_types': ['league', 'player', 'team'],
         'manager': 'db',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None,
     },
     'season': {
         'type': 'TEXT',
-        'scope': ['stats', 'tasks', 'coverages'],
+        'tables': ['team_seasons', 'player_seasons', 'tasks', 'coverages'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'execution_context',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None,
     },
     'season_type': {
         'type': 'TEXT',
-        'scope': ['stats', 'tasks', 'coverages'],
+        'tables': ['team_seasons', 'player_seasons', 'tasks', 'coverages'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'execution_context',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None,
     },
     'notes': {
         'type': 'TEXT',
-        'scope': ['profiles'],
+        'tables': ['teams', 'players'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'perennial_source',
-        'domain': None,
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'the_glass_sheets': {
                     'player': {'dataset': 'players', 'field': 'Notes'},
                     'team': {'dataset': 'teams', 'field': 'Notes'},
@@ -154,34 +135,28 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'source_id': {
         'type': 'TEXT',
-        'scope': ['staging'],
+        'tables': ['unmatched_teams', 'unmatched_players'],
         'nullable': False,
         'default': None,
-        'entity_types': ['team', 'player'],
-        'manager': 'in_season_source',
-        'domain': None,
+        'manager': 'perennial_source',
         'comment': None,
         'dataset_mapping': None,
     },
     'team_source_id': {
         'type': 'TEXT',
-        'scope': ['staging'],
+        'tables': ['unmatched_players'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
-        'manager': 'in_season_source',
-        'domain': None,
+        'manager': 'perennial_source',
         'comment': None,
         'dataset_mapping': None,
     },
     'matched_glass_id': {
         'type': 'BIGINT',
-        'scope': ['staging'],
+        'tables': ['unmatched_teams', 'unmatched_players'],
         'nullable': True,
         'default': None,
-        'entity_types': ['team', 'player'],
         'manager': 'execution_context',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None,
     },
@@ -190,15 +165,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     'name': {
         'type': 'TEXT',
-        'scope': ['profiles', 'staging'],
+        'tables': ['leagues', 'teams', 'players', 'countries', 'unmatched_teams', 'unmatched_players'],
         'nullable': False,
         'default': None,
-        'entity_types': ['league', 'player', 'team'],
         'manager': 'perennial_source',
-        'domain': None,
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'leaguedashplayerstats',
@@ -216,15 +189,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'height_ins_no_shoes': {
         'type': 'SMALLINT',
-        'scope': ['profiles', 'staging'],
+        'tables': ['players', 'unmatched_players'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'perennial_source',
-        'domain': None,
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {'dataset': 'commonallplayers', 'field': 'HEIGHT'},
                 },
@@ -233,26 +204,22 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'height_ins_with_shoes': {
         'type': 'SMALLINT',
-        'scope': ['profiles', 'staging'],
+        'tables': ['players', 'unmatched_players'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'perennial_source',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None,
     },
     'weight_lbs': {
         'type': 'SMALLINT',
-        'scope': ['profiles', 'staging'],
+        'tables': ['players', 'unmatched_players'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'perennial_source',
-        'domain': None,
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {'dataset': 'commonallplayers', 'field': 'WEIGHT'},
                 },
@@ -261,15 +228,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'wingspan_ins': {
         'type': 'SMALLINT',
-        'scope': ['profiles', 'staging'],
+        'tables': ['players', 'unmatched_players'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'perennial_source',
-        'domain': None,
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'draftcombineplayeranthro',
@@ -289,15 +254,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'hand': {
         'type': 'CHAR',
-        'scope': ['profiles', 'staging'],
+        'tables': ['players', 'unmatched_players'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'perennial_source',
-        'domain': None,
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'the_glass_sheets': {
                     'player': {'dataset': 'players', 'field': 'Handedness'},
                 },
@@ -306,15 +269,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'birthdate': {
         'type': 'DATE',
-        'scope': ['profiles', 'staging'],
+        'tables': ['players', 'unmatched_players'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'perennial_source',
-        'domain': None,
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'commonallplayers',
@@ -327,43 +288,46 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'seasons_exp': {
         'type': 'SMALLINT',
-        'scope': ['rosters', 'staging'],
+        'tables': ['rosters', 'unmatched_players'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
-        'domain': None,
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {'dataset': 'commonallplayers', 'field': 'SEASON_EXP'},
                 },
             },
         },
     },
-    'league_key': {
+    'code': {
         'type': 'TEXT',
-        'scope': ['profiles', 'staging'],
+        'tables': ['leagues', 'countries'],
         'nullable': False,
         'default': None,
-        'entity_types': ['league'],
         'manager': 'execution_context',
-        'domain': None,
+        'comment': None,
+        'dataset_mapping': None,
+    },
+    'country_id': {
+        'type': 'BIGINT',
+        'tables': ['teams', 'countries_players'],
+        'nullable': True,
+        'default': None,
+        'manager': 'perennial_source',
         'comment': None,
         'dataset_mapping': None,
     },
     'abbr': {
         'type': 'TEXT',
-        'scope': ['profiles', 'staging'],
+        'tables': ['teams', 'unmatched_teams'],
         'nullable': True,
         'default': None,
-        'entity_types': ['league', 'team'],
         'manager': 'perennial_source',
-        'domain': None,
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'team': {'dataset': 'team_metadata', 'field': 'TEAM_ABBREVIATION', 'transform': 'safe_str'},
                 },
@@ -372,15 +336,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'conf': {
         'type': 'TEXT',
-        'scope': ['profiles', 'staging'],
+        'tables': ['teams', 'unmatched_teams'],
         'nullable': True,
         'default': None,
-        'entity_types': ['team'],
         'manager': 'perennial_source',
-        'domain': None,
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'team': {'dataset': 'team_metadata', 'field': 'TEAM_CONFERENCE', 'transform': 'safe_str'},
                 },
@@ -389,15 +351,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'city': {
         'type': 'TEXT',
-        'scope': ['profiles', 'staging'],
+        'tables': ['teams', 'unmatched_teams'],
         'nullable': True,
         'default': None,
-        'entity_types': ['team'],
         'manager': 'perennial_source',
-        'domain': None,
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'team': {'dataset': 'team_metadata', 'field': 'TEAM_CITY', 'transform': 'safe_str'},
                 },
@@ -406,40 +366,34 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'region': {
         'type': 'TEXT',
-        'scope': ['profiles', 'staging'],
+        'tables': ['teams', 'unmatched_teams'],
         'nullable': True,
         'default': None,
-        'entity_types': ['team'],
         'manager': 'perennial_source',
-        'domain': None,
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'team': {'dataset': 'team_metadata', 'field': 'TEAM_STATE', 'transform': 'safe_str'},
                 },
             },
         },
     },
-    'country': {
+    'source_country': {
         'type': 'TEXT',
-        'scope': ['profiles', 'staging'],
+        'tables': ['unmatched_teams', 'unmatched_players'],
         'nullable': True,
         'default': None,
-        'entity_types': ['team'],
         'manager': 'perennial_source',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None
     },
     'gender': {
         'type': 'CHAR',
-        'scope': ['profiles', 'staging'],
+        'tables': ['leagues', 'teams', 'players', 'unmatched_teams', 'unmatched_players'],
         'nullable': True,
         'default': None,
-        'entity_types': ['league', 'team', 'player'],
         'manager': 'execution_context',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None,
     },
@@ -448,15 +402,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     'games': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': False,
         'default': 0,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': None,
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {'dataset': 'leaguedashplayerstats', 'field': 'GP'},
                     'team': {'dataset': 'leaguedashteamstats', 'field': 'GP'},
@@ -466,15 +418,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'mins_x10': {
         'type': 'INTEGER',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': False,
         'default': 0,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': None,
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {'dataset': 'leaguedashplayerstats', 'field': 'MIN', 'scale': 10},
                     'team': {'dataset': 'leaguedashteamstats', 'field': 'MIN', 'scale': 10},
@@ -484,15 +434,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'wins': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {'dataset': 'leaguedashplayerstats', 'field': 'W'},
                     'team': {'dataset': 'leaguedashteamstats', 'field': 'W'},
@@ -502,15 +450,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'tracking_mins_x10': {
         'type': 'INTEGER',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': False,
         'default': 0,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': None,
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'leaguedashptstats',
@@ -530,19 +476,16 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'off_mins_x10': {
         'type': 'INTEGER',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': False,
         'default': 0,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
-        'domain': None,
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'MIN',
@@ -554,15 +497,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'hustle_mins_x10': {
         'type': 'INTEGER',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': False,
         'default': 0,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': None,
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {'dataset': 'leaguehustlestatsplayer', 'field': 'MIN', 'scale': 10},
                     'team': {'dataset': 'leaguehustlestatsteam', 'field': 'MIN', 'scale': 10},
@@ -575,15 +516,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     'fg2m': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'leaguedashplayerstats',
@@ -599,15 +538,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'fg2a': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'leaguedashplayerstats',
@@ -626,15 +563,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     'fg3m': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {'dataset': 'leaguedashplayerstats', 'field': 'FG3M'},
                     'team': {'dataset': 'leaguedashteamstats', 'field': 'FG3M'},
@@ -644,15 +579,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'fg3a': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {'dataset': 'leaguedashplayerstats', 'field': 'FG3A'},
                     'team': {'dataset': 'leaguedashteamstats', 'field': 'FG3A'},
@@ -665,15 +598,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     'ftm': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {'dataset': 'leaguedashplayerstats', 'field': 'FTM'},
                     'team': {'dataset': 'leaguedashteamstats', 'field': 'FTM'},
@@ -683,15 +614,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'fta': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {'dataset': 'leaguedashplayerstats', 'field': 'FTA'},
                     'team': {'dataset': 'leaguedashteamstats', 'field': 'FTA'},
@@ -704,15 +633,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     'unassisted_fg2m_pct_x10': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'leaguedashplayerstats',
@@ -732,15 +659,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'unassisted_fg3m_pct_x10': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'leaguedashplayerstats',
@@ -763,15 +688,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     'o_reb_pct_x1000': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'leaguedashplayerstats',
@@ -791,15 +714,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'd_reb_pct_x1000': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'leaguedashplayerstats',
@@ -822,15 +743,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     'assists': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {'dataset': 'leaguedashplayerstats', 'field': 'AST'},
                     'team': {'dataset': 'leaguedashteamstats', 'field': 'AST'},
@@ -840,15 +759,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'pot_assists': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'tracking',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'leaguedashptstats',
@@ -866,15 +783,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'passes': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'tracking',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'leaguedashptstats',
@@ -892,15 +807,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'sec_assists': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'tracking',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'leaguedashptstats',
@@ -921,15 +834,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     'touches': {
         'type': 'INTEGER',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'tracking',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'leaguedashptstats',
@@ -947,15 +858,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'time_on_ball': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'tracking',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'leaguedashptstats',
@@ -976,15 +885,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     'turnovers': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {'dataset': 'leaguedashplayerstats', 'field': 'TOV'},
                     'team': {'dataset': 'leaguedashteamstats', 'field': 'TOV'},
@@ -997,15 +904,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     'o_dist_x10': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'tracking',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'leaguedashptstats',
@@ -1025,15 +930,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'd_dist_x10': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'tracking',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'leaguedashptstats',
@@ -1056,15 +959,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     'steals': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {'dataset': 'leaguedashplayerstats', 'field': 'STL'},
                     'team': {'dataset': 'leaguedashteamstats', 'field': 'STL'}
@@ -1074,15 +975,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'blocks': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {'dataset': 'leaguedashplayerstats', 'field': 'BLK'},
                     'team': {'dataset': 'leaguedashteamstats', 'field': 'BLK'},
@@ -1092,15 +991,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'fouls': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {'dataset': 'leaguedashplayerstats', 'field': 'PF'},
                     'team': {'dataset': 'leaguedashteamstats', 'field': 'PF'},
@@ -1113,15 +1010,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     'deflections': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'hustle',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {'dataset': 'leaguehustlestatsplayer', 'field': 'DEFLECTIONS'},
                     'team': {'dataset': 'leaguehustlestatsteam', 'field': 'DEFLECTIONS'},
@@ -1131,15 +1026,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'cont_d_fg2a': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'hustle',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {'dataset': 'leaguehustlestatsplayer', 'field': 'CONTESTED_SHOTS_2PT'},
                     'team': {'dataset': 'leaguehustlestatsteam', 'field': 'CONTESTED_SHOTS_2PT'},
@@ -1149,15 +1042,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'cont_d_fg3a': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'hustle',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {'dataset': 'leaguehustlestatsplayer', 'field': 'CONTESTED_SHOTS_3PT'},
                     'team': {'dataset': 'leaguehustlestatsteam', 'field': 'CONTESTED_SHOTS_3PT'},
@@ -1170,15 +1061,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     'd_fg2m': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'tracking',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'leaguedashptdefend',
@@ -1196,15 +1085,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'd_fg2a': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'tracking',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'leaguedashptdefend',
@@ -1222,15 +1109,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'd_fg3m': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'tracking',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'leaguedashptdefend',
@@ -1248,15 +1133,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'd_fg3a': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'tracking',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'leaguedashptdefend',
@@ -1277,19 +1160,16 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     'on_2fgm': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'derived': {'math': 'FGM - FG3M', 'fields': ['FGM', 'FG3M']},
@@ -1300,19 +1180,16 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'on_2fga': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'derived': {'math': 'FGA - FG3A', 'fields': ['FGA', 'FG3A']},
@@ -1323,19 +1200,16 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'on_3fgm': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'FG3M',
@@ -1346,19 +1220,16 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'on_3fga': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'FG3A',
@@ -1369,19 +1240,16 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'on_fta': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'FTA',
@@ -1392,19 +1260,16 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'on_ftm': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'FTM',
@@ -1415,19 +1280,16 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'on_tovs': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'TOV',
@@ -1438,19 +1300,16 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'on_blocks': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'BLK',
@@ -1461,19 +1320,17 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'off_2fgm': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
         'domain': 'off',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'derived': {'math': 'FGM - FG3M', 'fields': ['FGM', 'FG3M']},
@@ -1484,19 +1341,17 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'off_2fga': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
         'domain': 'off',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'derived': {'math': 'FGA - FG3A', 'fields': ['FGA', 'FG3A']},
@@ -1507,19 +1362,17 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'off_3fgm': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
         'domain': 'off',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'FG3M',
@@ -1530,19 +1383,17 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'off_3fga': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
         'domain': 'off',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'FG3A',
@@ -1553,19 +1404,17 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'off_fta': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
         'domain': 'off',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'FTA',
@@ -1576,19 +1425,17 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'off_ftm': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
         'domain': 'off',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'FTM',
@@ -1599,19 +1446,17 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'off_tovs': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
         'domain': 'off',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'TOV',
@@ -1622,19 +1467,17 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'off_blocks': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
         'domain': 'off',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'BLK',
@@ -1645,19 +1488,16 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'on_opp_2fgm': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'derived': {'math': 'FGM - FG3M', 'fields': ['FGM', 'FG3M']},
@@ -1670,19 +1510,16 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'on_opp_2fga': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'derived': {'math': 'FGA - FG3A', 'fields': ['FGA', 'FG3A']},
@@ -1695,19 +1532,16 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'on_opp_3fgm': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'FG3M',
@@ -1720,19 +1554,16 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'on_opp_3fga': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'FG3A',
@@ -1745,19 +1576,16 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'on_opp_fta': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'FTA',
@@ -1770,19 +1598,16 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'on_opp_ftm': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'FTM',
@@ -1795,19 +1620,16 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'on_opp_tovs': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'TOV',
@@ -1820,19 +1642,17 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'off_opp_2fgm': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
         'domain': 'off',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'derived': {'math': 'FGM - FG3M', 'fields': ['FGM', 'FG3M']},
@@ -1845,19 +1665,17 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'off_opp_2fga': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
         'domain': 'off',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'derived': {'math': 'FGA - FG3A', 'fields': ['FGA', 'FG3A']},
@@ -1870,19 +1688,17 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'off_opp_3fgm': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
         'domain': 'off',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'FG3M',
@@ -1895,19 +1711,17 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'off_opp_3fga': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
         'domain': 'off',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'FG3A',
@@ -1920,19 +1734,17 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'off_opp_fta': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
         'domain': 'off',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'FTA',
@@ -1945,19 +1757,17 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'off_opp_ftm': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
         'domain': 'off',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'FTM',
@@ -1970,19 +1780,17 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'off_opp_tovs': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
         'domain': 'off',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'TOV',
@@ -1998,19 +1806,16 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     'on_o_reb_pct_x1000': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'OREB_PCT',
@@ -2023,19 +1828,16 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'on_d_reb_pct_x1000': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'DREB_PCT',
@@ -2048,19 +1850,17 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'off_o_reb_pct_x1000': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
         'domain': 'off',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'OREB_PCT',
@@ -2073,19 +1873,17 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'off_d_reb_pct_x1000': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'in_season_source',
         'domain': 'off',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'teamplayeronoffdetails',
-                        'tier': 'team_call',
                         'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
                         'player_id_field': 'VS_PLAYER_ID',
                         'field': 'DREB_PCT',
@@ -2098,15 +1896,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'ft_assists': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'tracking',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {
                         'dataset': 'leaguedashptstats',
@@ -2124,15 +1920,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'poss': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player', 'team'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'team': {
                         'dataset': 'leaguedashteamstats',
@@ -2150,15 +1944,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'o_fouls_drawn': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['team'],
         'manager': 'in_season_source',
-        'domain': 'hustle',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'pbp_stats': {
                     'team': {
                         'dataset': 'pbp_team_totals',
@@ -2176,15 +1968,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'assist_points': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['team'],
         'manager': 'in_season_source',
-        'domain': 'tracking',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'pbp_stats': {
                     'team': {
                         'dataset': 'pbp_team_totals',
@@ -2202,15 +1992,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'true_ft_trips': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['team'],
         'manager': 'in_season_source',
-        'domain': 'tracking',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'pbp_stats': {
                     'team': {
                         'dataset': 'pbp_team_totals',
@@ -2234,15 +2022,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'o_pace_x10': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['team'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'pbp_stats': {
                     'team': {
                         'dataset': 'pbp_team_totals',
@@ -2262,15 +2048,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'd_pace_x10': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons', 'player_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['team'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'pbp_stats': {
                     'team': {
                         'dataset': 'pbp_team_totals',
@@ -2294,67 +2078,55 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     'pipeline': {
         'type': 'TEXT',
-        'scope': ['runs', 'tasks'],
+        'tables': ['runs', 'tasks'],
         'nullable': False,
         'default': None,
-        'entity_types': None,
         'manager': 'execution_context',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None,
     },
     'status': {
         'type': 'TEXT',
-        'scope': ['runs', 'tasks'],
+        'tables': ['runs', 'tasks'],
         'nullable': False,
         'default': "'pending'",
-        'entity_types': None,
         'manager': 'execution_context',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None,
     },
     'completed_at': {
         'type': 'TIMESTAMP',
-        'scope': ['runs', 'tasks', 'coverages'],
+        'tables': ['runs', 'tasks', 'coverages'],
         'nullable': True,
         'default': None,
-        'entity_types': None,
         'manager': 'execution_context',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None,
     },
     'total_tasks': {
         'type': 'INTEGER',
-        'scope': ['runs'],
+        'tables': ['runs'],
         'nullable': False,
         'default': '0',
-        'entity_types': None,
         'manager': 'execution_context',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None,
     },
     'completed_tasks': {
         'type': 'INTEGER',
-        'scope': ['runs'],
+        'tables': ['runs'],
         'nullable': False,
         'default': '0',
-        'entity_types': None,
         'manager': 'execution_context',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None,
     },
     'error_message': {
         'type': 'TEXT',
-        'scope': ['runs', 'tasks'],
+        'tables': ['runs', 'tasks'],
         'nullable': True,
         'default': None,
-        'entity_types': None,
         'manager': 'execution_context',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None,
     },
@@ -2365,122 +2137,109 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     'player_id': {
         'type': 'BIGINT',
-        'scope': ['stats', 'rosters'],
+        'tables': ['player_seasons', 'teams_players', 'countries_players'],
         'nullable': False,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'execution_context',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None,
     },
     'team_id': {
         'type': 'BIGINT',
-        'scope': ['stats', 'rosters'],
+        'tables': ['team_seasons', 'player_seasons', 'teams_players', 'leagues_teams'],
         'nullable': False,
         'default': None,
-        'entity_types': ['team'],
         'manager': 'execution_context',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None,
     },
     'league_id': {
         'type': 'BIGINT',
-        'scope': ['rosters', 'stats', 'tasks', 'coverages', 'staging'],
+        'tables': ['leagues_teams', 'team_seasons', 'player_seasons', 'tasks', 'coverages', 'unmatched_teams', 'unmatched_players'],
         'nullable': False,
         'default': None,
-        'entity_types': ['league'],
         'manager': 'execution_context',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None,
     },
-    'source_key': {
+    'sovereign_id': {
+        'type': 'BIGINT',
+        'tables': ['countries'],
+        'nullable': True,
+        'default': None,
+        'manager': 'execution_context',
+        'comment': None,
+        'dataset_mapping': None,
+    },
+    'source': {
         'type': 'TEXT',
-        'scope': ['tasks', 'coverages', 'staging'],
+        'tables': ['tasks', 'coverages', 'unmatched_teams', 'unmatched_players'],
         'nullable': False,
         'default': None,
-        'entity_types': ['team', 'player'],
         'manager': 'execution_context',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None,
     },
     'task_name': {
         'type': 'TEXT',
-        'scope': ['tasks'],
+        'tables': ['tasks'],
         'nullable': False,
         'default': None,
-        'entity_types': None,
         'manager': 'execution_context',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None,
     },
     'dataset': {
         'type': 'TEXT',
-        'scope': ['tasks', 'coverages'],
+        'tables': ['tasks', 'coverages'],
         'nullable': True,
         'default': None,
-        'entity_types': None,
         'manager': 'execution_context',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None,
     },
     'tier': {
         'type': 'TEXT',
-        'scope': ['tasks'],
+        'tables': ['tasks'],
         'nullable': True,
         'default': None,
-        'entity_types': None,
         'manager': 'execution_context',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None,
     },
     'field': {
         'type': 'TEXT',
-        'scope': ['coverages'],
+        'tables': ['coverages'],
         'nullable': False,
         'default': None,
-        'entity_types': None,
         'manager': 'execution_context',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None,
     },
     'params': {
         'type': 'TEXT',
-        'scope': ['tasks', 'coverages'],
+        'tables': ['tasks', 'coverages'],
         'nullable': True,
         'default': None,
-        'entity_types': None,
         'manager': 'execution_context',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None,
     },
     'rows_written': {
         'type': 'INTEGER',
-        'scope': ['tasks'],
+        'tables': ['tasks'],
         'nullable': False,
         'default': '0',
-        'entity_types': None,
         'manager': 'execution_context',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None,
     },
     'retry_count': {
         'type': 'INTEGER',
-        'scope': ['tasks'],
+        'tables': ['tasks'],
         'nullable': False,
         'default': '0',
-        'entity_types': None,
         'manager': 'execution_context',
-        'domain': None,
         'comment': None,
         'dataset_mapping': None,
     },
@@ -2492,15 +2251,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     'jersey_num': {
         'type': 'TEXT',
-        'scope': ['rosters', 'staging'],
+        'tables': ['teams_players', 'unmatched_players'],
         'nullable': True,
         'default': None,
-        'entity_types': ['player'],
         'manager': 'perennial_source',
-        'domain': None,
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'player': {'dataset': 'commonallplayers', 'field': 'JERSEY'},
                 },
@@ -2513,15 +2270,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     'opp_fg2m': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['team'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'team': {
                         'dataset': 'leaguedashteamstats',
@@ -2535,15 +2290,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         },
     'opp_fg2a': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['team'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'team': {
                         'dataset': 'leaguedashteamstats',
@@ -2557,15 +2310,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         },
     'opp_fg3m': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['team'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'team': {
                         'dataset': 'leaguedashteamstats',
@@ -2578,15 +2329,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         },
     'opp_fg3a': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['team'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'team': {
                         'dataset': 'leaguedashteamstats',
@@ -2599,15 +2348,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'opp_ftm': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['team'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'team': {
                         'dataset': 'leaguedashteamstats',
@@ -2620,15 +2367,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'opp_fta': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['team'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'team': {
                         'dataset': 'leaguedashteamstats',
@@ -2641,15 +2386,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'opp_assists': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['team'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'team': {
                         'dataset': 'leaguedashteamstats',
@@ -2662,15 +2405,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'opp_turnovers': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['team'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'team': {
                         'dataset': 'leaguedashteamstats',
@@ -2683,15 +2424,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'opp_fouls': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['team'],
         'manager': 'in_season_source',
-        'domain': 'base',
         'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'team': {
                         'dataset': 'leaguedashteamstats',
@@ -2704,13 +2443,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'opp_steals': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['team'],
         'manager': 'in_season_source',
+        'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'team': {
                         'dataset': 'leaguedashteamstats',
@@ -2723,13 +2462,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'opp_blocks': {
         'type': 'SMALLINT',
-        'scope': ['stats'],
+        'tables': ['team_seasons'],
         'nullable': True,
         'default': None,
-        'entity_types': ['team'],
         'manager': 'in_season_source',
+        'comment': None,
         'dataset_mapping': {
-            'nba': {
+            'NBA': {
                 'nba_api': {
                     'team': {
                         'dataset': 'leaguedashteamstats',

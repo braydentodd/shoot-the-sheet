@@ -6,7 +6,7 @@ Bulk-write primitives and high-level row writers used by the executor.
 ID model:
     Profile tables (``profiles.{entity}s`` — e.g. ``profiles.players``)
         - PK: ``the_glass_id`` (auto-allocated by ``profiles.the_glass_id_seq``)
-        - Per-source identity columns: ``{source_key}_id`` (UNIQUE)
+        - Per-source identity columns: ``{source}_id`` (UNIQUE)
         - Conflict key on upsert is the per-source identity column
 
     Stats tables (``stats.{entity}_seasons`` — e.g. ``stats.player_seasons``)
@@ -25,7 +25,7 @@ from src.core.lib.postgres import db_connection, quote_col
 from src.core.definitions.schema import TABLES
 from src.etl.lib.sources_resolver import get_default_external_source, get_source_id_column
 from src.core.lib.tables_resolver import get_table_name
-from src.core.lib.fk_resolver import load_fk_mapping, resolve_fk_value_columns
+from src.etl.lib.fk_resolver import load_fk_mapping, resolve_fk_value_columns
 from src.etl.definitions.execution import DEFAULT_BATCH_SIZE
 
 logger = logging.getLogger(__name__)
@@ -236,27 +236,38 @@ def write_staged_entity_rows(
     data_cols: Set[str] = set()
     for vals in rows.values():
         data_cols.update(vals.keys())
-    data_cols.discard('league_key')
-    data_cols.discard('source_key')
+    data_cols.discard('league_id')
+    data_cols.discard('source')
     data_cols.discard('source_id')
     sorted_data_cols = sorted(data_cols)
-
-    columns = ['league_key', 'source_key', 'source_id'] + sorted_data_cols
-    data: List[tuple] = []
-    for source_id, vals in rows.items():
-        if source_id is None:
-            continue
-        row_values = [league_key, source_key, str(source_id)] + [vals.get(c) for c in sorted_data_cols]
-        data.append(tuple(row_values))
-
-    if not data:
-        return 0
 
     with db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                f"DELETE FROM {table} WHERE league_key = %s AND source_key = %s",
-                (league_key, source_key),
+                f"SELECT the_glass_id FROM {get_table_name('league', 'profiles')} WHERE code = %s",
+                (league_key,),
+            )
+            row = cur.fetchone()
+            league_id = int(row[0]) if row else None
+
+        if league_id is None:
+            raise ValueError(f"League {league_key!r} not found in profiles.leagues")
+
+        columns = ['league_id', 'source', 'source_id'] + sorted_data_cols
+        data: List[tuple] = []
+        for source_id, vals in rows.items():
+            if source_id is None:
+                continue
+            row_values = [league_id, source_key, str(source_id)] + [vals.get(c) for c in sorted_data_cols]
+            data.append(tuple(row_values))
+
+        if not data:
+            return 0
+
+        with conn.cursor() as cur:
+            cur.execute(
+                f"DELETE FROM {table} WHERE league_id = %s AND source = %s",
+                (league_id, source_key),
             )
         return bulk_copy(conn, table, columns, data)
 
@@ -273,29 +284,40 @@ def merge_staged_entity_rows(
     data_cols: Set[str] = set()
     for vals in rows.values():
         data_cols.update(vals.keys())
-    data_cols.discard('league_key')
-    data_cols.discard('source_key')
+    data_cols.discard('league_id')
+    data_cols.discard('source')
     data_cols.discard('source_id')
     sorted_data_cols = sorted(data_cols)
 
-    columns = ['league_key', 'source_key', 'source_id'] + sorted_data_cols
-    data: List[tuple] = []
-    for source_id, vals in rows.items():
-        if source_id is None:
-            continue
-        row_values = [league_key, source_key, str(source_id)] + [vals.get(c) for c in sorted_data_cols]
-        data.append(tuple(row_values))
-
-    if not data:
-        return 0
-
     with db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT the_glass_id FROM {get_table_name('league', 'profiles')} WHERE code = %s",
+                (league_key,),
+            )
+            row = cur.fetchone()
+            league_id = int(row[0]) if row else None
+
+        if league_id is None:
+            raise ValueError(f"League {league_key!r} not found in profiles.leagues")
+
+        columns = ['league_id', 'source', 'source_id'] + sorted_data_cols
+        data: List[tuple] = []
+        for source_id, vals in rows.items():
+            if source_id is None:
+                continue
+            row_values = [league_id, source_key, str(source_id)] + [vals.get(c) for c in sorted_data_cols]
+            data.append(tuple(row_values))
+
+        if not data:
+            return 0
+
         return _bulk_merge_upsert(
             conn,
             table,
             columns,
             data,
-            conflict_columns=['league_key', 'source_key', 'source_id'],
+            conflict_columns=['league_id', 'source', 'source_id'],
         )
 
 
@@ -304,10 +326,10 @@ def write_core_profile_rows(
     rows: Dict[Any, Dict[str, Any]],
     source_key: str,
 ) -> int:
-    """Upsert ``{source_id: {col: val}}`` rows into ``core.{entity}_profiles``.
+    """Upsert ``{source_id: {col: val}}`` rows into ``profiles.{entity}s``.
 
-    Conflict key: ``{source_key}_id`` (UNIQUE).  ``the_glass_id`` is allocated
-    automatically by the core sequence.
+    Conflict key: per-source identity column (UNIQUE).  ``the_glass_id`` is allocated
+    automatically by the sequence.
     """
     table = get_table_name(entity, 'profiles')
     src_col = get_source_id_column(source_key)
@@ -400,7 +422,7 @@ def _write_stats_rows(
         # Leagues are keyed by league_key, not by source_id.
         with conn.cursor() as cur:
             cur.execute(
-                'SELECT the_glass_id FROM profiles.leagues WHERE league_key = %s',
+                f'SELECT the_glass_id FROM {get_table_name("league", "profiles")} WHERE code = %s',
                 (league_key,),
             )
             row = cur.fetchone()

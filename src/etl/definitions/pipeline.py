@@ -8,8 +8,7 @@ to ordered step keys.
 
 from typing import Any, Dict, List
 
-
-RETENTION_SEASONS: int = 6
+from src.core.definitions.stats import RETENTION_SEASONS  # noqa: F401  -- backwards-compatible re-export
 
 VALID_ETL_PHASES = frozenset({'full', 'upsert', 'prune'})
 VALID_ETL_STEP_HANDLERS = frozenset({

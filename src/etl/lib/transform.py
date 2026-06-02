@@ -10,6 +10,8 @@ import logging
 from datetime import date, datetime
 from typing import Any, Callable, Dict, Literal, Union
 
+from src.core.lib.math_evaluator import evaluate
+
 logger = logging.getLogger(__name__)
 
 
@@ -327,15 +329,15 @@ def _op_aggregate(data: Dict[int, Any], op: Dict[str, Any]) -> Dict[int, Any]:
 
 
 def _op_math(data: Dict[int, Any], op: Dict[str, Any]) -> Dict[int, Any]:
-    """Perform arithmetic on extracted fields. Uses eval() with limited variables."""
+    """Perform arithmetic on extracted fields via restricted AST evaluator."""
     expression = op['expression']
     should_round = op.get('round', True)
     result = {}
-    
+
     for eid, field_data in data.items():
         if not isinstance(field_data, dict):
             continue
-            
+
         # Extract first element from lists
         locals_dict = {}
         valid = True
@@ -345,17 +347,17 @@ def _op_math(data: Dict[int, Any], op: Dict[str, Any]) -> Dict[int, Any]:
                 valid = False
                 break
             locals_dict[k] = float(val)
-            
+
         if not valid:
             result[eid] = None
             continue
-            
+
         try:
-            val = eval(expression, {"__builtins__": {}}, locals_dict)
+            val = evaluate(expression, locals_dict)
             result[eid] = round(val) if should_round else val
         except Exception:
             result[eid] = None
-            
+
     return result
 
 

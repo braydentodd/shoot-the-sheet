@@ -10,6 +10,8 @@ for each destination type.
 
 from typing import TypedDict, Dict, List
 
+from src.core.definitions.leagues import LEAGUES
+
 VALID_DESTINATION_ROLES = frozenset({'primary', 'backup'})
 
 class RateLimitsDef(TypedDict):
@@ -33,7 +35,7 @@ class DestinationDef(TypedDict):
 DESTINATIONS: Dict[str, DestinationDef] = {
 
     'google_sheets': {
-        'leagues': ['nba'],
+        'leagues': list(LEAGUES.keys()),
         'role': 'primary',
         'rate_limits': {
             'requests_per_second': 1.0,

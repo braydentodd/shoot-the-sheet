@@ -28,9 +28,8 @@ from src.publish.destinations.sheets.client import (
 )
 from src.publish.lib.calculations import (
     compute_pct_by_rate,
-    evaluate_expression,
 )
-from src.publish.lib.data_populator import (
+from src.publish.lib.row_builder import (
     build_merged_entity_row,
     build_summary_rows,
 )
@@ -495,15 +494,18 @@ def sync_teams_view(ctx, client, spreadsheet, mode='per_possession',
             if dedup_key in seen_opp:
                 continue
             seen_opp.add(dedup_key)
-            formula = col_def.get('values', {}).get('team', {}, {}).get('fn').get('fn')
-            if not formula:
+            formula = col_def.get('values', {}).get('team', {}).get('fn')
+            if not callable(formula):
                 continue
             data_list = _data_by_base.get(base_section)
             if not data_list:
                 continue
             values = []
             for d in data_list:
-                val = evaluate_expression(formula, d, col_def)
+                try:
+                    val = formula(d, None)
+                except (TypeError, ZeroDivisionError, KeyError):
+                    val = None
                 if val is not None:
                     values.append(val)
             if values:

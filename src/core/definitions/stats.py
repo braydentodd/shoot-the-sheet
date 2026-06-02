@@ -45,3 +45,7 @@ SEASON_TYPE_GROUPS: Dict[str, tuple] = {
     'regular_season': ('rs',),
     'postseason':     ('po', 'pi', 'ct')
 }
+
+
+# Global pipeline data-retention policy (seasons).
+RETENTION_SEASONS: int = 6

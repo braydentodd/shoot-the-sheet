@@ -24,8 +24,6 @@ VALID_PG_TYPES = frozenset({
     'SERIAL', 'SMALLINT', 'INTEGER', 'BIGINT', 'VARCHAR', 'TEXT', 'CHAR',
     'BOOLEAN', 'TIMESTAMP', 'DATE', 'NUMERIC', 'REAL', 'DOUBLE PRECISION',
 })
-VALID_ENTITY_TYPES = frozenset({'league', 'player', 'team'})
-VALID_SCOPES = frozenset({'profiles', 'stats', 'rosters', 'staging', 'runs', 'tasks', 'coverages'})
 VALID_REFRESH_MODES = frozenset({'null_only', 'always'})
 VALID_FK_ACTIONS = frozenset({'CASCADE', 'RESTRICT', 'SET NULL', 'NO ACTION'})
 VALID_MANAGERS = frozenset({'db', 'execution_context', 'in_season_source', 'perennial_source'})
@@ -42,17 +40,6 @@ DEFAULT_TYPE_TRANSFORMS: Dict[str, str] = {
     'VARCHAR':  'safe_str',
     'TEXT':     'safe_str',
     'CHAR':     'safe_str',
-}
-
-# Explicit mapping from scope label to PostgreSQL schema name.
-SCOPE_TO_SCHEMA: Dict[str, str] = {
-    'profiles': 'profiles',
-    'stats':    'stats',
-    'rosters':  'rosters',
-    'staging':  'staging',
-    'runs':     'ops',
-    'tasks':    'ops',
-    'coverages': 'ops',
 }
 
 
@@ -98,12 +85,10 @@ class IndexDef(TypedDict):
     columns: List[str]
 
 class TableDef(TypedDict):
-    entity: Union[str, None]
+    entity: str
     schema: Union[str, None]
     primary_key: Union[List[str], None]
     foreign_keys: Union[List[FKDef], None]
-    scope: Union[str, None]
-    source_scopes: Union[List[str], None]
     unique_constraints: Union[List[List[str]], None]
     indexes: Union[List[IndexDef], None]
     source_ids: Union[bool, None]
@@ -123,19 +108,27 @@ TABLES: Dict[str, TableDef] = {
         'schema': 'profiles',
         'primary_key': ['the_glass_id'],
         'foreign_keys': [],
-        'unique_constraints': [['league_key'], ['abbr']],
+        'unique_constraints': [['code']],
         'indexes': [],
-        'scope': 'profiles',
-        'source_ids': True,
+        'source_ids': False,
     },
     'teams': {
         'entity': 'team',
         'schema': 'profiles',
         'primary_key': ['the_glass_id'],
-        'foreign_keys': [],
+        'foreign_keys': [
+            {
+                'column':     'country_id',
+                'ref_schema': 'profiles',
+                'ref_table':  'countries',
+                'ref_column': 'the_glass_id',
+                'strategy':   'profile_lookup',
+                'on_update':  'CASCADE',
+                'on_delete':  'SET NULL',
+            },
+        ],
         'unique_constraints': None,
         'indexes': [],
-        'scope': 'profiles',
         'source_ids': True,
     },
     'players': {
@@ -145,8 +138,26 @@ TABLES: Dict[str, TableDef] = {
         'foreign_keys': [],
         'unique_constraints': None,
         'indexes': [],
-        'scope': 'profiles',
         'source_ids': True,
+    },
+    'countries': {
+        'entity': 'country',
+        'schema': 'profiles',
+        'primary_key': ['the_glass_id'],
+        'foreign_keys': [
+            {
+                'column':     'sovereign_id',
+                'ref_schema': 'profiles',
+                'ref_table':  'countries',
+                'ref_column': 'the_glass_id',
+                'strategy':   'profile_lookup',
+                'on_update':  'CASCADE',
+                'on_delete':  'SET NULL',
+            },
+        ],
+        'unique_constraints': [['code']],
+        'indexes': [],
+        'source_ids': False,
     },
     # ------------------------------------------------------------------
     # STAGING TABLES (profiles schema, transient ingestion)
@@ -158,11 +169,9 @@ TABLES: Dict[str, TableDef] = {
         'foreign_keys': [],
         'unique_constraints': None,
         'indexes': [
-            {'name': 'league_source', 'columns': ['league_id', 'source_key']},
+            {'name': 'league_source', 'columns': ['league_id', 'source']},
             {'name': 'matched_glass_id', 'columns': ['matched_glass_id']},
         ],
-        'scope': 'staging',
-        'source_scopes': ['profiles', 'staging'],
         'source_ids': False,
     },
     'unmatched_players': {
@@ -172,12 +181,10 @@ TABLES: Dict[str, TableDef] = {
         'foreign_keys': [],
         'unique_constraints': None,
         'indexes': [
-            {'name': 'league_source', 'columns': ['league_id', 'source_key']},
+            {'name': 'league_source', 'columns': ['league_id', 'source']},
             {'name': 'matched_glass_id', 'columns': ['matched_glass_id']},
             {'name': 'team_source_id', 'columns': ['team_source_id']},
         ],
-        'scope': 'staging',
-        'source_scopes': ['profiles', 'rosters', 'staging'],
         'source_ids': False,
     },
     # ------------------------------------------------------------------
@@ -209,7 +216,6 @@ TABLES: Dict[str, TableDef] = {
         ],
         'unique_constraints': None,
         'indexes': [],
-        'scope': 'rosters',
         'source_ids': False,
     },
     'teams_players': {
@@ -238,7 +244,34 @@ TABLES: Dict[str, TableDef] = {
         ],
         'unique_constraints': None,
         'indexes': [],
-        'scope': 'rosters',
+        'source_ids': False,
+    },
+    'countries_players': {
+        'entity': 'player',
+        'schema': 'rosters',
+        'primary_key': ['player_id', 'country_id'],
+        'foreign_keys': [
+            {
+                'column':     'player_id',
+                'ref_schema': 'profiles',
+                'ref_table':  'players',
+                'ref_column': 'the_glass_id',
+                'strategy':   'profile_lookup',
+                'on_update':  'CASCADE',
+                'on_delete':  'CASCADE',
+            },
+            {
+                'column':     'country_id',
+                'ref_schema': 'profiles',
+                'ref_table':  'countries',
+                'ref_column': 'the_glass_id',
+                'strategy':   'profile_lookup',
+                'on_update':  'CASCADE',
+                'on_delete':  'CASCADE',
+            },
+        ],
+        'unique_constraints': None,
+        'indexes': [],
         'source_ids': False,
     },
     # ------------------------------------------------------------------
@@ -247,7 +280,7 @@ TABLES: Dict[str, TableDef] = {
     'player_seasons': {
         'entity': 'player',
         'schema': 'stats',
-        'primary_key': ['player_id', 'team_id', 'season', 'season_type'],
+        'primary_key': ['league_id', 'player_id', 'team_id', 'season', 'season_type'],
         'foreign_keys': [
             {
                 'column':     'player_id',
@@ -280,14 +313,13 @@ TABLES: Dict[str, TableDef] = {
         'unique_constraints': None,
         'indexes': [
             {'name': 'season_type_season', 'columns': ['season_type', 'season']},
-        ],
-        'scope': 'stats',
+            ],
         'source_ids': False,
     },
     'team_seasons': {
         'entity': 'team',
         'schema': 'stats',
-        'primary_key': ['team_id', 'season', 'season_type'],
+        'primary_key': ['league_id', 'team_id', 'season', 'season_type'],
         'foreign_keys': [
             {
                 'column':     'team_id',
@@ -312,14 +344,13 @@ TABLES: Dict[str, TableDef] = {
         'indexes': [
             {'name': 'season_type_season', 'columns': ['season_type', 'season']},
         ],
-        'scope': 'stats',
         'source_ids': False,
     },
     # ------------------------------------------------------------------
     # OPS SCHEMA
     # ------------------------------------------------------------------
     'runs': {
-        'entity': None,
+        'entity': 'run',
         'schema': 'ops',
         'primary_key': ['process_id'],
         'foreign_keys': [],
@@ -327,11 +358,10 @@ TABLES: Dict[str, TableDef] = {
         'indexes': [
             {'name': 'pipeline_status', 'columns': ['pipeline', 'status']},
         ],
-        'scope': 'runs',
         'source_ids': False,
     },
     'tasks': {
-        'entity': None,
+        'entity': 'task',
         'schema': 'ops',
         'primary_key': ['process_id'],
         'foreign_keys': [
@@ -358,13 +388,12 @@ TABLES: Dict[str, TableDef] = {
         'indexes': [
             {'name': 'run_id_status', 'columns': ['run_id', 'status']},
         ],
-        'scope': 'tasks',
         'source_ids': False,
     },
     'coverages': {
-        'entity': None,
+        'entity': 'coverage',
         'schema': 'ops',
-        'primary_key': ['league_id', 'entity_type', 'season', 'season_type', 'source_key', 'dataset', 'field'],
+        'primary_key': ['league_id', 'entity_type', 'season', 'season_type', 'source', 'dataset', 'field'],
         'foreign_keys': [
             {
                 'column':     'league_id',
@@ -378,16 +407,6 @@ TABLES: Dict[str, TableDef] = {
         ],
         'unique_constraints': None,
         'indexes': [],
-        'scope': 'coverages',
         'source_ids': False,
     },
 }
-
-
-# Derived constants (computed once at import time)
-SCHEMAS = frozenset(meta['schema'] for meta in TABLES.values() if meta.get('schema'))
-PROFILE_TABLES = {name: meta for name, meta in TABLES.items() if meta.get('scope') == 'profiles'}
-STATS_TABLES = {name: meta for name, meta in TABLES.items() if meta.get('scope') == 'stats'}
-ROSTER_TABLES = {name: meta for name, meta in TABLES.items() if meta.get('scope') == 'rosters'}
-STAGING_TABLES = {name: meta for name, meta in TABLES.items() if meta.get('scope') == 'staging'}
-OPS_TABLES = {name: meta for name, meta in TABLES.items() if meta.get('schema') == 'ops'}

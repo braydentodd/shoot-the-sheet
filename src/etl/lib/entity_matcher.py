@@ -9,37 +9,29 @@ from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 from psycopg2.extras import RealDictCursor
 
-from src.core.definitions.schema import THE_GLASS_ID
+from src.core.definitions.schema import TABLES, THE_GLASS_ID
 from src.core.lib.tables_resolver import get_table_name
-from src.core.lib.fk_resolver import load_fk_mapping
+from src.etl.lib.fk_resolver import load_fk_mapping
 from src.core.lib.postgres import db_connection, quote_col
 from src.core.definitions.db_columns import DB_COLUMNS
 from src.etl.lib.load import write_core_profile_rows
 
 logger = logging.getLogger(__name__)
 
-# Cache for config-driven column scope lookups
-_SCOPED_CACHE: Dict[Tuple[str, str], set] = {}
+# Cache for config-driven column table lookups
+_TABLE_COLS_CACHE: Dict[str, set] = {}
 
 
-def _get_scoped_columns(scope: str, entity_type: str) -> set:
-    """Return column names that have *scope* in their scope and apply to *entity_type*."""
-    cache_key = (scope, entity_type)
-    if cache_key not in _SCOPED_CACHE:
-        _SCOPED_CACHE[cache_key] = {
+def _get_table_columns(table_name: str) -> set:
+    """Return column names that belong to *table_name* (including 'all' wildcard)."""
+    if table_name not in _TABLE_COLS_CACHE:
+        _TABLE_COLS_CACHE[table_name] = {
             col_name
             for col_name, col_def in DB_COLUMNS.items()
-            if scope in col_def.get('scope', [])
-            and _entity_type_matches(col_def.get('entity_types'), entity_type)
+            if table_name in (col_def.get('tables') or [])
+            or 'all' in (col_def.get('tables') or [])
         }
-    return _SCOPED_CACHE[cache_key]
-
-
-def _entity_type_matches(entity_types, entity_type: str) -> bool:
-    """Check if *entity_type* is covered by *entity_types* (None means all types)."""
-    if entity_types is None:
-        return True
-    return entity_type in entity_types
+    return _TABLE_COLS_CACHE[table_name]
 
 
 def _fetch_staged_rows(
@@ -55,7 +47,7 @@ def _fetch_staged_rows(
             SELECT *
             FROM {table_name}
             WHERE league_id = %s
-              AND source_key = %s
+              AND source = %s
             ORDER BY source_id
             """,
             (league_id, source_key),
@@ -63,17 +55,16 @@ def _fetch_staged_rows(
         return list(cur.fetchall())
 
 
-def _filter_staged_rows_by_scope(
-    entity: str,
+def _filter_staged_rows_by_table(
     rows: Sequence[Dict[str, Any]],
-    scope: str,
+    table_name: str,
 ) -> Dict[Any, Dict[str, Any]]:
-    """Filter staged rows down to columns defined for the given entity and scope.
+    """Filter staged rows down to columns defined for the given table.
 
     The returned mapping is keyed by ``source_id`` so that downstream writers
     can resolve each row to a ``the_glass_id``.
     """
-    scoped_cols = _get_scoped_columns(scope, entity)
+    table_cols = _get_table_columns(table_name)
     result: Dict[Any, Dict[str, Any]] = {}
     for row in rows:
         source_id = row.get('source_id')
@@ -82,7 +73,7 @@ def _filter_staged_rows_by_scope(
         payload = {
             key: value
             for key, value in row.items()
-            if key in scoped_cols
+            if key in table_cols
         }
         result[source_id] = payload
     return result
@@ -93,8 +84,8 @@ def _league_glass_id(conn: Any, league_key: str) -> int:
         cur.execute(
             f"""
             SELECT {quote_col(THE_GLASS_ID)}
-            FROM profiles.leagues
-            WHERE league_key = %s
+            FROM {get_table_name('league', 'profiles')}
+            WHERE code = %s
             """,
             (league_key,),
         )
@@ -128,8 +119,8 @@ def _upsert_roster_rows(conn: Any, rows: Iterable[Dict[str, Any]]) -> int:
     if not values:
         return 0
 
-    pk_cols = ['team_id', 'player_id']
     table = get_table_name('player', 'rosters')
+    pk_cols = TABLES[table.split('.', 1)[1]]['primary_key']
 
     extra_cols = sorted({
         k for row in values for k in row.keys()
@@ -183,8 +174,8 @@ def promote_staged_entities(league_key: str, source_key: str) -> Dict[str, int]:
                 'team_rosters_written': 0,
             }
 
-        teams_promoted = write_core_profile_rows('team', _filter_staged_rows_by_scope('team', team_rows, 'profiles'), source_key)
-        players_promoted = write_core_profile_rows('player', _filter_staged_rows_by_scope('player', player_rows, 'profiles'), source_key)
+        teams_promoted = write_core_profile_rows('team', _filter_staged_rows_by_table(team_rows, 'teams'), source_key)
+        players_promoted = write_core_profile_rows('player', _filter_staged_rows_by_table(player_rows, 'players'), source_key)
 
         team_source_ids = [row['source_id'] for row in team_rows if row.get('source_id') is not None]
         player_source_ids = [row['source_id'] for row in player_rows if row.get('source_id') is not None]
@@ -210,7 +201,7 @@ def promote_staged_entities(league_key: str, source_key: str) -> Dict[str, int]:
             for row in team_rows
             if row.get('source_id') is not None and str(row['source_id']) in team_map
         ]
-        rosters_cols = _get_scoped_columns('rosters', 'player')
+        rosters_cols = _get_table_columns('teams_players')
         roster_value_cols = {c for c in rosters_cols if c not in {'team_id', 'player_id', 'league_id'}}
 
         roster_pairs = [
@@ -230,16 +221,16 @@ def promote_staged_entities(league_key: str, source_key: str) -> Dict[str, int]:
             and str(row['team_source_id']) in team_map
         ]
 
-        league_rosters_written = _upsert_pairs(conn, 'rosters.leagues', ('league_id', 'team_id'), league_roster_pairs)
+        league_rosters_written = _upsert_pairs(conn, get_table_name('team', 'rosters'), ('league_id', 'team_id'), league_roster_pairs)
         team_rosters_written = _upsert_roster_rows(conn, roster_pairs)
 
         with conn.cursor() as cur:
             cur.execute(
-                f"DELETE FROM {get_table_name('team', 'staging')} WHERE league_id = %s AND source_key = %s",
+                f"DELETE FROM {get_table_name('team', 'staging')} WHERE league_id = %s AND source = %s",
                 (league_id, source_key),
             )
             cur.execute(
-                f"DELETE FROM {get_table_name('player', 'staging')} WHERE league_id = %s AND source_key = %s",
+                f"DELETE FROM {get_table_name('player', 'staging')} WHERE league_id = %s AND source = %s",
                 (league_id, source_key),
             )
 

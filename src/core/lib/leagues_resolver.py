@@ -10,8 +10,8 @@ from datetime import datetime
 from typing import List, Tuple
 
 from src.core.definitions.leagues import LEAGUES
+from src.core.definitions.stats import RETENTION_SEASONS
 from src.core.lib.seasons_resolver import format_season_label, parse_season_end_year
-from src.etl.definitions.pipeline import RETENTION_SEASONS
 
 
 def _league_or_raise(league_key: str) -> dict:

@@ -26,6 +26,7 @@ class ApiConfigDef(TypedDict):
 class DatasetDef(TypedDict):
     min_season: Union[str, None]
     execution_tier: str
+    extraction_mode: str
     default_result_set: str
     season_type_param: Union[str, None]
     per_mode_param: Union[str, None]
@@ -108,20 +109,26 @@ DATASETS: Dict[str, DatasetDef] = {
     'leaguedashplayerstats': {
         'min_season': '2003-04',
         'execution_tier': 'per_team',
+        'extraction_mode': 'standard',
         'default_result_set': 'LeagueDashPlayerStats',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_detailed',
         'entity_types': ['player'],
+        'requires_params': None,
         'dataset_type': 'api_endpoint',
+        'season_param': None,
     },
     'leaguedashteamstats': {
         'min_season': '2003-04',
         'execution_tier': 'per_league',
+        'extraction_mode': 'standard',
         'default_result_set': 'LeagueDashTeamStats',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_detailed',
         'entity_types': ['team'],
+        'requires_params': None,
         'dataset_type': 'api_endpoint',
+        'season_param': None,
     },
 
     # --- Player tracking (since 2013-14) ---
@@ -129,12 +136,14 @@ DATASETS: Dict[str, DatasetDef] = {
     'leaguedashptstats': {
         'min_season': '2013-14',
         'execution_tier': 'per_team',
+        'extraction_mode': 'standard',
         'default_result_set': 'LeagueDashPtStats',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_simple',
         'requires_params': ['pt_measure_type'],
         'entity_types': ['player', 'team'],
         'dataset_type': 'api_endpoint',
+        'season_param': None,
     },
 
     # --- Hustle stats (since 2015-16) ---
@@ -142,20 +151,26 @@ DATASETS: Dict[str, DatasetDef] = {
     'leaguehustlestatsplayer': {
         'min_season': '2015-16',
         'execution_tier': 'per_team',
+        'extraction_mode': 'standard',
         'default_result_set': 'HustleStatsPlayer',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_time',
         'entity_types': ['player'],
+        'requires_params': None,
         'dataset_type': 'api_endpoint',
+        'season_param': None,
     },
     'leaguehustlestatsteam': {
         'min_season': '2015-16',
         'execution_tier': 'per_league',
+        'extraction_mode': 'standard',
         'default_result_set': 'HustleStatsTeam',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_time',
         'entity_types': ['team'],
+        'requires_params': None,
         'dataset_type': 'api_endpoint',
+        'season_param': None,
     },
 
     # --- Defensive matchup (since 2013-14) ---
@@ -163,22 +178,26 @@ DATASETS: Dict[str, DatasetDef] = {
     'leaguedashptdefend': {
         'min_season': '2013-14',
         'execution_tier': 'per_team',
+        'extraction_mode': 'standard',
         'default_result_set': 'LeagueDashPtDefend',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_simple',
         'requires_params': ['defense_category'],
         'entity_types': ['player'],
         'dataset_type': 'api_endpoint',
+        'season_param': None,
     },
     'leaguedashptteamdefend': {
         'min_season': '2013-14',
         'execution_tier': 'per_league',
+        'extraction_mode': 'standard',
         'default_result_set': 'LeagueDashPtTeamDefend',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_simple',
         'requires_params': ['defense_category'],
         'entity_types': ['team'],
         'dataset_type': 'api_endpoint',
+        'season_param': None,
     },
 
     # --- Player info (all time) ---
@@ -186,11 +205,14 @@ DATASETS: Dict[str, DatasetDef] = {
     'commonallplayers': {
         'min_season': None,
         'execution_tier': 'per_league',
+        'extraction_mode': 'standard',
         'default_result_set': 'CommonAllPlayers',
         'season_type_param': None,
         'per_mode_param': None,
         'entity_types': ['player'],
+        'requires_params': None,
         'dataset_type': 'api_endpoint',
+        'season_param': None,
     },
 
     # --- Draft combine (since 2000-01) ---
@@ -198,11 +220,13 @@ DATASETS: Dict[str, DatasetDef] = {
     'draftcombineplayeranthro': {
         'min_season': '2000-01',
         'execution_tier': 'per_league',
+        'extraction_mode': 'standard',
         'default_result_set': 'DraftCombinePlayerAnthro',
         'season_param': 'season_year',
         'season_type_param': None,
         'per_mode_param': None,
         'entity_types': ['player'],
+        'requires_params': None,
         'dataset_type': 'api_endpoint',
     },
 
@@ -211,11 +235,14 @@ DATASETS: Dict[str, DatasetDef] = {
     'teamplayeronoffdetails': {
         'min_season': '2007-08',
         'execution_tier': 'per_team',
+        'extraction_mode': 'raw',
         'default_result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
         'season_type_param': 'season_type_all_star',
         'per_mode_param': 'per_mode_detailed',
         'entity_types': ['player'],
+        'requires_params': None,
         'dataset_type': 'api_endpoint',
+        'season_param': None,
     },
 
     # --- Virtual: team metadata (abbreviation + conference) ---
@@ -225,11 +252,14 @@ DATASETS: Dict[str, DatasetDef] = {
     'team_metadata': {
         'min_season': None,
         'execution_tier': 'per_league',
+        'extraction_mode': 'standard',
         'default_result_set': 'TeamMetadata',
         'season_type_param': None,
         'per_mode_param': None,
         'entity_types': ['team'],
+        'requires_params': None,
         'dataset_type': 'virtual',
+        'season_param': None,
     },
 }
 

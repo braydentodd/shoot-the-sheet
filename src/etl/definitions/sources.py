@@ -51,7 +51,7 @@ class SourceDef(TypedDict):
 SOURCES: Dict[str, SourceDef] = {
 
     'nba_api': {
-        'leagues':        ['nba'],
+        'leagues':        ['NBA'],
         'external':       True,
         'entity_id_type': 'BIGINT',
         'id_column':      'nba_id',
@@ -66,7 +66,7 @@ SOURCES: Dict[str, SourceDef] = {
         },
     },
     'pbp_stats': {
-        'leagues':        ['nba'],
+        'leagues':        ['NBA'],
         'external':       True,
         'entity_id_type': 'BIGINT',
         'id_column':      'nba_id',
@@ -82,7 +82,7 @@ SOURCES: Dict[str, SourceDef] = {
             },
         },
     'the_glass_sheets': {
-        'leagues':        ['nba'],
+        'leagues':        ['NBA'],
         'external':       False,
         'entity_id_type': 'BIGINT',
         'id_column':      'the_glass_id',

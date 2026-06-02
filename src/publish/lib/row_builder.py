@@ -1,13 +1,21 @@
+"""
+The Glass - Row Builder
+
+Assembles entity data rows and summary rows for sheet destinations.
+Evaluates formulas, applies scaling, calculates percentile ranks,
+and formats values. 100% config-driven.
+"""
+
 from typing import List, Any, Tuple, Union
 
 from src.publish.definitions.view_columns import VIEW_COLUMNS
 from src.publish.definitions.layout import SECTIONS_CONFIG, SUMMARY_THRESHOLDS
 from src.publish.definitions.stats import DEFAULT_STAT_RATE, STAT_RATES
 from src.publish.lib.column_structure import ColumnContext
-from src.publish.lib.column_structure import _base_section, _format_companion
+from src.publish.lib.column_structure import _base_section
+from src.publish.lib.formatters import _format_companion
 from src.publish.lib.calculations import (
     calculate_entity_stats,
-    evaluate_expression,
     evaluate_formula,
     get_percentile_rank,
 )
@@ -142,8 +150,11 @@ def build_entity_row(entity_data: dict, columns_list: List[Tuple],
 
         # Dynamically-generated opponent column (Teams sheet) — eval directly
         if col_def.get('is_opponent_col'):
-            opp_expr = col_def.get('values', {}).get('team', {}, {}).get('fn').get('fn')
-            value = evaluate_expression(opp_expr, sec_entity)
+            opp_fn = col_def.get('values', {}).get('team', {}).get('fn')
+            try:
+                value = opp_fn(sec_entity, None) if callable(opp_fn) else None
+            except (TypeError, ZeroDivisionError, KeyError):
+                value = None
             _col_mode = col_ctx.rate if isinstance(col_ctx, ColumnContext) and col_ctx.rate else mode
             override = col_def.get('mode_overrides', {}).get(_col_mode)
             active_def = override if override else col_def
@@ -285,8 +296,11 @@ def build_merged_entity_row(player_id, columns_list: List[Tuple],
                             base_col_def = e2[1]
                             break
                     if base_col_def:
-                        opp_expr = base_col_def.get('values', {}).get('team', {}, {}).get('fn').get('fn')
-                        value = evaluate_expression(opp_expr, sec_entity)
+                        opp_fn = base_col_def.get('values', {}).get('team', {}).get('fn')
+                        try:
+                            value = opp_fn(sec_entity, None) if callable(opp_fn) else None
+                        except (TypeError, ZeroDivisionError, KeyError):
+                            value = None
                         if value is not None:
                             reverse = base_col_def.get('percentile') == 'reverse'
                             rank = get_percentile_rank(value, opp_pop, reverse)
@@ -441,7 +455,6 @@ def build_summary_rows(columns_list: List[Tuple],
 
     For each stat column, looks up the value at that percentile threshold.
     Non-stat columns are left blank except 'names' which gets the label.
-    Generated percentile columns show the percentile level itself.
 
     Returns:
         (rows, percentile_cells) where rows is list of 5 row lists,

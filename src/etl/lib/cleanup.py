@@ -10,7 +10,7 @@ Two-phase data hygiene:
                                 retention window.
 
   Phase B: Cross-league profile pruning
-        prune_entities - DELETE rows from ``core.{entity}_profiles``
+        prune_entities - DELETE rows from ``profiles.{entity}s``
                                 that have no stats rows in any league schema
                                 AND no roster history.
 
@@ -24,9 +24,7 @@ from typing import Dict, List
 
 from src.core.lib.postgres import db_connection, get_db_connection, quote_col
 from src.core.definitions.leagues import LEAGUES
-from src.core.definitions.schema import (
-    STATS_TABLES,
-)
+from src.core.definitions.schema import TABLES
 from src.core.definitions.stats import STAT_DOMAINS
 from src.core.lib.leagues_resolver import get_oldest_retained_season
 from src.core.lib.tables_resolver import get_table_name
@@ -41,6 +39,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+_ENTITY_STATS_TABLE = {
+    'player': 'player_seasons',
+    'team': 'team_seasons',
+}
+
+
 def _collect_domain_columns(entity: str) -> Dict[str, List[str]]:
     """Return ``{domain_name: [counter columns]}`` for every non-primary
     domain whose stats apply to ``entity``.
@@ -50,10 +54,15 @@ def _collect_domain_columns(entity: str) -> Dict[str, List[str]]:
     every other column in the domain is nulled to
     keep the row internally consistent.
     """
+    target_table = _ENTITY_STATS_TABLE.get(entity)
+    if not target_table:
+        return {}
     out: Dict[str, List[str]] = {}
     for col_name, col_meta in DB_COLUMNS.items():
-        entity_types = col_meta.get('entity_types') or []
-        if entity not in entity_types:
+        tables = col_meta.get('tables', [])
+        if isinstance(tables, str):
+            tables = [tables]
+        if target_table not in tables:
             continue
         domain = col_meta.get('domain')
         if not domain or domain not in STAT_DOMAINS:
@@ -85,7 +94,7 @@ def normalize_stats_domains(
     if not seasons:
         return 0
 
-    table = get_table_name(entity, 'stats', league_key)
+    table = get_table_name(entity, 'stats')
     domain_cols = _collect_domain_columns(entity)
     if not domain_cols:
         return 0
@@ -141,16 +150,33 @@ def prune_stats_retention(league_key: str, current_season: str) -> int:
     pruned = 0
     with db_connection() as conn:
         with conn.cursor() as cur:
-            for table_name, meta in STATS_TABLES.items():
-                qualified = f'{league_key}.{table_name}'
+            cur.execute(
+                f'SELECT the_glass_id FROM {get_table_name("league", "profiles")} WHERE code = %s',
+                (league_key,),
+            )
+            row = cur.fetchone()
+            league_id = int(row[0]) if row else None
+            if league_id is None:
+                return 0
+
+            _TABLE_ENTITY_MAP = {
+                'player_seasons': 'player', 'team_seasons': 'team',
+            }
+            for table_name, meta in TABLES.items():
+                if meta.get('schema') != 'stats':
+                    continue
+                entity = _TABLE_ENTITY_MAP.get(table_name)
+                if not entity:
+                    continue
+                stats_table = get_table_name(entity, 'stats')
                 cur.execute(
-                    f"DELETE FROM {qualified} WHERE season < %s",
-                    (oldest,),
+                    f"DELETE FROM {stats_table} WHERE league_id = %s AND season < %s",
+                    (league_id, oldest),
                 )
                 if cur.rowcount:
                     logger.info(
-                        'Pruned %d rows from %s (season < %s)',
-                        cur.rowcount, qualified, oldest,
+                        'Pruned %d rows from stats.%s (season < %s)',
+                        cur.rowcount, table_name, oldest,
                     )
                     pruned += cur.rowcount
     return pruned
@@ -167,15 +193,20 @@ def _profile_has_stats_predicate(entity: str) -> str:
     aliases the profile table as ``p``.
     """
     sub_selects: List[str] = []
-    for league_key in sorted(LEAGUES):
-        for table_name, meta in STATS_TABLES.items():
-            if meta['entity'] != entity:
-                continue
-            qualified = f'{league_key}.{table_name}'
-            sub_selects.append(
-                f"SELECT 1 FROM {qualified} s "
-                f"WHERE s.{quote_col('the_glass_id')} = p.{quote_col('the_glass_id')}"
-            )
+    entity_id_col = f'{entity}_id'
+    for table_name, meta in TABLES.items():
+        if meta.get('schema') != 'stats':
+            continue
+        _TABLE_ENTITY_MAP = {
+            'player_seasons': 'player', 'team_seasons': 'team',
+        }
+        if _TABLE_ENTITY_MAP.get(table_name) != entity:
+            continue
+        stats_table = get_table_name(entity, 'stats')
+        sub_selects.append(
+            f"SELECT 1 FROM {stats_table} s "
+            f"WHERE s.{quote_col(entity_id_col)} = p.{quote_col('the_glass_id')}"
+        )
     if not sub_selects:
         return 'FALSE'
     return ' UNION ALL '.join(sub_selects)
@@ -186,10 +217,10 @@ def _delete_pruned_players(cur) -> int:
     stats_pred = _profile_has_stats_predicate('player')
     cur.execute(
         f"""
-        DELETE FROM profiles.players p
+        DELETE FROM {get_table_name('player', 'profiles')} p
         WHERE NOT EXISTS ({stats_pred})
           AND NOT EXISTS (
-              SELECT 1 FROM rosters.teams tr
+              SELECT 1 FROM {get_table_name('player', 'rosters')} tr
               WHERE tr.player_id = p.{quote_col('the_glass_id')}
           )
         """
@@ -202,14 +233,14 @@ def _delete_pruned_teams(cur) -> int:
     stats_pred = _profile_has_stats_predicate('team')
     cur.execute(
         f"""
-        DELETE FROM profiles.teams p
+        DELETE FROM {get_table_name('team', 'profiles')} p
         WHERE NOT EXISTS ({stats_pred})
           AND NOT EXISTS (
-              SELECT 1 FROM rosters.leagues lr
+              SELECT 1 FROM {get_table_name('team', 'rosters')} lr
               WHERE lr.team_id = p.{quote_col('the_glass_id')}
           )
           AND NOT EXISTS (
-              SELECT 1 FROM rosters.teams tr
+              SELECT 1 FROM {get_table_name('player', 'rosters')} tr
               WHERE tr.team_id = p.{quote_col('the_glass_id')}
           )
         """

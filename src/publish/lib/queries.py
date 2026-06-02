@@ -4,10 +4,10 @@ The Glass - Shared Data Access Layer (DAL)
 Read-only SQL helpers used by the publish pipeline.
 
 ID model:
-    Profile tables  -> core.{entity}_profiles  (PK: the_glass_id)
-    Stats tables    -> {league}.{entity}_season_stats
-                       PK includes the_glass_id (and team_id for players)
-    Membership      -> core.league_rosters (league/team), core.team_rosters (team/player)
+    Profile tables  -> profiles.{entity}s  (PK: the_glass_id)
+    Stats tables    -> stats.{entity}_seasons
+                       PK includes league_id, {entity}_id (and team_id for players)
+    Membership      -> rosters.leagues_teams (league/team), rosters.teams_players (team/player)
 
 The "team for a player" is derived from each stats row's ``team_id``
 column, NOT from a column on the profile -- a player can play for several
@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Tuple, Union
 from psycopg2.extras import RealDictCursor
 
 from src.core.lib.postgres import get_db_connection
+from src.core.lib.tables_resolver import get_table_name
 from src.core.definitions.stats import SEASON_TYPE_GROUPS
 
 logger = logging.getLogger(__name__)
@@ -104,16 +105,16 @@ def _split_team_opponent(row: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str,
 
 def get_teams_from_db(league_key: str) -> Dict[int, Tuple[str, str]]:
     """Return ``{the_glass_id: (abbr, name)}`` for teams currently active in
-    ``core.league_rosters`` for ``league_key``.
+    the league-team roster table for ``league_key``.
     """
     sql = f"""
         SELECT t.{_quote_col('the_glass_id')}, t.abbr, t.name
-          FROM profiles.teams t
-          JOIN rosters.leagues lr
+          FROM {get_table_name('team', 'profiles')} t
+          JOIN {get_table_name('team', 'rosters')} lr
             ON lr.team_id = t.{_quote_col('the_glass_id')}
-          JOIN profiles.leagues lp
+          JOIN {get_table_name('league', 'profiles')} lp
             ON lp.{_quote_col('the_glass_id')} = lr.league_id
-         WHERE lp.league_key = %s
+         WHERE lp.code = %s
           ORDER BY t.abbr
     """
     conn = get_db_connection()
@@ -165,7 +166,7 @@ def fetch_players_for_team(
         query = f"""
             SELECT {', '.join(all_fields)}
               FROM {players_tbl} p
-              JOIN rosters.teams tr
+              JOIN {get_table_name('player', 'rosters')} tr
                                 ON tr.player_id = p.{glass_id}
               JOIN {teams_tbl} t
                 ON t.{glass_id} = tr.team_id
@@ -241,7 +242,7 @@ def fetch_all_players(
               FROM {stats_tbl} s
               JOIN {players_tbl} p ON p.{glass_id} = s.{glass_id}
               JOIN {teams_tbl}   t ON t.{glass_id} = s.team_id
-                            LEFT JOIN rosters.teams tr
+                            LEFT JOIN {get_table_name('player', 'rosters')} tr
                                 ON tr.player_id = s.{glass_id}
                              AND tr.team_id = s.team_id
              WHERE s.{season_col_name} = %s AND s.season_type = %s

@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Any, List, Tuple, Union
 
+from src.core.definitions.leagues import LEAGUES
 from src.publish.definitions.view_columns import VIEW_COLUMNS
 from src.publish.definitions.layout import SECTIONS_CONFIG, SUBSECTIONS
 from src.publish.definitions.presentation import PRESENTATION_DEFAULTS
@@ -62,42 +63,6 @@ def _subsection_display_name(subsection: Union[str, None]) -> str:
     return str(key).replace('_', ' ').title()
 
 
-def _strip_trailing_decimal_zeros(s: str) -> str:
-    """Strip trailing zeros from the fractional part only, and the decimal
-    point if nothing remains after it. Leaves digits in the integer part
-    alone (e.g., '+10.0' -> '+10', not '+1')."""
-    if '.' not in s:
-        return s
-    int_part, frac_part = s.split('.', 1)
-    frac_part = frac_part.rstrip('0')
-    return f"{int_part}.{frac_part}" if frac_part else int_part
-
-
-def _format_companion(rank: float, diff: Union[float, None], base_def: dict) -> str:
-    """Format a percentile companion cell as 'rank\\n+/-diff'.
-
-    Displays the percentile rank on the first line and the over/under
-    vs league average (50th percentile value) on the second line.
-    """
-    rank_str = _strip_trailing_decimal_zeros(f"{rank:.1f}")
-
-    if diff is None:
-        return rank_str
-
-    decimals = base_def.get('decimal_places')
-    if decimals is None:
-        decimals = 1
-
-    diff_str = _strip_trailing_decimal_zeros(f"{diff:+.{decimals}f}")
-
-    if diff_str in ('+', '-'):
-        diff_str = '+0'
-    if diff_str == '-0':
-        diff_str = '+0'
-
-    return f"{rank_str}\n{diff_str}"
-
-
 _SEPARATOR_DEF = {
     'is_separator': True,
     'separator_type': 'section',
@@ -112,7 +77,7 @@ _SEPARATOR_DEF = {
     'format': 'text',
     'decimal_places': None,
     'width_class': None,
-    'leagues': ['nba', 'ncaa'],
+    'leagues': list(LEAGUES.keys()),
     'default': None,
     'align': 'center',
     'emphasis': None,
@@ -238,7 +203,7 @@ def get_columns_for_section_and_entity(section: str, entity: str,
     if view_type in ['all_teams', 'teams'] and is_stats_section:
         opp_columns = {}
         for col_key, col_def in columns.items():
-            opp_expr = col_def.get('values', {}).get('opponents', {}, {}).get('fn').get('fn')
+            opp_expr = col_def.get('values', {}).get('opponents', {}).get('fn')
             if opp_expr:
                 opp_def = dict(col_def)
                 opp_def['display_name'] = f"{col_key}"

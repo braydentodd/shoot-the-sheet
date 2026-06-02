@@ -13,7 +13,7 @@ Higher-level concerns live elsewhere by design:
     - schema-aware table resolution     -> src.etl.definitions
     - schema / DDL bootstrap            -> src.etl.lib.ddl
 
-All schemas (``core``, per-league) share a single PostgreSQL instance.
+All schemas share a single PostgreSQL instance.
 """
 
 import logging

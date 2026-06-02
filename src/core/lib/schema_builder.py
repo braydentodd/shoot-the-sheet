@@ -1,5 +1,5 @@
 """
-The Glass - DDL Generator
+The Glass - Schema Builder
 
 Idempotent schema synchronization driven entirely by the central config dicts.
 The generator is purely additive: it CREATEs missing tables and ADDs
@@ -12,72 +12,44 @@ import logging
 from typing import Any, Dict, List, Tuple
 
 from src.core.lib.postgres import get_db_connection, quote_col
-from src.core.definitions.schema import TABLES, SCHEMAS, SEQUENCES
+from src.core.definitions.schema import TABLES, SEQUENCES
 from src.core.definitions.db_columns import DB_COLUMNS
+from src.core.lib.tables_resolver import TABLE_ENTITY
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Source ID column resolution
-# ---------------------------------------------------------------------------
-
-def _get_source_id_columns_for_entity(entity: str) -> List[Tuple[str, str]]:
-    """Source-id columns to add to ``entity``'s profile table, in stable order.
-
-    Imports are deferred to avoid making ``core.lib.ddl`` depend on ETL-layer
-    modules at import time. If ``SOURCES`` ever moves to ``core.definitions``,
-    these can be hoisted to module level.
-    """
-    from src.etl.definitions.sources import SOURCES
-    from src.etl.lib.sources_resolver import get_source_id_column
-
-    columns: List[Tuple[str, str]] = []
-    seen: set = set()
-    for source_key in sorted(SOURCES):
-        meta = SOURCES[source_key]
-        if meta.get('entity_id_type') is None:
-            continue
-        if not meta.get('external', False):
-            continue
-        if entity not in meta.get('applies_to', []):
-            continue
-        col_name = get_source_id_column(source_key)
-        if col_name in seen:
-            continue
-        seen.add(col_name)
-        columns.append((col_name, meta['entity_id_type']))
-    return columns
 
 
 # ---------------------------------------------------------------------------
 # Column-set assembly
 # ---------------------------------------------------------------------------
 
-def _matches(col_meta: Dict[str, Any], scope: str, entity: str) -> bool:
-    """Whether a DB_COLUMNS entry contributes to the given (scope, entity) table."""
-    if scope not in col_meta.get('scope', []):
-        return False
-    if entity is None:
-        return True
-    return entity in (col_meta.get('entity_types') or [])
+def _column_in_table(col_meta: Dict[str, Any], table_name: str) -> bool:
+    """Whether a DB_COLUMNS entry contributes to *table_name*.
+
+    Supports the ``'all'`` wildcard, which means the column belongs to
+    every table.
+    """
+    tables = col_meta.get('tables', [])
+    if isinstance(tables, str):
+        tables = [tables]
+    return table_name in tables or 'all' in tables
 
 
-def _data_columns_for(scope: str, entity: str) -> List[Tuple[str, Dict[str, Any]]]:
+def _data_columns_for_table(table_name: str) -> List[Tuple[str, Dict[str, Any]]]:
     """Return ``[(col_name, col_meta), ...]`` for every matching DB_COLUMNS entry."""
     return [
         (name, meta)
         for name, meta in DB_COLUMNS.items()
-        if _matches(meta, scope, entity)
+        if _column_in_table(meta, table_name)
     ]
 
 
-def _data_columns_for_scopes(scopes: List[str], entity: str) -> List[Tuple[str, Dict[str, Any]]]:
-    """Return matching DB columns across several scopes without duplicates."""
+def _data_columns_for_tables(table_names: List[str]) -> List[Tuple[str, Dict[str, Any]]]:
+    """Return matching DB columns across several tables without duplicates."""
     ordered: List[Tuple[str, Dict[str, Any]]] = []
     seen = set()
-    for scope in scopes:
-        for name, meta in _data_columns_for(scope=scope, entity=entity):
+    for table_name in table_names:
+        for name, meta in _data_columns_for_table(table_name):
             if name in seen:
                 continue
             seen.add(name)
@@ -194,7 +166,11 @@ def _insert_row(
 # Core Schema Build Engine
 # ---------------------------------------------------------------------------
 
-def _get_expected_columns(meta: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any]]]:
+def _get_expected_columns(
+    table_name: str,
+    meta: Dict[str, Any],
+    source_id_columns: Dict[str, List[Tuple[str, str]]] = None,
+) -> List[Tuple[str, Dict[str, Any]]]:
     """Return the complete ordered set of (column_name, column_meta) for a table.
 
     Centralises column resolution so that both ``_create_table`` and
@@ -202,7 +178,6 @@ def _get_expected_columns(meta: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any
     """
     expected: List[Tuple[str, Dict[str, Any]]] = []
     seen: set = set()
-    source_scopes = meta.get('source_scopes') or [meta.get('scope', '')]
 
     for col in meta.get('primary_key') or []:
         expected.append((col, DB_COLUMNS[col]))
@@ -214,13 +189,15 @@ def _get_expected_columns(meta: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any
             expected.append((col, DB_COLUMNS[col]))
             seen.add(col)
 
-    for name, m in _data_columns_for_scopes(scopes=source_scopes, entity=meta.get('entity')):
+    for name, m in _data_columns_for_table(table_name):
         if name not in seen:
             expected.append((name, m))
             seen.add(name)
 
-    if meta.get('source_ids', False) and meta.get('entity'):
-        for src_col, pg_type in _get_source_id_columns_for_entity(meta['entity']):
+    # Derive entity from table name for source-id column injection.
+    entity = TABLE_ENTITY.get(table_name)
+    if meta.get('source_ids', False) and entity:
+        for src_col, pg_type in (source_id_columns or {}).get(entity, []):
             if src_col not in seen:
                 expected.append((src_col, {'type': pg_type}))
                 seen.add(src_col)
@@ -228,23 +205,29 @@ def _get_expected_columns(meta: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any
     return expected
 
 
-def _create_table(cur, schema_name: str, table_name: str, meta: Dict[str, Any]) -> int:
+def _create_table(
+    cur,
+    schema_name: str,
+    table_name: str,
+    meta: Dict[str, Any],
+    source_id_columns: Dict[str, List[Tuple[str, str]]] = None,
+) -> int:
     """Unified CREATE TABLE builder driven strictly by registry config."""
     fragments: List[str] = []
     pk_cols = set(meta.get('primary_key') or [])
 
-    for col_name, col_meta in _get_expected_columns(meta):
+    for col_name, col_meta in _get_expected_columns(table_name, meta, source_id_columns=source_id_columns):
         fragments.append(_column_ddl(col_name, col_meta))
 
     # Column-level UNIQUE constraints (from DB_COLUMNS 'unique' flag)
-    source_scopes = meta.get('source_scopes') or [meta.get('scope', '')]
-    for name, m in _data_columns_for_scopes(scopes=source_scopes, entity=meta.get('entity')):
+    for name, m in _data_columns_for_table(table_name):
         if m.get('unique') and name not in pk_cols:
             fragments.append(f"UNIQUE ({quote_col(name)})")
 
     # Source ID UNIQUE constraints
-    if meta.get('source_ids', False) and meta.get('entity'):
-        for src_col, _ in _get_source_id_columns_for_entity(meta['entity']):
+    entity = TABLE_ENTITY.get(table_name)
+    if meta.get('source_ids', False) and entity:
+        for src_col, _ in (source_id_columns or {}).get(entity, []):
             fragments.append(f"UNIQUE ({quote_col(src_col)})")
 
     # Table-level constraints: PK, FK, multi-column UNIQUE
@@ -305,21 +288,35 @@ def _ensure_updated_at_trigger(cur, schema_name: str, table_name: str) -> None:
     """)
 
 
-def _sync_table(cur, table_name: str, meta: Dict[str, Any], schema_name: str) -> List[str]:
+def _sync_table(
+    cur,
+    table_name: str,
+    meta: Dict[str, Any],
+    schema_name: str,
+    source_id_columns: Dict[str, List[Tuple[str, str]]] = None,
+) -> List[str]:
     """Sync table structure against config; purely additive."""
     actions: List[str] = []
 
     if not _table_exists(cur, schema_name, table_name):
-        n = _create_table(cur, schema_name, table_name, meta)
+        n = _create_table(cur, schema_name, table_name, meta, source_id_columns=source_id_columns)
         _ensure_updated_at_trigger(cur, schema_name, table_name)
         actions.append(f'created ({n} columns)')
         return actions
 
-    expected = _get_expected_columns(meta)
+    expected = _get_expected_columns(table_name, meta, source_id_columns=source_id_columns)
 
     existing_unique_sets = _existing_unique_column_sets(cur, schema_name, table_name)
-    if meta.get('source_ids', False) and meta.get('entity'):
-        for src_col, _ in _get_source_id_columns_for_entity(meta['entity']):
+    _TABLE_ENTITY_MAP = {
+        'leagues': 'league', 'teams': 'team', 'players': 'player',
+        'countries': 'country', 'unmatched_teams': 'team',
+        'unmatched_players': 'player', 'leagues_teams': 'team',
+        'teams_players': 'player', 'countries_players': 'player',
+        'team_seasons': 'team', 'player_seasons': 'player',
+    }
+    entity = _TABLE_ENTITY_MAP.get(table_name)
+    if meta.get('source_ids', False) and entity:
+        for src_col, _ in (source_id_columns or {}).get(entity, []):
             if (src_col,) in existing_unique_sets:
                 continue
             cur.execute(
@@ -368,7 +365,11 @@ def _ensure_sequences(cur, schema_name: str) -> None:
             cur.execute(f"CREATE SEQUENCE IF NOT EXISTS {seq_name}")
 
 
-def ensure_schema(schema_name: str, conn=None) -> Dict[str, List[str]]:
+def ensure_schema(
+    schema_name: str,
+    conn=None,
+    source_id_columns: Dict[str, List[Tuple[str, str]]] = None,
+) -> Dict[str, List[str]]:
     """Build and validate any schema mapped in the TABLES config."""
     own = conn is None
     if own:
@@ -380,11 +381,11 @@ def ensure_schema(schema_name: str, conn=None) -> Dict[str, List[str]]:
             cur.execute(f"CREATE SCHEMA IF NOT EXISTS {schema_name}")
             _ensure_sequences(cur, schema_name)
 
-            for name, meta in TABLES.items():
+            for table_name, meta in TABLES.items():
                 if meta.get('schema') != schema_name:
                     continue
-                qualified = f'{schema_name}.{name}'
-                acts = _sync_table(cur, name, meta, schema_name=schema_name)
+                qualified = f'{schema_name}.{table_name}'
+                acts = _sync_table(cur, table_name, meta, schema_name=schema_name, source_id_columns=source_id_columns)
                 actions[qualified] = acts
                 if acts:
                     logger.info('Table %s: %s', qualified, ', '.join(acts))
@@ -416,18 +417,18 @@ def ensure_league_profile(league_key: str, conn=None) -> Dict[str, List[str]]:
             cfg = LEAGUES[league_key]
 
             vals: Dict[str, Any] = {}
-            for col, col_def in _data_columns_for(scope='profiles', entity='league'):
+            for col, col_def in _data_columns_for_table('leagues'):
                 if col in cfg:
                     vals[col] = cfg[col]
                 elif col_def.get('manager') == 'execution_context':
-                    if col == 'league_key':
+                    if col == 'code':
                         vals[col] = league_key
 
             if not vals:
                 raise ValueError(f"No seedable columns found for league {league_key!r}")
 
             constraints = TABLES['leagues'].get('unique_constraints')
-            conflict_cols = constraints[0] if constraints else ['league_key']
+            conflict_cols = constraints[0] if constraints else ['code']
             _insert_row(cur, 'profiles', 'leagues', vals, conflict_cols)
             actions['profiles.leagues'] = [f"seeded ({', '.join(sorted(vals.keys()))})"]
 
@@ -493,7 +494,11 @@ def _topological_table_order() -> List[Tuple[str, Dict[str, Any]]]:
     return ordered
 
 
-def bootstrap_schema(league_key: str, conn=None) -> Dict[str, List[str]]:
+def bootstrap_schema(
+    league_key: str,
+    conn=None,
+    source_id_columns: Dict[str, List[Tuple[str, str]]] = None,
+) -> Dict[str, List[str]]:
     """Unified bootstrap: ensure all schemas and seed the league profile row.
 
     Tables are created in topological order so cross-schema foreign keys
@@ -509,18 +514,19 @@ def bootstrap_schema(league_key: str, conn=None) -> Dict[str, List[str]]:
         _validate_sequence_coverage()
 
         with conn.cursor() as cur:
+            schemas = sorted({m['schema'] for m in TABLES.values() if m.get('schema')})
             # 1. Create all schemas first
-            for schema_name in sorted(SCHEMAS):
+            for schema_name in schemas:
                 cur.execute(f"CREATE SCHEMA IF NOT EXISTS {schema_name}")
 
             # 2. Create all sequences
-            for schema_name in sorted(SCHEMAS):
+            for schema_name in schemas:
                 _ensure_sequences(cur, schema_name)
 
             # 3. Create tables in FK dependency order
             for table_key, meta in _topological_table_order():
                 schema_name = meta['schema']
-                acts = _sync_table(cur, table_key, meta, schema_name=schema_name)
+                acts = _sync_table(cur, table_key, meta, schema_name=schema_name, source_id_columns=source_id_columns)
                 qualified = f"{schema_name}.{table_key}"
                 actions[qualified] = acts
                 if acts:

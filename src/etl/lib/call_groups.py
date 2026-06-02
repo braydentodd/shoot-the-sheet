@@ -14,7 +14,8 @@ import logging
 from typing import Any, Dict, List, Tuple, Union
 
 from src.core.definitions.db_columns import DB_COLUMNS
-from src.core.definitions.schema import VALID_SCOPES, DEFAULT_TYPE_TRANSFORMS
+from src.core.definitions.schema import DEFAULT_TYPE_TRANSFORMS
+from src.core.lib.tables_resolver import get_table_name, TABLE_ENTITY
 
 logger = logging.getLogger(__name__)
 
@@ -25,39 +26,32 @@ logger = logging.getLogger(__name__)
 
 # Index for get_all_sources_for_entity: {entity_type: [(col_name, col_meta), ...]}
 _COLUMNS_BY_ENTITY: Dict[str, List[Tuple[str, Dict[str, Any]]]] = {}
-# Index for build_call_groups: {(scope, entity_type): [(col_name, col_meta), ...]}
-_COLUMNS_BY_SCOPE_ENTITY: Dict[Tuple[str, str], List[Tuple[str, Dict[str, Any]]]] = {}
+# Index for build_call_groups: {table_name: [(col_name, col_meta), ...]}
+_COLUMNS_BY_TABLE: Dict[str, List[Tuple[str, Dict[str, Any]]]] = {}
 
 for col_name, col_meta in DB_COLUMNS.items():
-    entity_types = col_meta.get('entity_types') or [None]
-    col_scopes = col_meta.get('scope', [])
-    if isinstance(col_scopes, str):
-        col_scopes = [col_scopes]
+    tables = col_meta.get('tables', [])
+    if isinstance(tables, str):
+        tables = [tables]
 
-    for ent in entity_types:
-        ent_key = ent if ent is not None else 'all'
+    entities = set()
+    for t in tables:
+        if t == 'all':
+            entities.update({'league', 'player', 'team', 'country'})
+        else:
+            ent = TABLE_ENTITY.get(t)
+            if ent:
+                entities.add(ent)
 
-        # Populate _COLUMNS_BY_ENTITY
-        _COLUMNS_BY_ENTITY.setdefault(ent_key, []).append((col_name, col_meta))
+    for ent in entities:
+        _COLUMNS_BY_ENTITY.setdefault(ent, []).append((col_name, col_meta))
 
-        # Also populate for 'player' and 'team' if ent is None/all-encompassing
-        if ent is None:
-            _COLUMNS_BY_ENTITY.setdefault('player', []).append((col_name, col_meta))
-            _COLUMNS_BY_ENTITY.setdefault('team', []).append((col_name, col_meta))
-
-        # Populate _COLUMNS_BY_SCOPE_ENTITY
-        for sc in col_scopes:
-            _COLUMNS_BY_SCOPE_ENTITY.setdefault((sc, ent_key), []).append((col_name, col_meta))
-            if ent is None:
-                _COLUMNS_BY_SCOPE_ENTITY.setdefault((sc, 'player'), []).append((col_name, col_meta))
-                _COLUMNS_BY_SCOPE_ENTITY.setdefault((sc, 'team'), []).append((col_name, col_meta))
-            # Support 'both' as a wildcard scope
-            if sc == 'both':
-                for s in VALID_SCOPES:
-                    _COLUMNS_BY_SCOPE_ENTITY.setdefault((s, ent_key), []).append((col_name, col_meta))
-                    if ent is None:
-                        _COLUMNS_BY_SCOPE_ENTITY.setdefault((s, 'player'), []).append((col_name, col_meta))
-                        _COLUMNS_BY_SCOPE_ENTITY.setdefault((s, 'team'), []).append((col_name, col_meta))
+    for t in tables:
+        if t == 'all':
+            for known_table in TABLE_ENTITY.keys():
+                _COLUMNS_BY_TABLE.setdefault(known_table, []).append((col_name, col_meta))
+        else:
+            _COLUMNS_BY_TABLE.setdefault(t, []).append((col_name, col_meta))
 
 
 # ============================================================================
@@ -232,23 +226,24 @@ def build_call_groups(
 
     Walks DB_COLUMNS, groups simple/derived columns that share the same
     (dataset, params) so each batch requires exactly one API call.
-    Multi-call, pipeline, and team_call columns get their own entries.
+    Multi-call and pipeline columns get their own entries.
 
     Args:
-        scope: If set, only include columns whose ``scope`` matches this
-               value or is ``'both'``.
+        scope: If set, only include columns whose source table maps to this
+               scope (e.g. ``'profiles'``, ``'stats'``).
         in_season: If False, excludes in_season_source columns (no games = no stat changes).
                    Columns with manager 'db', 'execution_context', or 'perennial_source'
                    are always included regardless of season state.
 
     Returns a list of dicts, each with:
-        dataset, params, tier, columns ({col_name: enriched_source})
+        dataset, params, tier, extraction_mode, columns ({col_name: enriched_source})
     """
     simple_groups: Dict[tuple, Dict[str, Dict[str, Any]]] = {}
     special: List[Dict[str, Any]] = []
 
     if scope:
-        matched_cols = _COLUMNS_BY_SCOPE_ENTITY.get((scope, entity), [])
+        table_name = get_table_name(entity, scope).split('.', 1)[1]
+        matched_cols = _COLUMNS_BY_TABLE.get(table_name, [])
     else:
         matched_cols = _COLUMNS_BY_ENTITY.get(entity, [])
 
@@ -279,13 +274,15 @@ def build_call_groups(
                 'dataset': ds,
                 'params': enriched.get('params', {}),
                 'tier': tier_for_source(enriched, ds, datasets),
+                'extraction_mode': datasets.get(ds, {}).get('extraction_mode', 'standard'),
                 'columns': {col_name: enriched},
             })
-        elif enriched.get('tier') in ('per_team', 'team_call'):
+        elif enriched.get('tier') == 'per_team':
             special.append({
                 'dataset': ds,
                 'params': enriched.get('params', {}),
                 'tier': enriched.get('tier'),
+                'extraction_mode': datasets.get(ds, {}).get('extraction_mode', 'standard'),
                 'columns': {col_name: enriched},
             })
         else:
@@ -303,6 +300,7 @@ def build_call_groups(
             'dataset': ds,
             'params': dict(frozen_params),
             'tier': tier_for_dataset(ds, datasets),
+            'extraction_mode': datasets.get(ds, {}).get('extraction_mode', 'standard'),
             'columns': cols,
             'removed_refresh_mode': removed_refresh_mode,
         })
@@ -310,7 +308,6 @@ def build_call_groups(
     # Merge special-tier columns that share dataset + params into one group.
     special_merged: Dict[str, Dict[tuple, Dict[str, Any]]] = {
         'per_team': {},
-        'team_call': {},
     }
     for item in special:
         tier = item['tier']
@@ -331,10 +328,12 @@ def build_call_groups(
 
     for tier, merged in special_merged.items():
         for bucket in merged.values():
+            ds = bucket['dataset']
             groups.append({
-                'dataset': bucket['dataset'],
+                'dataset': ds,
                 'params': bucket['params'],
                 'tier': tier,
+                'extraction_mode': datasets.get(ds, {}).get('extraction_mode', 'standard'),
                 'columns': bucket['columns'],
                 'removed_refresh_mode': 'null_only',
             })

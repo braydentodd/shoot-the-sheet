@@ -118,3 +118,39 @@ def format_section_header(section: str, historical_config: Union[dict, None] = N
         timeframe_str = f"(Previous {num} Seasons)"
 
     return f"{season_label} Stats{rate_str} {timeframe_str}"
+
+
+def _strip_trailing_decimal_zeros(s: str) -> str:
+    """Strip trailing zeros from the fractional part only, and the decimal
+    point if nothing remains after it. Leaves digits in the integer part
+    alone (e.g., '+10.0' -> '+10', not '+1')."""
+    if '.' not in s:
+        return s
+    int_part, frac_part = s.split('.', 1)
+    frac_part = frac_part.rstrip('0')
+    return f"{int_part}.{frac_part}" if frac_part else int_part
+
+
+def _format_companion(rank: float, diff: Union[float, None], base_def: dict) -> str:
+    """Format a percentile companion cell as 'rank\n+/-diff'.
+
+    Displays the percentile rank on the first line and the over/under
+    vs league average (50th percentile value) on the second line.
+    """
+    rank_str = _strip_trailing_decimal_zeros(f"{rank:.1f}")
+
+    if diff is None:
+        return rank_str
+
+    decimals = base_def.get('decimal_places')
+    if decimals is None:
+        decimals = 1
+
+    diff_str = _strip_trailing_decimal_zeros(f"{diff:+.{decimals}f}")
+
+    if diff_str in ('+', '-'):
+        diff_str = '+0'
+    if diff_str == '-0':
+        diff_str = '+0'
+
+    return f"{rank_str}\n{diff_str}"

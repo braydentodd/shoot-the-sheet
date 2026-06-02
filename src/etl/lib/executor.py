@@ -4,9 +4,9 @@ The Glass - ETL Execution Engine
 Executes a single call group against a configured source, routing to the
 correct strategy based on the group's execution tier:
 
-  - league_wide:   one API call returns all entities at once
-  - team / player: per-entity API calls (with aggregation when needed)
-  - team_call:     one per-team call returning player-level data
+  - per_league: one API call returns all entities at once
+  - per_team:   per-team API calls (with aggregation when needed)
+  - per_player: per-player API calls (with aggregation when needed)
 
 This module is the workhorse for API-driven phases.  Phase ordering lives
 in :mod:`src.etl.orchestrator`; the CLI lives in :mod:`src.etl.cli`.
@@ -317,8 +317,8 @@ def _execute_pipeline_column(
     """Execute a transformation pipeline for a single column."""
     pipeline_config = source['extraction_config']
     tier = pipeline_config.get('tier', 'per_league')
-    
-    if tier in ('player', 'team'):
+
+    if tier in ('per_player', 'per_team'):
         return _execute_pipeline_per_entity(col_name, source, ctx, failed, conn=conn)
 
     def pipeline_fetcher(ds, extra_params, tr):
@@ -428,7 +428,7 @@ def _execute_per_entity(
     columns: Dict[str, Dict[str, Any]],
     ctx: ExecutionContext,
     failed: List[Dict[str, Any]],
-    tier: str = 'player',
+    tier: str = 'per_player',
     removed_refresh_mode: str = 'null_only',
     conn=None,
 ) -> int:
@@ -437,11 +437,11 @@ def _execute_per_entity(
     Iterates over all known entities in the DB, calls the dataset once
     per entity, and extracts simple columns.
 
-    When *tier* is ``'team'``, passes ``team_id`` (from ``ctx.team_ids``)
+    When *tier* is ``'per_team'``, passes ``team_id`` (from ``ctx.team_ids``)
     instead of ``{entity}_id``, and iterates over team source IDs rather
     than entity source IDs.
     """
-    if tier == 'team':
+    if tier == 'per_team':
         source_ids = list(ctx.team_ids.values())
         if not source_ids:
             return 0
@@ -467,7 +467,7 @@ def _execute_per_entity(
     all_rows: Dict[int, Dict[str, Any]] = {}
     written_count = 0
     consecutive_failures = 0
-    id_param = 'team_id' if tier == 'team' else f'{ctx.entity}_id'
+    id_param = 'team_id' if tier == 'per_team' else f'{ctx.entity}_id'
 
     for idx, sid in enumerate(source_ids):
         try:
@@ -499,7 +499,7 @@ def _execute_per_entity(
             id_aliases=ctx.id_aliases,
         )
 
-        if tier == 'team':
+        if tier == 'per_team':
             # Per-team calls: inject the queried team_id and write immediately
             # so traded players get one row per stint instead of overwriting.
             for row in extracted.values():
@@ -554,13 +554,18 @@ def execute_group(
 
     written = 0
 
-    # Normalize execution_tier values: per_team -> team, per_player -> player
-    if tier.startswith('per_'):
-        tier = tier[4:]
-
-    if tier == 'team_call':
+    if tier == 'per_team' and group.get('extraction_mode') == 'raw':
         written += _execute_team_call(dataset, params, columns, ctx, failed, conn=conn)
-    elif tier in ('team', 'player'):
+    elif tier == 'per_team':
+        if simple:
+            written += _execute_per_entity(
+                dataset, simple, ctx, failed, tier,
+                removed_refresh_mode=group.get('removed_refresh_mode', 'null_only'),
+                conn=conn,
+            )
+        for col_name, source in pipelines.items():
+            written += _execute_pipeline_column(col_name, source, ctx, failed, conn=conn)
+    elif tier == 'per_player':
         if simple:
             written += _execute_per_entity(
                 dataset, simple, ctx, failed, tier,

@@ -7,6 +7,7 @@ modifying the main src/cli.py.
 """
 
 from src.core.lib.terminal import HelpFormatter
+from src.core.definitions.leagues import LEAGUES
 from src.publish.definitions.destinations import DESTINATIONS
 from src.publish.definitions.stats import (
     DEFAULT_STAT_RATE,
@@ -29,7 +30,7 @@ def add_subparser(subparsers) -> None:
         help='Destination to publish to.',
     )
     p.add_argument(
-        '--league', choices=sorted({'nba', 'ncaa'}), required=True,
+        '--league', choices=sorted(LEAGUES), required=True,
         help='League to sync.',
     )
     p.add_argument(
