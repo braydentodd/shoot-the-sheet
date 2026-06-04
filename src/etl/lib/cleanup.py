@@ -24,7 +24,7 @@ from typing import Dict, List
 
 from src.core.lib.postgres import db_connection, get_db_connection, quote_col
 from src.core.definitions.leagues import LEAGUES
-from src.core.definitions.schema import TABLES
+from src.core.definitions.schema import TABLES, TABLE_ENTITY
 from src.core.definitions.stats import STAT_DOMAINS
 from src.core.lib.leagues_resolver import get_oldest_retained_season
 from src.core.definitions.db_columns import DB_COLUMNS
@@ -38,10 +38,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-_ENTITY_STATS_TABLE = {
-    'player': 'player_seasons',
-    'team': 'team_seasons',
-}
+def _stats_table_for_entity(entity: str) -> Union[str, None]:
+    """Return the bare stats table name for *entity* (e.g. 'player' -> 'player_seasons')."""
+    for table_name, meta in TABLES.items():
+        if meta.get('schema') == 'stats' and TABLE_ENTITY.get(table_name) == entity:
+            return table_name
+    return None
 
 
 def _collect_domain_columns(entity: str) -> Dict[str, List[str]]:
@@ -53,7 +55,7 @@ def _collect_domain_columns(entity: str) -> Dict[str, List[str]]:
     every other column in the domain is nulled to
     keep the row internally consistent.
     """
-    target_table = _ENTITY_STATS_TABLE.get(entity)
+    target_table = _stats_table_for_entity(entity)
     if not target_table:
         return {}
     out: Dict[str, List[str]] = {}
@@ -93,8 +95,10 @@ def normalize_stats_domains(
     if not seasons:
         return 0
 
-    _STATS_TABLES = {'player': 'stats.player_seasons', 'team': 'stats.team_seasons'}
-    table = _STATS_TABLES[entity]
+    stats_bare = _stats_table_for_entity(entity)
+    if not stats_bare:
+        return 0
+    table = f'stats.{stats_bare}'
     domain_cols = _collect_domain_columns(entity)
     if not domain_cols:
         return 0
@@ -159,13 +163,10 @@ def prune_stats_retention(league_key: str, current_season: str) -> int:
             if league_id is None:
                 return 0
 
-            _TABLE_ENTITY_MAP = {
-                'player_seasons': 'player', 'team_seasons': 'team',
-            }
             for table_name, meta in TABLES.items():
                 if meta.get('schema') != 'stats':
                     continue
-                entity = _TABLE_ENTITY_MAP.get(table_name)
+                entity = TABLE_ENTITY.get(table_name)
                 if not entity:
                     continue
                 cur.execute(
@@ -196,10 +197,7 @@ def _profile_has_stats_predicate(entity: str) -> str:
     for table_name, meta in TABLES.items():
         if meta.get('schema') != 'stats':
             continue
-        _TABLE_ENTITY_MAP = {
-            'player_seasons': 'player', 'team_seasons': 'team',
-        }
-        if _TABLE_ENTITY_MAP.get(table_name) != entity:
+        if TABLE_ENTITY.get(table_name) != entity:
             continue
         sub_selects.append(
             f"SELECT 1 FROM stats.{table_name} s "

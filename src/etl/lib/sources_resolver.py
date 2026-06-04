@@ -1,61 +1,15 @@
 """
 The Glass - Source Resolvers
 
-Pure resolvers over :data:`src.etl.definitions.sources.SOURCES` and the
-per-league source-role assignments in
+Pure resolvers over :data:`src.etl.definitions.sources.SOURCES` and
 :data:`src.core.definitions.leagues.LEAGUES`.
 """
 
 from typing import Any, Dict, List, Tuple
 
 from src.core.definitions.leagues import LEAGUES
+from src.etl.definitions.datasets import get_source_entities
 from src.etl.definitions.sources import SOURCES
-
-
-def get_role_config(league_key: str, role: str) -> Dict[str, Any]:
-    """Return the config object for a league source role."""
-    if league_key not in LEAGUES:
-        raise ValueError(f"Unknown league: {league_key!r}")
-
-    league_cfg = LEAGUES[league_key]
-    role_map = league_cfg.get('source_roles')
-    if not isinstance(role_map, dict):
-        raise ValueError(f"League {league_key!r} has invalid source_roles config")
-
-    role_cfg = role_map.get(role)
-    if not isinstance(role_cfg, dict):
-        raise ValueError(f"League {league_key!r} has no source role {role!r} configured")
-
-    return role_cfg
-
-
-def get_source_for_role(league_key: str, role: str) -> str:
-    """Return the source key assigned to a league source role."""
-    role_cfg = get_role_config(league_key, role)
-    
-    if not role_cfg:
-        raise ValueError(f"League {league_key!r} role {role!r} is configured with an empty dict")
-        
-    source_key = list(role_cfg.keys())[0]
-
-    if source_key not in SOURCES:
-        raise ValueError(
-            f"League {league_key!r} role {role!r} source {source_key!r} is not in SOURCES"
-        )
-
-    source_meta = SOURCES[source_key]
-    if not source_meta.get('external'):
-        raise ValueError(
-            f"Source {source_key!r} configured for role {role!r} in {league_key!r} "
-            'has external=False'
-        )
-    if league_key not in source_meta.get('leagues', []):
-        raise ValueError(
-            f"Source {source_key!r} configured for role {role!r} in {league_key!r} "
-            f"does not list {league_key!r} in its leagues"
-        )
-
-    return source_key
 
 
 def get_source_id_column(source_key: str) -> str:
@@ -63,10 +17,10 @@ def get_source_id_column(source_key: str) -> str:
     if source_key not in SOURCES:
         raise ValueError(f"Unknown source: {source_key!r}")
 
-    id_column = SOURCES[source_key].get('id_column')
-    if not id_column:
-        raise ValueError(f"Source {source_key!r} has no configured id_column")
-    return id_column
+    external_id = SOURCES[source_key].get('external_id')
+    if not external_id:
+        raise ValueError(f"Source {source_key!r} has no configured external_id")
+    return external_id
 
 
 def get_external_sources_for_league(league_key: str) -> list[str]:
@@ -77,9 +31,23 @@ def get_external_sources_for_league(league_key: str) -> list[str]:
     sources = [
         source_key
         for source_key, meta in SOURCES.items()
-        if meta.get('external') and league_key in meta.get('leagues', [])
+        if meta.get('external_id') is not None and league_key in meta.get('leagues', {})
     ]
     return sorted(sources)
+
+
+def get_source_league_id(source_key: str, league_key: str) -> str:
+    """Return the source-specific league identifier for a league/source pair."""
+    if source_key not in SOURCES:
+        raise ValueError(f"Unknown source: {source_key!r}")
+    if league_key not in LEAGUES:
+        raise ValueError(f"Unknown league: {league_key!r}")
+    leagues = SOURCES[source_key].get('leagues', {})
+    if league_key not in leagues:
+        raise ValueError(
+            f"Source {source_key!r} does not support league {league_key!r}"
+        )
+    return leagues[league_key]
 
 
 def get_default_external_source(league_key: str) -> str:
@@ -105,17 +73,17 @@ def build_source_id_columns() -> Dict[str, List[Tuple[str, str]]]:
     result: Dict[str, List[Tuple[str, str]]] = {}
     seen: Dict[str, set] = {}
     for source_key, meta in sorted(SOURCES.items()):
-        if meta.get('entity_id_type') is None:
+        if meta.get('id_type') is None:
             continue
-        if not meta.get('external', False):
+        if meta.get('external_id') is None:
             continue
         col_name = get_source_id_column(source_key)
-        for entity in meta.get('applies_to', []):
+        for entity in get_source_entities(source_key):
             seen.setdefault(entity, set())
             if col_name in seen[entity]:
                 continue
             seen[entity].add(col_name)
-            result.setdefault(entity, []).append((col_name, meta['entity_id_type']))
+            result.setdefault(entity, []).append((col_name, meta['id_type']))
     return result
 
 

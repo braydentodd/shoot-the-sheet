@@ -1,20 +1,17 @@
 """
 The Glass - NBA API Source Configuration
 
-Pure data definitions for the ``nba_api`` source: dataset metadata,
-rate limits, season-type mapping, and field-name mappings.
+Pure data definitions for the ``nba_api`` source: season-type mapping,
+rate limits, and field-name mappings.
 
-League-level concerns (current season, retention window, calendar flip)
-live in :mod:`src.core.definitions.leagues.LEAGUES` -- this module is
-purely about how to talk to the source itself.
-
-Validation is folded into :func:`src.etl.config_validation._validate_nba_api`.
+Dataset metadata lives in the unified registry
+(:mod:`src.etl.definitions.datasets`).  This module is purely about
+how to talk to the source itself.
 """
 
-from typing import Any, Dict, TypedDict, List, Union
+from typing import Any, Dict, TypedDict, Union
 
 class ApiConfigDef(TypedDict):
-    league_id: str
     per_mode_simple: str
     per_mode_time: str
     per_mode_detailed: str
@@ -22,18 +19,6 @@ class ApiConfigDef(TypedDict):
     month: str
     opponent_team_id: str
     period: str
-    
-class DatasetDef(TypedDict):
-    min_season: Union[str, None]
-    execution_tier: str
-    extraction_mode: str
-    default_result_set: str
-    season_type_param: Union[str, None]
-    per_mode_param: Union[str, None]
-    entity_types: List[str]
-    requires_params: List[str]
-    dataset_type: str
-    season_param: str
 
 class SeasonTypeDef(TypedDict):
     name: str
@@ -99,172 +84,6 @@ API_CONFIG: ApiConfigDef = {
 
 
 # ============================================================================
-# DATASET DEFINITIONS
-# ============================================================================
-
-DATASETS: Dict[str, DatasetDef] = {
-
-    # --- Basic stats (since 2003-04) ---
-
-    'leaguedashplayerstats': {
-        'min_season': '2003-04',
-        'execution_tier': 'per_team',
-        'extraction_mode': 'standard',
-        'default_result_set': 'LeagueDashPlayerStats',
-        'season_type_param': 'season_type_all_star',
-        'per_mode_param': 'per_mode_detailed',
-        'entity_types': ['player'],
-        'requires_params': None,
-        'dataset_type': 'api_endpoint',
-        'season_param': None,
-    },
-    'leaguedashteamstats': {
-        'min_season': '2003-04',
-        'execution_tier': 'per_league',
-        'extraction_mode': 'standard',
-        'default_result_set': 'LeagueDashTeamStats',
-        'season_type_param': 'season_type_all_star',
-        'per_mode_param': 'per_mode_detailed',
-        'entity_types': ['team'],
-        'requires_params': None,
-        'dataset_type': 'api_endpoint',
-        'season_param': None,
-    },
-
-    # --- Player tracking (since 2013-14) ---
-
-    'leaguedashptstats': {
-        'min_season': '2013-14',
-        'execution_tier': 'per_team',
-        'extraction_mode': 'standard',
-        'default_result_set': 'LeagueDashPtStats',
-        'season_type_param': 'season_type_all_star',
-        'per_mode_param': 'per_mode_simple',
-        'requires_params': ['pt_measure_type'],
-        'entity_types': ['player', 'team'],
-        'dataset_type': 'api_endpoint',
-        'season_param': None,
-    },
-
-    # --- Hustle stats (since 2015-16) ---
-
-    'leaguehustlestatsplayer': {
-        'min_season': '2015-16',
-        'execution_tier': 'per_team',
-        'extraction_mode': 'standard',
-        'default_result_set': 'HustleStatsPlayer',
-        'season_type_param': 'season_type_all_star',
-        'per_mode_param': 'per_mode_time',
-        'entity_types': ['player'],
-        'requires_params': None,
-        'dataset_type': 'api_endpoint',
-        'season_param': None,
-    },
-    'leaguehustlestatsteam': {
-        'min_season': '2015-16',
-        'execution_tier': 'per_league',
-        'extraction_mode': 'standard',
-        'default_result_set': 'HustleStatsTeam',
-        'season_type_param': 'season_type_all_star',
-        'per_mode_param': 'per_mode_time',
-        'entity_types': ['team'],
-        'requires_params': None,
-        'dataset_type': 'api_endpoint',
-        'season_param': None,
-    },
-
-    # --- Defensive matchup (since 2013-14) ---
-
-    'leaguedashptdefend': {
-        'min_season': '2013-14',
-        'execution_tier': 'per_team',
-        'extraction_mode': 'standard',
-        'default_result_set': 'LeagueDashPtDefend',
-        'season_type_param': 'season_type_all_star',
-        'per_mode_param': 'per_mode_simple',
-        'requires_params': ['defense_category'],
-        'entity_types': ['player'],
-        'dataset_type': 'api_endpoint',
-        'season_param': None,
-    },
-    'leaguedashptteamdefend': {
-        'min_season': '2013-14',
-        'execution_tier': 'per_league',
-        'extraction_mode': 'standard',
-        'default_result_set': 'LeagueDashPtTeamDefend',
-        'season_type_param': 'season_type_all_star',
-        'per_mode_param': 'per_mode_simple',
-        'requires_params': ['defense_category'],
-        'entity_types': ['team'],
-        'dataset_type': 'api_endpoint',
-        'season_param': None,
-    },
-
-    # --- Player info (all time) ---
-
-    'commonallplayers': {
-        'min_season': None,
-        'execution_tier': 'per_league',
-        'extraction_mode': 'standard',
-        'default_result_set': 'CommonAllPlayers',
-        'season_type_param': None,
-        'per_mode_param': None,
-        'entity_types': ['player'],
-        'requires_params': None,
-        'dataset_type': 'api_endpoint',
-        'season_param': None,
-    },
-
-    # --- Draft combine (since 2000-01) ---
-
-    'draftcombineplayeranthro': {
-        'min_season': '2000-01',
-        'execution_tier': 'per_league',
-        'extraction_mode': 'standard',
-        'default_result_set': 'DraftCombinePlayerAnthro',
-        'season_param': 'season_year',
-        'season_type_param': None,
-        'per_mode_param': None,
-        'entity_types': ['player'],
-        'requires_params': None,
-        'dataset_type': 'api_endpoint',
-    },
-
-    # --- On/Off court (since 2007-08) ---
-
-    'teamplayeronoffdetails': {
-        'min_season': '2007-08',
-        'execution_tier': 'per_team',
-        'extraction_mode': 'raw',
-        'default_result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
-        'season_type_param': 'season_type_all_star',
-        'per_mode_param': 'per_mode_detailed',
-        'entity_types': ['player'],
-        'requires_params': None,
-        'dataset_type': 'api_endpoint',
-        'season_param': None,
-    },
-
-    # --- Virtual: team metadata (abbreviation + conference) ---
-    # Combines nba_api static teams data with LeagueStandings.
-    # No real NBA API class — handled by fetch_team_metadata() in client.py.
-
-    'team_metadata': {
-        'min_season': None,
-        'execution_tier': 'per_league',
-        'extraction_mode': 'standard',
-        'default_result_set': 'TeamMetadata',
-        'season_type_param': None,
-        'per_mode_param': None,
-        'entity_types': ['team'],
-        'requires_params': None,
-        'dataset_type': 'virtual',
-        'season_param': None,
-    },
-}
-
-
-# ============================================================================
 # API FIELD NAME MAPPINGS
 # ============================================================================
 
@@ -272,5 +91,5 @@ API_FIELD_NAMES: Dict[str, Dict[str, Any]] = {
     'entity_id':   {'player': 'PLAYER_ID', 'team': 'TEAM_ID'},
     'entity_name': {'player': 'PLAYER_NAME', 'team': 'TEAM_NAME'},
     'special_ids': {'person': 'PERSON_ID'},
-    'id_aliases':  {'PLAYER_ID': ['PERSON_ID']},
+    'id_aliases':  {'PLAYER_ID': ['PERSON_ID', 'VS_PLAYER_ID']},
 }

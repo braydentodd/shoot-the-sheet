@@ -306,14 +306,7 @@ def _sync_table(
     expected = _get_expected_columns(table_name, meta, source_id_columns=source_id_columns)
 
     existing_unique_sets = _existing_unique_column_sets(cur, schema_name, table_name)
-    _TABLE_ENTITY_MAP = {
-        'leagues': 'league', 'teams': 'team', 'players': 'player',
-        'countries': 'country', 'unmatched_teams': 'team',
-        'unmatched_players': 'player', 'leagues_teams': 'team',
-        'teams_players': 'player', 'countries_players': 'player',
-        'team_seasons': 'team', 'player_seasons': 'player',
-    }
-    entity = _TABLE_ENTITY_MAP.get(table_name)
+    entity = TABLE_ENTITY.get(table_name)
     if meta.get('source_ids', False) and entity:
         for src_col, _ in (source_id_columns or {}).get(entity, []):
             if (src_col,) in existing_unique_sets:

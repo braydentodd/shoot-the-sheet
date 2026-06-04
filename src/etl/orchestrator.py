@@ -31,6 +31,7 @@ from src.core.lib.terminal import progress
 from src.core.lib.schema_builder import bootstrap_schema
 from src.core.lib.logging import phase_marker
 from src.core.lib.postgres import db_connection, quote_col
+from src.core.lib.seasons_resolver import parse_season_end_year
 from src.etl.lib.sources_resolver import (
     build_source_id_columns,
     get_external_sources_for_league,
@@ -38,9 +39,9 @@ from src.etl.lib.sources_resolver import (
 )
 from src.etl.sources.registry import get_source_modules
 from src.core.definitions.leagues import LEAGUES
+from src.etl.definitions.datasets import DATASETS
 from src.etl.definitions.pipeline import (
     PIPELINE_PHASES,
-    PIPELINE_STEPS,
     VALID_ETL_PHASES,
 )
 from src.etl.definitions.sources import SOURCES
@@ -139,7 +140,6 @@ def _run_groups(
     *,
     league_key: str,
     source_key: str,
-    datasets: dict,
     api_field_names: dict,
     api_config: dict,
     make_fetcher: Callable,
@@ -153,31 +153,32 @@ def _run_groups(
     total_rows = 0
 
     for season in seasons:
-        for ent in entities:
+        for entity in entities:
             if groups_override is not None:
-                groups = groups_override.get((ent, season), [])
+                groups = groups_override.get((entity, season), [])
             else:
                 groups = build_call_groups(
-                    ent, season, source_key, datasets, scope=scope,
+                    entity, season, source_key, scope=scope,
                     league_key=league_key, in_season=in_season,
                 )
             if not groups:
                 continue
 
             logger.info(
-                '%s: %s %s -- %d call groups', scope, ent, season, len(groups),
+                '%s: %s %s -- %d call groups', scope, entity, season, len(groups),
             )
 
+            season_end_year = parse_season_end_year(season, LEAGUES[league_key]['season_format'])
             ctx = ExecutionContext(
-                entity=ent,
+                entity=entity,
                 scope=scope,
                 season=season,
                 season_type=season_type,
                 season_type_name=season_type_name,
-                entity_id_field=api_field_names['entity_id'][ent],
+                entity_id_field=api_field_names['entity_id'][entity],
                 db_schema=league_key,
                 source_key=source_key,
-                api_fetcher=make_fetcher(season, season_type_name, ent),
+                api_fetcher=make_fetcher(league_key, season_end_year, season_type_name, entity),
                 team_ids=team_ids,
                 max_consecutive_failures=api_config.get('max_consecutive_failures', 5),
                 id_aliases=api_field_names.get('id_aliases', {}),
@@ -186,14 +187,14 @@ def _run_groups(
             with db_connection() as conn:
                 league_id = _resolve_league_id(conn, league_key)
                 run_process_id, work_items = resolve_work(
-                    conn, OPS_SCHEMA, ent, season, season_type, groups,
+                    conn, OPS_SCHEMA, entity, season, season_type, groups,
                     True, league_id=league_id,
                 )
 
                 entity_rows = 0
                 failed_before = len(failed)
                 succeeded_groups: List[Dict[str, Any]] = []
-                bar_desc = f'{scope}/{ent}/{season}'
+                bar_desc = f'{scope}/{entity}/{season}'
                 try:
                     with progress(
                         total=len(work_items),
@@ -228,7 +229,7 @@ def _run_groups(
                     complete_run(conn, OPS_SCHEMA, run_process_id)
                     if on_entity_finished is not None:
                         on_entity_finished(
-                            ent,
+                            entity,
                             season,
                             succeeded_groups,
                             entity_rows,
@@ -264,19 +265,27 @@ def _stage_profiles(
     )
 
 
+def _get_roster_dataset(league_key: str, source_key: str) -> Union[str, None]:
+    """Return the first roster_maintainer dataset for a league/source pair."""
+    for ds_name, ds_cfg in DATASETS.get(source_key, {}).items():
+        if ds_cfg.get('role') == 'roster_maintainer' and league_key in ds_cfg.get('leagues', []):
+            return ds_name
+    return None
+
+
 def _stage_rosters_phase(
     league_key: str,
     source_key: str,
     season: str,
     season_type_name: str,
     client_mod: Any,
-    roster_snapshot: Dict[str, Any],
+    dataset: Union[str, None],
     failed: List[Dict[str, Any]],
 ) -> int:
     """Phase: pull a roster snapshot from the source and stage it.
 
     The source client must expose ``fetch_roster_memberships(league_key, season,
-    season_type_name, roster_snapshot)`` returning an iterable of
+    season_type_name, dataset)`` returning an iterable of
     ``(team_source_id, player_source_id[, jersey_num])`` tuples.
     Sources that don't support this skip silently.
     """
@@ -291,7 +300,7 @@ def _stage_rosters_phase(
         return 0
 
     try:
-        roster_pairs = fetcher(league_key, season, season_type_name, roster_snapshot)
+        roster_pairs = fetcher(league_key, season, season_type_name, dataset)
     except Exception as exc:
         logger.exception(
             'Roster staging snapshot for %s/%s failed: %s', league_key, source_key, exc,
@@ -324,7 +333,7 @@ def _stage_and_match_entities(
         **source_kw,
     )
 
-    roster_snapshot: Dict[str, Any] = {}
+    dataset = _get_roster_dataset(source_kw['league_key'], source_kw['source_key'])
     for sync_season in seasons:
         total_rows += _stage_rosters_phase(
             source_kw['league_key'],
@@ -332,7 +341,7 @@ def _stage_and_match_entities(
             sync_season,
             season_type_name,
             client_mod,
-            roster_snapshot,
+            dataset,
             failed,
         )
 
@@ -362,12 +371,11 @@ def _backfill(
     groups_to_run: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
     with db_connection() as conn:
         for season in seasons:
-            for ent in entities:
+            for entity in entities:
                 groups = build_call_groups(
-                    ent,
+                    entity,
                     season,
                     source_kw['source_key'],
-                    source_kw['datasets'],
                     scope='stats',
                     league_key=source_kw['league_key'],
                     in_season=in_season,
@@ -379,7 +387,7 @@ def _backfill(
                     if not is_group_coverage_current(
                         conn,
                         source_kw['league_key'],
-                        ent,
+                        entity,
                         season,
                         season_type,
                         source_kw['source_key'],
@@ -389,17 +397,17 @@ def _backfill(
                 if not non_current:
                     logger.info(
                         'Skipping backfill %s/%s (%s): all groups current',
-                        ent, season, source_kw['source_key'],
+                        entity, season, source_kw['source_key'],
                     )
                     continue
-                groups_to_run[(ent, season)] = non_current
+                groups_to_run[(entity, season)] = non_current
 
     if not groups_to_run:
         logger.info('Backfill skipped: all previous seasons are already complete')
         return 0
 
     def _on_backfill_finished(
-        ent: str,
+        entity: str,
         completed_season: str,
         succeeded_groups: List[Dict[str, Any]],
         entity_rows: int,
@@ -409,13 +417,13 @@ def _backfill(
         if had_failures:
             logger.warning(
                 'Backfill coverage partially recorded for %s/%s (%d succeeded, had failures)',
-                ent, completed_season, len(succeeded_groups),
+                entity, completed_season, len(succeeded_groups),
             )
         for group in succeeded_groups:
             upsert_group_coverage(
                 tracker_conn,
                 source_kw['league_key'],
-                ent,
+                entity,
                 completed_season,
                 season_type,
                 source_kw['source_key'],
@@ -423,7 +431,7 @@ def _backfill(
             )
         logger.info(
             'Backfill coverage recorded for %s/%s (%s groups, %s rows)',
-            ent, completed_season, len(succeeded_groups), entity_rows,
+            entity, completed_season, len(succeeded_groups), entity_rows,
         )
 
     return _run_groups(
@@ -448,7 +456,7 @@ def _update_current(
     logger.info(phase_marker('update', f'season={season}'))
 
     def _on_update_finished(
-        ent: str,
+        entity: str,
         completed_season: str,
         succeeded_groups: List[Dict[str, Any]],
         entity_rows: int,
@@ -458,13 +466,13 @@ def _update_current(
         if had_failures:
             logger.warning(
                 'Update coverage partially recorded for %s/%s (%d succeeded, had failures)',
-                ent, completed_season, len(succeeded_groups),
+                entity, completed_season, len(succeeded_groups),
             )
         for group in succeeded_groups:
             upsert_group_coverage(
                 tracker_conn,
                 source_kw['league_key'],
-                ent,
+                entity,
                 completed_season,
                 season_type,
                 source_kw['source_key'],
@@ -472,7 +480,7 @@ def _update_current(
             )
         logger.info(
             'Update coverage recorded for %s/%s (%s groups, %s rows)',
-            ent, completed_season, len(succeeded_groups), entity_rows,
+            entity, completed_season, len(succeeded_groups), entity_rows,
         )
 
     return _run_groups(
@@ -483,45 +491,49 @@ def _update_current(
     )
 
 
-def _resolve_stage_seasons(
-    stage: Dict[str, Any],
+def _resolve_handler_seasons(
+    handler: str,
     season: str,
     season_range: List[str],
 ) -> List[str]:
-    """Resolve stage season scope from declarative stage config."""
-    window = stage['season_window']
-    if window == 'current':
-        return [season]
-    if window == 'previous':
+    """Return the seasons a handler should process."""
+    if handler == 'stage_and_match_entities':
+        return season_range
+    if handler == 'backfill_stats':
         return [s for s in season_range if s != season]
-    if window == 'all':
+    if handler in {'update_current_stats', 'prune_stats_retention'}:
+        return [season]
+    if handler == 'normalize_stats_domains':
         return season_range
     return []
 
 
-def _resolve_stage_season_type(
-    stage: Dict[str, Any],
+def _resolve_handler_season_type(
+    handler: str,
     regular_st: str,
     regular_st_name: str,
     requested_st: str,
     requested_st_name: str,
 ) -> Tuple[Union[str, None], Union[str, None]]:
-    """Resolve stage season-type mode from declarative stage config."""
-    mode = stage['season_type_mode']
-    if mode == 'regular':
+    """Return the season-type pair a handler should use."""
+    if handler == 'stage_and_match_entities':
         return regular_st, regular_st_name
-    if mode == 'requested':
-        return requested_st, requested_st_name
-    return None, None
+    if handler in {'prune_stats_retention', 'prune_entities', 'prune_coverages'}:
+        return None, None
+    return requested_st, requested_st_name
 
 
-def _resolve_stage_season_types(
-    stage: Dict[str, Any],
+def _resolve_handler_season_types(
+    handler: str,
     regular_st: str,
     all_season_types: List[str],
 ) -> List[str]:
-    """Return the list of season types to process for a stage."""
-    return all_season_types if stage['season_type_mode'] == 'requested' else [regular_st]
+    """Return the list of season types a handler should process."""
+    if handler == 'stage_and_match_entities':
+        return [regular_st]
+    if handler in {'prune_stats_retention', 'prune_entities', 'prune_coverages'}:
+        return [regular_st]
+    return all_season_types
 
 
 def _resolve_source_season_type_names(
@@ -645,7 +657,6 @@ def run_etl(
             source_bundle_cache[stage_source_key] = {
                 'config_mod': cfg_mod,
                 'client_mod': cli_mod,
-                'datasets': cfg_mod.DATASETS,
                 'api_config': cfg_mod.API_CONFIG,
                 'api_field_names': cfg_mod.API_FIELD_NAMES,
             }
@@ -660,16 +671,14 @@ def run_etl(
             )
         return team_ids_cache[stage_source_key]
 
-    configured_steps = PIPELINE_PHASES.get(phase, [])
+    configured_handlers = PIPELINE_PHASES.get(phase, [])
 
-    for stage_name in configured_steps:
-        stage = PIPELINE_STEPS[stage_name]
-        handler = stage['handler']
+    for handler in configured_handlers:
         stage_entities = requested_entities
 
-        stage_seasons = _resolve_stage_seasons(stage, season, season_range)
+        stage_seasons = _resolve_handler_seasons(handler, season, season_range)
         if not stage_seasons:
-            logger.info('Skipping stage %s: no seasons resolved', stage_name)
+            logger.info('Skipping handler %s: no seasons resolved', handler)
             continue
         if handler in {'stage_and_match_entities', 'backfill_stats', 'update_current_stats'}:
             stage_source_keys = execution_source_keys
@@ -678,14 +687,14 @@ def run_etl(
                 stage_bundle = _get_source_bundle(stage_source_key)
                 stage_team_ids = _get_team_ids_for_source(stage_source_key)
 
-                for st in _resolve_stage_season_types(stage, regular_st, all_season_types):
+                for st in _resolve_handler_season_types(handler, regular_st, all_season_types):
                     regular_st_name, requested_st_name = _resolve_source_season_type_names(
                         stage_bundle,
                         regular_st,
                         st,
                     )
-                    stage_st, stage_st_name = _resolve_stage_season_type(
-                        stage,
+                    stage_st, stage_st_name = _resolve_handler_season_type(
+                        handler,
                         regular_st,
                         regular_st_name,
                         st,
@@ -695,7 +704,6 @@ def run_etl(
                     stage_source_kw = dict(
                         league_key=league_key,
                         source_key=stage_source_key,
-                        datasets=stage_bundle['datasets'],
                         api_field_names=stage_bundle['api_field_names'],
                         api_config=stage_bundle['api_config'],
                         make_fetcher=stage_bundle['client_mod'].make_fetcher,
@@ -703,7 +711,7 @@ def run_etl(
                     )
                     stage_client_mod = stage_bundle['client_mod']
 
-                    logger.info(phase_marker(stage_name, f'source={stage_source_key} season_type={st}'))
+                    logger.info(phase_marker(handler, f'source={stage_source_key} season_type={st}'))
 
                     if handler == 'stage_and_match_entities':
                         total_rows += _stage_and_match_entities(
@@ -737,19 +745,18 @@ def run_etl(
                             **stage_source_kw,
                         )
         elif handler == 'normalize_stats_domains':
-            logger.info(phase_marker(stage_name))
-            for st in _resolve_stage_season_types(stage, regular_st, all_season_types):
-                for ent in stage_entities:
-                    # Item 5: batch normalize_stats by season list
-                    total_rows += normalize_stats_domains(league_key, ent, stage_seasons, st)
+            logger.info(phase_marker(handler))
+            for st in _resolve_handler_season_types(handler, regular_st, all_season_types):
+                for entity in stage_entities:
+                    total_rows += normalize_stats_domains(league_key, entity, stage_seasons, st)
         elif handler == 'prune_stats_retention':
-            logger.info(phase_marker(stage_name))
+            logger.info(phase_marker(handler))
             total_rows += prune_stats_retention(league_key, stage_seasons[0])
         elif handler == 'prune_entities':
-            logger.info(phase_marker(stage_name))
+            logger.info(phase_marker(handler))
             total_rows += prune_entities()
         elif handler == 'prune_coverages':
-            logger.info(phase_marker(stage_name))
+            logger.info(phase_marker(handler))
             total_rows += prune_coverages(league_key)
         else:
             raise ValueError(

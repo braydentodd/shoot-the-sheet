@@ -16,7 +16,7 @@ columns (e.g. ``nba_api_id``) are emitted directly by the DDL generator
 (see src/core/lib/ddl.py); they are intentionally not represented here.
 """
 
-from typing import Dict, List, TypedDict, Union, Literal
+from typing import Any, Dict, List, TypedDict, Union, Literal
 
 
 class MultiSeasonConfig(TypedDict, total=False):
@@ -25,8 +25,11 @@ class MultiSeasonConfig(TypedDict, total=False):
 
 class DatasetMapping(TypedDict, total=False):
     dataset: str
-    column: str
+    field: str
     transform: Union[str, None]
+    scale: int
+    params: Dict[str, Any]
+    derived: Dict[str, Any]
     multi_season: MultiSeasonConfig
 
 class ColumnDef(TypedDict):
@@ -174,12 +177,12 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'leaguedashplayerstats',
+                        'dataset': 'player_stats',
                         'field': 'PLAYER_NAME',
                         'transform': 'safe_str',
                     },
                     'team': {
-                        'dataset': 'leaguedashteamstats',
+                        'dataset': 'team_stats',
                         'field': 'TEAM_NAME',
                         'transform': 'safe_str',
                     },
@@ -197,7 +200,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'dataset_mapping': {
             'NBA': {
                 'nba_api': {
-                    'player': {'dataset': 'commonallplayers', 'field': 'HEIGHT'},
+                    'player': {'dataset': 'player_info', 'field': 'HEIGHT'},
                 },
             },
         },
@@ -221,7 +224,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'dataset_mapping': {
             'NBA': {
                 'nba_api': {
-                    'player': {'dataset': 'commonallplayers', 'field': 'WEIGHT'},
+                    'player': {'dataset': 'player_info', 'field': 'WEIGHT'},
                 },
             },
         },
@@ -237,7 +240,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'draftcombineplayeranthro',
+                        'dataset': 'combine_anthro',
                         'field': 'WINGSPAN',
                         'transform': 'parse_height',
                         'multi_season': {
@@ -278,7 +281,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'commonallplayers',
+                        'dataset': 'player_info',
                         'field': 'BIRTHDATE',
                         'transform': 'parse_birthdate',
                     },
@@ -288,7 +291,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     'seasons_exp': {
         'type': 'SMALLINT',
-        'tables': ['rosters', 'unmatched_players'],
+        'tables': ['teams_players', 'unmatched_players'],
         'nullable': True,
         'default': None,
         'manager': 'in_season_source',
@@ -296,7 +299,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'dataset_mapping': {
             'NBA': {
                 'nba_api': {
-                    'player': {'dataset': 'commonallplayers', 'field': 'SEASON_EXP'},
+                    'player': {'dataset': 'player_info', 'field': 'SEASON_EXP'},
                 },
             },
         },
@@ -329,7 +332,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'dataset_mapping': {
             'NBA': {
                 'nba_api': {
-                    'team': {'dataset': 'team_metadata', 'field': 'TEAM_ABBREVIATION', 'transform': 'safe_str'},
+                    'team': {'dataset': 'team_info', 'field': 'TEAM_ABBREVIATION', 'transform': 'safe_str'},
                 },
             },
         },
@@ -344,7 +347,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'dataset_mapping': {
             'NBA': {
                 'nba_api': {
-                    'team': {'dataset': 'team_metadata', 'field': 'TEAM_CONFERENCE', 'transform': 'safe_str'},
+                    'team': {'dataset': 'team_info', 'field': 'TEAM_CONFERENCE', 'transform': 'safe_str'},
                 },
             },
         },
@@ -359,22 +362,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'dataset_mapping': {
             'NBA': {
                 'nba_api': {
-                    'team': {'dataset': 'team_metadata', 'field': 'TEAM_CITY', 'transform': 'safe_str'},
-                },
-            },
-        },
-    },
-    'region': {
-        'type': 'TEXT',
-        'tables': ['teams', 'unmatched_teams'],
-        'nullable': True,
-        'default': None,
-        'manager': 'perennial_source',
-        'comment': None,
-        'dataset_mapping': {
-            'NBA': {
-                'nba_api': {
-                    'team': {'dataset': 'team_metadata', 'field': 'TEAM_STATE', 'transform': 'safe_str'},
+                    'team': {'dataset': 'team_info', 'field': 'TEAM_CITY', 'transform': 'safe_str'},
                 },
             },
         },
@@ -410,8 +398,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'dataset_mapping': {
             'NBA': {
                 'nba_api': {
-                    'player': {'dataset': 'leaguedashplayerstats', 'field': 'GP'},
-                    'team': {'dataset': 'leaguedashteamstats', 'field': 'GP'},
+                    'player': {'dataset': 'player_stats', 'field': 'GP'},
+                    'team': {'dataset': 'team_stats', 'field': 'GP'},
                 },
             },
         },
@@ -426,8 +414,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'dataset_mapping': {
             'NBA': {
                 'nba_api': {
-                    'player': {'dataset': 'leaguedashplayerstats', 'field': 'MIN', 'scale': 10},
-                    'team': {'dataset': 'leaguedashteamstats', 'field': 'MIN', 'scale': 10},
+                    'player': {'dataset': 'player_stats', 'field': 'MIN', 'scale': 10},
+                    'team': {'dataset': 'team_stats', 'field': 'MIN', 'scale': 10},
                 },
             },
         },
@@ -442,8 +430,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'dataset_mapping': {
             'NBA': {
                 'nba_api': {
-                    'player': {'dataset': 'leaguedashplayerstats', 'field': 'W'},
-                    'team': {'dataset': 'leaguedashteamstats', 'field': 'W'},
+                    'player': {'dataset': 'player_stats', 'field': 'W'},
+                    'team': {'dataset': 'team_stats', 'field': 'W'},
                 },
             },
         },
@@ -459,16 +447,16 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'leaguedashptstats',
+                        'dataset': 'player_tracking',
                         'field': 'MIN',
                         'scale': 10,
-                        'params': {'pt_measure_type': 'SpeedDistance', 'player_or_team': 'Player'},
+                        'params': {'pt_measure_type': 'SpeedDistance'},
                     },
                     'team': {
-                        'dataset': 'leaguedashptstats',
+                        'dataset': 'team_tracking',
                         'field': 'MIN',
                         'scale': 10,
-                        'params': {'pt_measure_type': 'SpeedDistance', 'player_or_team': 'Team'},
+                        'params': {'pt_measure_type': 'SpeedDistance'},
                     },
                 },
             },
@@ -485,9 +473,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_off_court',
                         'field': 'MIN',
                         'scale': 10
                     },
@@ -505,8 +491,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'dataset_mapping': {
             'NBA': {
                 'nba_api': {
-                    'player': {'dataset': 'leaguehustlestatsplayer', 'field': 'MIN', 'scale': 10},
-                    'team': {'dataset': 'leaguehustlestatsteam', 'field': 'MIN', 'scale': 10},
+                    'player': {'dataset': 'player_hustle', 'field': 'MIN', 'scale': 10},
+                    'team': {'dataset': 'team_hustle', 'field': 'MIN', 'scale': 10},
                 },
             },
         },
@@ -525,11 +511,11 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'leaguedashplayerstats',
+                        'dataset': 'player_stats',
                         'derived': {'math': 'FGM - FG3M', 'fields': ['FGM', 'FG3M']},
                     },
                     'team': {
-                        'dataset': 'leaguedashteamstats',
+                        'dataset': 'team_stats',
                         'derived': {'math': 'FGM - FG3M', 'fields': ['FGM', 'FG3M']},
                     },
                 },
@@ -547,11 +533,11 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'leaguedashplayerstats',
+                        'dataset': 'player_stats',
                         'derived': {'math': 'FGA - FG3A', 'fields': ['FGA', 'FG3A']},
                     },
                     'team': {
-                        'dataset': 'leaguedashteamstats',
+                        'dataset': 'team_stats',
                         'derived': {'math': 'FGA - FG3A', 'fields': ['FGA', 'FG3A']},
                     },
                 },
@@ -571,8 +557,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'dataset_mapping': {
             'NBA': {
                 'nba_api': {
-                    'player': {'dataset': 'leaguedashplayerstats', 'field': 'FG3M'},
-                    'team': {'dataset': 'leaguedashteamstats', 'field': 'FG3M'},
+                    'player': {'dataset': 'player_stats', 'field': 'FG3M'},
+                    'team': {'dataset': 'team_stats', 'field': 'FG3M'},
                 },
             },
         },
@@ -587,8 +573,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'dataset_mapping': {
             'NBA': {
                 'nba_api': {
-                    'player': {'dataset': 'leaguedashplayerstats', 'field': 'FG3A'},
-                    'team': {'dataset': 'leaguedashteamstats', 'field': 'FG3A'},
+                    'player': {'dataset': 'player_stats', 'field': 'FG3A'},
+                    'team': {'dataset': 'team_stats', 'field': 'FG3A'},
                 },
             },
         },
@@ -606,8 +592,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'dataset_mapping': {
             'NBA': {
                 'nba_api': {
-                    'player': {'dataset': 'leaguedashplayerstats', 'field': 'FTM'},
-                    'team': {'dataset': 'leaguedashteamstats', 'field': 'FTM'},
+                    'player': {'dataset': 'player_stats', 'field': 'FTM'},
+                    'team': {'dataset': 'team_stats', 'field': 'FTM'},
                 },
             },
         },
@@ -622,8 +608,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'dataset_mapping': {
             'NBA': {
                 'nba_api': {
-                    'player': {'dataset': 'leaguedashplayerstats', 'field': 'FTA'},
-                    'team': {'dataset': 'leaguedashteamstats', 'field': 'FTA'},
+                    'player': {'dataset': 'player_stats', 'field': 'FTA'},
+                    'team': {'dataset': 'team_stats', 'field': 'FTA'},
                 },
             },
         },
@@ -642,13 +628,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'leaguedashplayerstats',
+                        'dataset': 'player_stats',
                         'field': 'PCT_UAST_2PM',
                         'scale': 10,
                         'params': {'measure_type_detailed_defense': 'Scoring'},
                     },
                     'team': {
-                        'dataset': 'leaguedashteamstats',
+                        'dataset': 'team_stats',
                         'field': 'PCT_UAST_2PM',
                         'scale': 10,
                         'params': {'measure_type_detailed_defense': 'Scoring'},
@@ -668,13 +654,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'leaguedashplayerstats',
+                        'dataset': 'player_stats',
                         'field': 'PCT_UAST_3PM',
                         'scale': 10,
                         'params': {'measure_type_detailed_defense': 'Scoring'},
                     },
                     'team': {
-                        'dataset': 'leaguedashteamstats',
+                        'dataset': 'team_stats',
                         'field': 'PCT_UAST_3PM',
                         'scale': 10,
                         'params': {'measure_type_detailed_defense': 'Scoring'},
@@ -697,13 +683,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'leaguedashplayerstats',
+                        'dataset': 'player_stats',
                         'field': 'OREB_PCT',
                         'scale': 1000,
                         'params': {'measure_type_detailed_defense': 'Advanced'},
                     },
                     'team': {
-                        'dataset': 'leaguedashteamstats',
+                        'dataset': 'team_stats',
                         'field': 'OREB_PCT',
                         'scale': 1000,
                         'params': {'measure_type_detailed_defense': 'Advanced'},
@@ -723,13 +709,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'leaguedashplayerstats',
+                        'dataset': 'player_stats',
                         'field': 'DREB_PCT',
                         'scale': 1000,
                         'params': {'measure_type_detailed_defense': 'Advanced'},
                     },
                     'team': {
-                        'dataset': 'leaguedashteamstats',
+                        'dataset': 'team_stats',
                         'field': 'DREB_PCT',
                         'scale': 1000,
                         'params': {'measure_type_detailed_defense': 'Advanced'},
@@ -751,8 +737,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'dataset_mapping': {
             'NBA': {
                 'nba_api': {
-                    'player': {'dataset': 'leaguedashplayerstats', 'field': 'AST'},
-                    'team': {'dataset': 'leaguedashteamstats', 'field': 'AST'},
+                    'player': {'dataset': 'player_stats', 'field': 'AST'},
+                    'team': {'dataset': 'team_stats', 'field': 'AST'},
                 },
             },
         },
@@ -768,14 +754,14 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'leaguedashptstats',
+                        'dataset': 'player_tracking',
                         'field': 'POTENTIAL_AST',
-                        'params': {'pt_measure_type': 'Passing', 'player_or_team': 'Player'},
+                        'params': {'pt_measure_type': 'Passing'},
                     },
                     'team': {
-                        'dataset': 'leaguedashptstats',
+                        'dataset': 'team_tracking',
                         'field': 'POTENTIAL_AST',
-                        'params': {'pt_measure_type': 'Passing', 'player_or_team': 'Team'},
+                        'params': {'pt_measure_type': 'Passing'},
                     },
                 },
             },
@@ -792,14 +778,14 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'leaguedashptstats',
+                        'dataset': 'player_tracking',
                         'field': 'PASSES_MADE',
-                        'params': {'pt_measure_type': 'Passing', 'player_or_team': 'Player'},
+                        'params': {'pt_measure_type': 'Passing'},
                     },
                     'team': {
-                        'dataset': 'leaguedashptstats',
+                        'dataset': 'team_tracking',
                         'field': 'PASSES_MADE',
-                        'params': {'pt_measure_type': 'Passing', 'player_or_team': 'Team'},
+                        'params': {'pt_measure_type': 'Passing'},
                     },
                 },
             },
@@ -816,14 +802,14 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'leaguedashptstats',
+                        'dataset': 'player_tracking',
                         'field': 'SECONDARY_AST',
-                        'params': {'pt_measure_type': 'Passing', 'player_or_team': 'Player'},
+                        'params': {'pt_measure_type': 'Passing'},
                     },
                     'team': {
-                        'dataset': 'leaguedashptstats',
+                        'dataset': 'team_tracking',
                         'field': 'SECONDARY_AST',
-                        'params': {'pt_measure_type': 'Passing', 'player_or_team': 'Team'},
+                        'params': {'pt_measure_type': 'Passing'},
                     },
                 },
             },
@@ -843,14 +829,14 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'leaguedashptstats',
+                        'dataset': 'player_tracking',
                         'field': 'TOUCHES',
-                        'params': {'pt_measure_type': 'Possessions', 'player_or_team': 'Player'},
+                        'params': {'pt_measure_type': 'Possessions'},
                     },
                     'team': {
-                        'dataset': 'leaguedashptstats',
+                        'dataset': 'team_tracking',
                         'field': 'TOUCHES',
-                        'params': {'pt_measure_type': 'Possessions', 'player_or_team': 'Team'},
+                        'params': {'pt_measure_type': 'Possessions'},
                     },
                 },
             },
@@ -867,14 +853,14 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'leaguedashptstats',
+                        'dataset': 'player_tracking',
                         'field': 'TIME_OF_POSS',
-                        'params': {'pt_measure_type': 'Possessions', 'player_or_team': 'Player'},
+                        'params': {'pt_measure_type': 'Possessions'},
                     },
                     'team': {
-                        'dataset': 'leaguedashptstats',
+                        'dataset': 'team_tracking',
                         'field': 'TIME_OF_POSS',
-                        'params': {'pt_measure_type': 'Possessions', 'player_or_team': 'Team'},
+                        'params': {'pt_measure_type': 'Possessions'},
                     },
                 },
             },
@@ -893,8 +879,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'dataset_mapping': {
             'NBA': {
                 'nba_api': {
-                    'player': {'dataset': 'leaguedashplayerstats', 'field': 'TOV'},
-                    'team': {'dataset': 'leaguedashteamstats', 'field': 'TOV'},
+                    'player': {'dataset': 'player_stats', 'field': 'TOV'},
+                    'team': {'dataset': 'team_stats', 'field': 'TOV'},
                 },
             },
         },
@@ -913,16 +899,16 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'leaguedashptstats',
+                        'dataset': 'player_tracking',
                         'field': 'DIST_MILES_OFF',
                         'scale': 10,
-                        'params': {'pt_measure_type': 'SpeedDistance', 'player_or_team': 'Player'},
+                        'params': {'pt_measure_type': 'SpeedDistance'},
                     },
                     'team': {
-                        'dataset': 'leaguedashptstats',
+                        'dataset': 'team_tracking',
                         'field': 'DIST_MILES_OFF',
                         'scale': 10,
-                        'params': {'pt_measure_type': 'SpeedDistance', 'player_or_team': 'Team'},
+                        'params': {'pt_measure_type': 'SpeedDistance'},
                     },
                 },
             },
@@ -939,16 +925,16 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'leaguedashptstats',
+                        'dataset': 'player_tracking',
                         'field': 'DIST_MILES_DEF',
                         'scale': 10,
-                        'params': {'pt_measure_type': 'SpeedDistance', 'player_or_team': 'Player'},
+                        'params': {'pt_measure_type': 'SpeedDistance'},
                     },
                     'team': {
-                        'dataset': 'leaguedashptstats',
+                        'dataset': 'team_tracking',
                         'field': 'DIST_MILES_DEF',
                         'scale': 10,
-                        'params': {'pt_measure_type': 'SpeedDistance', 'player_or_team': 'Team'},
+                        'params': {'pt_measure_type': 'SpeedDistance'},
                     },
                 },
             },
@@ -967,8 +953,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'dataset_mapping': {
             'NBA': {
                 'nba_api': {
-                    'player': {'dataset': 'leaguedashplayerstats', 'field': 'STL'},
-                    'team': {'dataset': 'leaguedashteamstats', 'field': 'STL'}
+                    'player': {'dataset': 'player_stats', 'field': 'STL'},
+                    'team': {'dataset': 'team_stats', 'field': 'STL'}
                 },
             },
         },
@@ -983,8 +969,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'dataset_mapping': {
             'NBA': {
                 'nba_api': {
-                    'player': {'dataset': 'leaguedashplayerstats', 'field': 'BLK'},
-                    'team': {'dataset': 'leaguedashteamstats', 'field': 'BLK'},
+                    'player': {'dataset': 'player_stats', 'field': 'BLK'},
+                    'team': {'dataset': 'team_stats', 'field': 'BLK'},
                 },
             },
         },
@@ -999,8 +985,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'dataset_mapping': {
             'NBA': {
                 'nba_api': {
-                    'player': {'dataset': 'leaguedashplayerstats', 'field': 'PF'},
-                    'team': {'dataset': 'leaguedashteamstats', 'field': 'PF'},
+                    'player': {'dataset': 'player_stats', 'field': 'PF'},
+                    'team': {'dataset': 'team_stats', 'field': 'PF'},
                 },
             },
         },
@@ -1018,8 +1004,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'dataset_mapping': {
             'NBA': {
                 'nba_api': {
-                    'player': {'dataset': 'leaguehustlestatsplayer', 'field': 'DEFLECTIONS'},
-                    'team': {'dataset': 'leaguehustlestatsteam', 'field': 'DEFLECTIONS'},
+                    'player': {'dataset': 'player_hustle', 'field': 'DEFLECTIONS'},
+                    'team': {'dataset': 'team_hustle', 'field': 'DEFLECTIONS'},
                 },
             },
         },
@@ -1034,8 +1020,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'dataset_mapping': {
             'NBA': {
                 'nba_api': {
-                    'player': {'dataset': 'leaguehustlestatsplayer', 'field': 'CONTESTED_SHOTS_2PT'},
-                    'team': {'dataset': 'leaguehustlestatsteam', 'field': 'CONTESTED_SHOTS_2PT'},
+                    'player': {'dataset': 'player_hustle', 'field': 'CONTESTED_SHOTS_2PT'},
+                    'team': {'dataset': 'team_hustle', 'field': 'CONTESTED_SHOTS_2PT'},
                 },
             },
         },
@@ -1050,14 +1036,14 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'dataset_mapping': {
             'NBA': {
                 'nba_api': {
-                    'player': {'dataset': 'leaguehustlestatsplayer', 'field': 'CONTESTED_SHOTS_3PT'},
-                    'team': {'dataset': 'leaguehustlestatsteam', 'field': 'CONTESTED_SHOTS_3PT'},
+                    'player': {'dataset': 'player_hustle', 'field': 'CONTESTED_SHOTS_3PT'},
+                    'team': {'dataset': 'team_hustle', 'field': 'CONTESTED_SHOTS_3PT'},
                 },
             },
         },
     },
     # ------------------------------------------------------------------
-    # DEFENSIVE SHOT TRACKING  (leaguedashptdefend / leaguedashptteamdefend)
+    # DEFENSIVE SHOT TRACKING  (player_defense / team_defense)
     # ------------------------------------------------------------------
     'd_fg2m': {
         'type': 'SMALLINT',
@@ -1070,12 +1056,12 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'leaguedashptdefend',
+                        'dataset': 'player_defense',
                         'field': 'FG2M',
                         'params': {'defense_category': '2 Pointers'},
                     },
                     'team': {
-                        'dataset': 'leaguedashptteamdefend',
+                        'dataset': 'team_defense',
                         'field': 'FG2M',
                         'params': {'defense_category': '2 Pointers'},
                     },
@@ -1094,12 +1080,12 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'leaguedashptdefend',
+                        'dataset': 'player_defense',
                         'field': 'FG2A',
                         'params': {'defense_category': '2 Pointers'},
                     },
                     'team': {
-                        'dataset': 'leaguedashptteamdefend',
+                        'dataset': 'team_defense',
                         'field': 'FG2A',
                         'params': {'defense_category': '2 Pointers'},
                     },
@@ -1118,12 +1104,12 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'leaguedashptdefend',
+                        'dataset': 'player_defense',
                         'field': 'FG3M',
                         'params': {'defense_category': '3 Pointers'},
                     },
                     'team': {
-                        'dataset': 'leaguedashptteamdefend',
+                        'dataset': 'team_defense',
                         'field': 'FG3M',
                         'params': {'defense_category': '3 Pointers'},
                     },
@@ -1142,12 +1128,12 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'leaguedashptdefend',
+                        'dataset': 'player_defense',
                         'field': 'FG3A',
                         'params': {'defense_category': '3 Pointers'},
                     },
                     'team': {
-                        'dataset': 'leaguedashptteamdefend',
+                        'dataset': 'team_defense',
                         'field': 'FG3A',
                         'params': {'defense_category': '3 Pointers'},
                     },
@@ -1156,7 +1142,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         },
     },
     # ------------------------------------------------------------------
-    # ON/OFF COUNTING STATS (TEAMPLAYERONOFFDETAILS)
+    # ON/OFF COUNTING STATS
     # ------------------------------------------------------------------
     'on_2fgm': {
         'type': 'SMALLINT',
@@ -1169,9 +1155,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_on_court',
                         'derived': {'math': 'FGM - FG3M', 'fields': ['FGM', 'FG3M']},
                     },
                 },
@@ -1189,9 +1173,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_on_court',
                         'derived': {'math': 'FGA - FG3A', 'fields': ['FGA', 'FG3A']},
                     },
                 },
@@ -1209,9 +1191,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_on_court',
                         'field': 'FG3M',
                     },
                 },
@@ -1229,9 +1209,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_on_court',
                         'field': 'FG3A',
                     },
                 },
@@ -1249,9 +1227,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_on_court',
                         'field': 'FTA',
                     },
                 },
@@ -1269,9 +1245,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_on_court',
                         'field': 'FTM',
                     },
                 },
@@ -1289,9 +1263,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_on_court',
                         'field': 'TOV',
                     },
                 },
@@ -1309,9 +1281,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_on_court',
                         'field': 'BLK',
                     },
                 },
@@ -1330,9 +1300,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_off_court',
                         'derived': {'math': 'FGM - FG3M', 'fields': ['FGM', 'FG3M']},
                     },
                 },
@@ -1351,9 +1319,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_off_court',
                         'derived': {'math': 'FGA - FG3A', 'fields': ['FGA', 'FG3A']},
                     },
                 },
@@ -1372,9 +1338,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_off_court',
                         'field': 'FG3M',
                     },
                 },
@@ -1393,9 +1357,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_off_court',
                         'field': 'FG3A',
                     },
                 },
@@ -1414,9 +1376,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_off_court',
                         'field': 'FTA',
                     },
                 },
@@ -1435,9 +1395,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_off_court',
                         'field': 'FTM',
                     },
                 },
@@ -1456,9 +1414,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_off_court',
                         'field': 'TOV',
                     },
                 },
@@ -1477,9 +1433,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_off_court',
                         'field': 'BLK',
                     },
                 },
@@ -1497,9 +1451,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_on_court',
                         'derived': {'math': 'FGM - FG3M', 'fields': ['FGM', 'FG3M']},
                         'params': {'measure_type_detailed_defense': 'Opponent'},
 
@@ -1519,9 +1471,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_on_court',
                         'derived': {'math': 'FGA - FG3A', 'fields': ['FGA', 'FG3A']},
                         'params': {'measure_type_detailed_defense': 'Opponent'},
 
@@ -1541,9 +1491,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_on_court',
                         'field': 'FG3M',
                         'params': {'measure_type_detailed_defense': 'Opponent'},
 
@@ -1563,9 +1511,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_on_court',
                         'field': 'FG3A',
                         'params': {'measure_type_detailed_defense': 'Opponent'},
 
@@ -1585,9 +1531,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_on_court',
                         'field': 'FTA',
                         'params': {'measure_type_detailed_defense': 'Opponent'},
 
@@ -1607,9 +1551,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_on_court',
                         'field': 'FTM',
                         'params': {'measure_type_detailed_defense': 'Opponent'},
 
@@ -1629,9 +1571,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_on_court',
                         'field': 'TOV',
                         'params': {'measure_type_detailed_defense': 'Opponent'},
 
@@ -1652,9 +1592,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_off_court',
                         'derived': {'math': 'FGM - FG3M', 'fields': ['FGM', 'FG3M']},
                         'params': {'measure_type_detailed_defense': 'Opponent'},
 
@@ -1675,9 +1613,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_off_court',
                         'derived': {'math': 'FGA - FG3A', 'fields': ['FGA', 'FG3A']},
                         'params': {'measure_type_detailed_defense': 'Opponent'},
 
@@ -1698,9 +1634,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_off_court',
                         'field': 'FG3M',
                         'params': {'measure_type_detailed_defense': 'Opponent'},
 
@@ -1721,9 +1655,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_off_court',
                         'field': 'FG3A',
                         'params': {'measure_type_detailed_defense': 'Opponent'},
 
@@ -1744,9 +1676,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_off_court',
                         'field': 'FTA',
                         'params': {'measure_type_detailed_defense': 'Opponent'},
 
@@ -1767,9 +1697,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_off_court',
                         'field': 'FTM',
                         'params': {'measure_type_detailed_defense': 'Opponent'},
 
@@ -1790,9 +1718,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_off_court',
                         'field': 'TOV',
                         'params': {'measure_type_detailed_defense': 'Opponent'},
 
@@ -1802,7 +1728,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         },
     },
     # ------------------------------------------------------------------
-    # ON/OFF REBOUND PCT (TEAMPLAYERONOFFDETAILS — ADVANCED)
+    # ON/OFF REBOUND PCT (player_on_court / player_off_court — Advanced)
     # ------------------------------------------------------------------
     'on_o_reb_pct_x1000': {
         'type': 'SMALLINT',
@@ -1815,9 +1741,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_on_court',
                         'field': 'OREB_PCT',
                         'params': {'measure_type_detailed_defense': 'Advanced'},
                         'scale': 1000,
@@ -1837,9 +1761,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOnCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_on_court',
                         'field': 'DREB_PCT',
                         'params': {'measure_type_detailed_defense': 'Advanced'},
                         'scale': 1000,
@@ -1860,9 +1782,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_off_court',
                         'field': 'OREB_PCT',
                         'params': {'measure_type_detailed_defense': 'Advanced'},
                         'scale': 1000,
@@ -1883,9 +1803,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'teamplayeronoffdetails',
-                        'result_set': 'PlayersOffCourtTeamPlayerOnOffDetails',
-                        'player_id_field': 'VS_PLAYER_ID',
+                        'dataset': 'player_off_court',
                         'field': 'DREB_PCT',
                         'params': {'measure_type_detailed_defense': 'Advanced'},
                         'scale': 1000,
@@ -1905,14 +1823,14 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'player': {
-                        'dataset': 'leaguedashptstats',
+                        'dataset': 'player_tracking',
                         'field': 'FT_AST',
-                        'params': {'pt_measure_type': 'Passing', 'player_or_team': 'Player'},
+                        'params': {'pt_measure_type': 'Passing'},
                     },
                     'team': {
-                        'dataset': 'leaguedashptstats',
+                        'dataset': 'team_tracking',
                         'field': 'FT_AST',
-                        'params': {'pt_measure_type': 'Passing', 'player_or_team': 'Team'},
+                        'params': {'pt_measure_type': 'Passing'},
                     },
                 },
             },
@@ -1929,12 +1847,12 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'team': {
-                        'dataset': 'leaguedashteamstats',
+                        'dataset': 'team_stats',
                         'field': 'POSS',
                         'params': {'measure_type_detailed_defense': 'Advanced'},
                     },
                     'player': {
-                        'dataset': 'leaguedashplayerstats',
+                        'dataset': 'player_stats',
                         'field': 'POSS',
                         'params': {'measure_type_detailed_defense': 'Advanced'},
                     },
@@ -1953,13 +1871,11 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'pbp_stats': {
                     'team': {
-                        'dataset': 'pbp_team_totals',
+                        'dataset': 'team_totals',
                         'field': 'Offensive Fouls Drawn',
                     },
                     'player': {
-                        'dataset': 'pbp_player_totals',
-                        'result_set': 'PbpTotals',
-                        'player_id_field': 'EntityId',
+                        'dataset': 'player_totals',
                         'field': 'Offensive Fouls Drawn',
                     },
                 },
@@ -1977,13 +1893,11 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'pbp_stats': {
                     'team': {
-                        'dataset': 'pbp_team_totals',
+                        'dataset': 'team_totals',
                         'field': 'AssistPoints',
                     },
                     'player': {
-                        'dataset': 'pbp_player_totals',
-                        'result_set': 'PbpTotals',
-                        'player_id_field': 'EntityId',
+                        'dataset': 'player_totals',
                         'field': 'AssistPoints',
                     },
                 },
@@ -2001,16 +1915,14 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'pbp_stats': {
                     'team': {
-                        'dataset': 'pbp_team_totals',
+                        'dataset': 'team_totals',
                         'derived': {
                             'math': 'TwoPtShootingFoulsDrawn + ThreePtShootingFoulsDrawn + NonShootingFoulsDrawn',
                             'fields': ['TwoPtShootingFoulsDrawn', 'ThreePtShootingFoulsDrawn', 'NonShootingFoulsDrawn']
                         },
                     },
                     'player': {
-                        'dataset': 'pbp_player_totals',
-                        'result_set': 'PbpTotals',
-                        'player_id_field': 'EntityId',
+                        'dataset': 'player_totals',
                         'derived': {
                             'math': 'TwoPtShootingFoulsDrawn + ThreePtShootingFoulsDrawn + NonShootingFoulsDrawn',
                             'fields': ['TwoPtShootingFoulsDrawn', 'ThreePtShootingFoulsDrawn', 'NonShootingFoulsDrawn']
@@ -2031,14 +1943,12 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'pbp_stats': {
                     'team': {
-                        'dataset': 'pbp_team_totals',
+                        'dataset': 'team_totals',
                         'field': 'SecondsPerPossOff',
                         'scale': 10,
                     },
                     'player': {
-                        'dataset': 'pbp_player_totals',
-                        'result_set': 'PbpTotals',
-                        'player_id_field': 'EntityId',
+                        'dataset': 'player_totals',
                         'field': 'SecondsPerPossOff',
                         'scale': 10,
                     },
@@ -2057,14 +1967,12 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'pbp_stats': {
                     'team': {
-                        'dataset': 'pbp_team_totals',
+                        'dataset': 'team_totals',
                         'field': 'SecondsPerPossDef',
                         'scale': 10,
                     },
                     'player': {
-                        'dataset': 'pbp_player_totals',
-                        'result_set': 'PbpTotals',
-                        'player_id_field': 'EntityId',
+                        'dataset': 'player_totals',
                         'field': 'SecondsPerPossDef',
                         'scale': 10,
                     },
@@ -2259,7 +2167,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         'dataset_mapping': {
             'NBA': {
                 'nba_api': {
-                    'player': {'dataset': 'commonallplayers', 'field': 'JERSEY'},
+                    'player': {'dataset': 'player_info', 'field': 'JERSEY'},
                 },
             },
         },
@@ -2279,7 +2187,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'team': {
-                        'dataset': 'leaguedashteamstats',
+                        'dataset': 'team_stats',
                         'field': 'FGM',
                         'params': {'measure_type_detailed_defense': 'Opponent'},
                         'derived': {'math': 'FGM - FG3M', 'fields': ['FGM', 'FG3M']}
@@ -2299,7 +2207,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'team': {
-                        'dataset': 'leaguedashteamstats',
+                        'dataset': 'team_stats',
                         'field': 'FGA',
                         'params': {'measure_type_detailed_defense': 'Opponent'},
                         'derived': {'math': 'FGA - FG3A', 'fields': ['FGA', 'FG3A']}
@@ -2319,7 +2227,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'team': {
-                        'dataset': 'leaguedashteamstats',
+                        'dataset': 'team_stats',
                         'field': 'FG3M',
                         'params': {'measure_type_detailed_defense': 'Opponent'}
                         }
@@ -2338,7 +2246,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'team': {
-                        'dataset': 'leaguedashteamstats',
+                        'dataset': 'team_stats',
                         'field': 'FG3A',
                         'params': {'measure_type_detailed_defense': 'Opponent'}
                     }
@@ -2357,7 +2265,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'team': {
-                        'dataset': 'leaguedashteamstats',
+                        'dataset': 'team_stats',
                         'field': 'FTM',
                         'params': {'measure_type_detailed_defense': 'Opponent'}
                     }
@@ -2376,7 +2284,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'team': {
-                        'dataset': 'leaguedashteamstats',
+                        'dataset': 'team_stats',
                         'field': 'FTA',
                         'params': {'measure_type_detailed_defense': 'Opponent'}
                     }
@@ -2395,7 +2303,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'team': {
-                        'dataset': 'leaguedashteamstats',
+                        'dataset': 'team_stats',
                         'field': 'AST',
                         'params': {'measure_type_detailed_defense': 'Opponent'}
                     }
@@ -2414,7 +2322,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'team': {
-                        'dataset': 'leaguedashteamstats',
+                        'dataset': 'team_stats',
                         'field': 'TOV',
                         'params': {'measure_type_detailed_defense': 'Opponent'}
                     }
@@ -2433,7 +2341,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'team': {
-                        'dataset': 'leaguedashteamstats',
+                        'dataset': 'team_stats',
                         'field': 'PF',
                         'params': {'measure_type_detailed_defense': 'Opponent'}
                     }
@@ -2452,7 +2360,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'team': {
-                        'dataset': 'leaguedashteamstats',
+                        'dataset': 'team_stats',
                         'field': 'STL',
                         'params': {'measure_type_detailed_defense': 'Opponent'}
                     }
@@ -2471,7 +2379,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             'NBA': {
                 'nba_api': {
                     'team': {
-                        'dataset': 'leaguedashteamstats',
+                        'dataset': 'team_stats',
                         'field': 'BLK',
                         'params': {'measure_type_detailed_defense': 'Opponent'}
                     }

@@ -14,8 +14,18 @@ if a source emits two-digit labels for seasons before 1980.
 from typing import Tuple, Union
 
 from src.core.definitions.leagues import VALID_LEAGUE_SEASON_FORMATS
-from src.etl.definitions.sources import VALID_SHAPES, VALID_ANCHORS
 
+
+# ---------------------------------------------------------------------------
+# Shape-level validation constants (local to this module)
+# ---------------------------------------------------------------------------
+
+VALID_SHAPES = frozenset({
+    'YYYY', 'YY',
+    'YYYY-YY', 'YY-YY', 'YYYY-YYYY',
+    'YYYY/YY', 'YY/YY', 'YYYY/YYYY',
+})
+VALID_ANCHORS = frozenset({'start', 'end', None})
 
 # ---------------------------------------------------------------------------
 # League format mapping
@@ -173,3 +183,97 @@ def parse_season_end_year(label: str, league_season_format: str) -> int:
         )
     shape, anchor = _LEAGUE_FORMAT_TO_SHAPE[league_season_format]
     return parse_season_in_shape(label, shape, anchor)
+
+
+# ---------------------------------------------------------------------------
+# Source-level season parameter formatter (token-based)
+# ---------------------------------------------------------------------------
+
+def _format_year_token(year: int, token_len: int) -> str:
+    """Format a year integer to match a token run length.
+
+    ``token_len == 2`` -> two-digit year (``2025 -> '25'``).
+    ``token_len == 4`` -> four-digit year (``2025 -> '2025'``).
+    """
+    if token_len == 4:
+        return str(year)
+    if token_len == 2:
+        return f'{year % 100:02d}'
+    raise ValueError(f"Unsupported token length {token_len}; expected 2 or 4")
+
+
+def _replace_token_runs(param_format: str, token: str, value: str) -> str:
+    """Replace contiguous runs of *token* in *param_format* with *value*."""
+    result = []
+    i = 0
+    while i < len(param_format):
+        if param_format[i] == token:
+            run_len = 1
+            while i + run_len < len(param_format) and param_format[i + run_len] == token:
+                run_len += 1
+            result.append(value)
+            i += run_len
+        else:
+            result.append(param_format[i])
+            i += 1
+    return ''.join(result)
+
+
+def format_season_param(
+    end_year: int,
+    param_format: str,
+    season_format: str,
+) -> str:
+    """Render a season parameter string from a token format.
+
+    ``season_format`` is the league-level semantic format
+    (``'split_year'`` or ``'same_year'``) used to derive the start year.
+
+    Token reference:
+
+      - ``S`` -> start year of the season
+      - ``E`` -> end year of the season
+
+    Examples for ``split_year`` with ``end_year = 2026``:
+
+      - ``SSSS-EE`` -> ``2025-26``
+      - ``SSEE``      -> ``2526``
+      - ``EEEE``      -> ``2026``
+      - ``EE``        -> ``26``
+
+    For ``same_year`` start and end are identical.
+    """
+    if season_format not in VALID_LEAGUE_SEASON_FORMATS:
+        raise ValueError(
+            f"Unsupported season_format {season_format!r}; "
+            f"expected one of {sorted(VALID_LEAGUE_SEASON_FORMATS)}"
+        )
+
+    start_year = end_year if season_format == 'same_year' else end_year - 1
+
+    # Determine token run lengths from the format string
+    max_s = 0
+    max_e = 0
+    i = 0
+    while i < len(param_format):
+        if param_format[i] == 'S':
+            run_len = 1
+            while i + run_len < len(param_format) and param_format[i + run_len] == 'S':
+                run_len += 1
+            max_s = max(max_s, run_len)
+            i += run_len
+        elif param_format[i] == 'E':
+            run_len = 1
+            while i + run_len < len(param_format) and param_format[i + run_len] == 'E':
+                run_len += 1
+            max_e = max(max_e, run_len)
+            i += run_len
+        else:
+            i += 1
+
+    result = param_format
+    if max_s > 0:
+        result = _replace_token_runs(result, 'S', _format_year_token(start_year, max_s))
+    if max_e > 0:
+        result = _replace_token_runs(result, 'E', _format_year_token(end_year, max_e))
+    return result

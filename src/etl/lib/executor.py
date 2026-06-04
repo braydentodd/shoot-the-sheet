@@ -15,14 +15,13 @@ in :mod:`src.etl.orchestrator`; the CLI lives in :mod:`src.etl.cli`.
 import logging
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Union
 
 from src.core.lib.postgres import db_connection, quote_col
 from src.etl.lib.sources_resolver import get_source_id_column
+from src.etl.definitions.datasets import DATASETS
 from src.etl.lib.extract import (
     extract_columns_from_result,
-    extract_raw_rows,
-    extract_value_from_raw_dict,
     get_pipeline_columns,
     get_simple_columns,
 )
@@ -171,6 +170,7 @@ def _execute_multi_season_league_wide(
             if result:
                 rows = extract_columns_from_result(
                     result, columns, ctx.entity, ctx.entity_id_field,
+                    result_set_name=_get_result_set(dataset, ctx.source_key),
                     id_aliases=ctx.id_aliases,
                 )
                 # Store values by entity by year
@@ -235,6 +235,7 @@ def _execute_league_wide(
 
     rows = extract_columns_from_result(
         result, columns, ctx.entity, ctx.entity_id_field,
+        result_set_name=_get_result_set(dataset, ctx.source_key),
         id_aliases=ctx.id_aliases,
     )
     return write_entity_rows(
@@ -355,79 +356,9 @@ def _execute_pipeline_column(
     )
 
 
-def _execute_team_call(
-    dataset: str,
-    params: Dict[str, Any],
-    columns: Dict[str, Dict[str, Any]],
-    ctx: ExecutionContext,
-    failed: List[Dict[str, Any]],
-    conn=None,
-) -> int:
-    """Per-team calls returning player-level data (e.g. on/off splits).
-
-    Each team is queried independently; results are written immediately so
-    traded players get one row per stint. No aggregation — each player-team
-    combo should have exactly one raw row.
-    """
-    first_source = next(iter(columns.values()))
-    result_set_name = first_source.get('result_set')
-    player_id_field = first_source.get('player_id_field')
-    filter_field = first_source.get('filter_field')
-    filter_values = first_source.get('filter_values')
-
-    if not result_set_name or not player_id_field:
-        logger.error(
-            'team_call columns for %s missing required result_set or player_id_field',
-            dataset,
-        )
-        return 0
-
-    consecutive_failures = 0
-    written_count = 0
-    team_ids = list(ctx.team_ids.values())
-
-    for idx, team_id in enumerate(team_ids):
-        try:
-            call_params = {**params, 'team_id': team_id}
-            result = ctx.api_fetcher(dataset, call_params)
-            consecutive_failures = 0
-        except Exception as exc:
-            consecutive_failures += 1
-            logger.warning('Team %d failed for %s: %s', team_id, dataset, exc)
-            if _should_abort(consecutive_failures, ctx.max_consecutive_failures, dataset):
-                break
-            continue
-
-        if result is None:
-            continue
-
-        new_rows = extract_raw_rows(
-            result, player_id_field, result_set_name,
-            filter_field=filter_field, filter_values=filter_values,
-        )
-        if not new_rows:
-            continue
-
-        # Extract column values directly from the first (and typically only)
-        # raw row per player per team, then inject the queried team_id.
-        rows: Dict[int, Dict[str, Any]] = {}
-        for pid, raw_list in new_rows.items():
-            if not raw_list:
-                continue
-            raw_dict = raw_list[0]
-            values = {
-                col_name: extract_value_from_raw_dict(raw_dict, col_source)
-                for col_name, col_source in columns.items()
-            }
-            values['team_id'] = team_id
-            rows[pid] = values
-
-        written_count += write_entity_rows(
-            ctx.entity, ctx.scope, rows,
-            ctx.season, ctx.season_type, ctx.db_schema, ctx.source_key,
-        )
-
-    return written_count
+def _get_result_set(dataset: str, source_key: str) -> Union[str, None]:
+    """Return the result_set name configured for a dataset, if any."""
+    return DATASETS.get(source_key, {}).get(dataset, {}).get('source_mapping', {}).get('result_set')
 
 
 def _execute_per_entity(
@@ -504,6 +435,7 @@ def _execute_per_entity(
 
         extracted = extract_columns_from_result(
             result, columns, ctx.entity, ctx.entity_id_field,
+            result_set_name=_get_result_set(dataset, ctx.source_key),
             id_aliases=ctx.id_aliases,
         )
 
@@ -562,9 +494,7 @@ def execute_group(
 
     written = 0
 
-    if tier == 'per_team' and group.get('extraction_mode') == 'raw':
-        written += _execute_team_call(dataset, params, columns, ctx, failed, conn=conn)
-    elif tier == 'per_team':
+    if tier == 'per_team':
         if simple:
             written += _execute_per_entity(
                 dataset, simple, ctx, failed, tier,

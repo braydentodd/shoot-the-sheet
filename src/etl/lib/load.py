@@ -41,6 +41,7 @@ def bulk_upsert(
     data: List[tuple],
     conflict_columns: List[str],
     update_columns: Union[List[str], None] = None,
+    skip_unchanged: bool = False,
     batch_size: int = DEFAULT_BATCH_SIZE,
 ) -> int:
     """``INSERT ... ON CONFLICT DO UPDATE SET`` for a batch of rows.
@@ -72,14 +73,24 @@ def bulk_upsert(
         update_sql = ', '.join(
             f'{quote_col(c)} = EXCLUDED.{quote_col(c)}' for c in update_columns
         )
-        conflict_clause = (
-            f'ON CONFLICT ({conflict_sql}) DO UPDATE SET '
-            f'{update_sql}, updated_at = NOW()'
-        )
+        if skip_unchanged:
+            conflict_clause = (
+                f'ON CONFLICT ({conflict_sql}) DO UPDATE SET '
+                f'{update_sql}, updated_at = NOW() '
+                f'WHERE (target.*) IS DISTINCT FROM (EXCLUDED.*)'
+            )
+            table_sql = f'{table} AS target'
+        else:
+            conflict_clause = (
+                f'ON CONFLICT ({conflict_sql}) DO UPDATE SET '
+                f'{update_sql}, updated_at = NOW()'
+            )
+            table_sql = table
     else:
         conflict_clause = f'ON CONFLICT ({conflict_sql}) DO NOTHING'
+        table_sql = table
 
-    query = f'INSERT INTO {table} ({cols_sql}) VALUES %s {conflict_clause}'
+    query = f'INSERT INTO {table_sql} ({cols_sql}) VALUES %s {conflict_clause}'
 
     cursor = conn.cursor()
     written = 0
@@ -135,6 +146,7 @@ def _bulk_merge_upsert(
     data: List[tuple],
     conflict_columns: List[str],
     update_columns: Union[List[str], None] = None,
+    skip_unchanged: bool = False,
     batch_size: int = DEFAULT_BATCH_SIZE,
 ) -> int:
     """``INSERT ... ON CONFLICT DO UPDATE`` merge that preserves non-null values."""
@@ -151,13 +163,21 @@ def _bulk_merge_upsert(
         f'{quote_col(c)} = COALESCE(EXCLUDED.{quote_col(c)}, {table}.{quote_col(c)})'
         for c in update_columns
     )
-    conflict_clause = (
-        f'ON CONFLICT ({conflict_sql}) DO UPDATE SET {update_sql}'
-        if update_columns else
-        f'ON CONFLICT ({conflict_sql}) DO NOTHING'
-    )
+    if skip_unchanged and update_columns:
+        conflict_clause = (
+            f'ON CONFLICT ({conflict_sql}) DO UPDATE SET {update_sql} '
+            f'WHERE (target.*) IS DISTINCT FROM (EXCLUDED.*)'
+        )
+        table_sql = f'{table} AS target'
+    else:
+        conflict_clause = (
+            f'ON CONFLICT ({conflict_sql}) DO UPDATE SET {update_sql}'
+            if update_columns else
+            f'ON CONFLICT ({conflict_sql}) DO NOTHING'
+        )
+        table_sql = table
 
-    query = f'INSERT INTO {table} ({cols_sql}) VALUES %s {conflict_clause}'
+    query = f'INSERT INTO {table_sql} ({cols_sql}) VALUES %s {conflict_clause}'
     cursor = conn.cursor()
     written = 0
 
@@ -319,6 +339,7 @@ def merge_staged_entity_rows(
             columns,
             data,
             conflict_columns=['league_id', 'source', 'source_id'],
+            skip_unchanged=True,
         )
 
 
@@ -356,6 +377,7 @@ def write_core_profile_rows(
     with db_connection() as conn:
         return bulk_upsert(
             conn, table, columns, data, conflict_columns=[src_col],
+            skip_unchanged=True,
         )
 
 
@@ -447,4 +469,5 @@ def _write_stats_rows(
 
         return bulk_upsert(
             conn, table, columns, data, conflict_columns=pk_columns,
+            skip_unchanged=True,
         )

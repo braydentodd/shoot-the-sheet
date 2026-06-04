@@ -14,43 +14,26 @@ import logging
 from typing import Any, Dict, List, Tuple, Union
 
 from src.core.definitions.db_columns import DB_COLUMNS
-from src.core.definitions.schema import DEFAULT_TYPE_TRANSFORMS, TABLE_ENTITY
+from src.core.definitions.schema import DEFAULT_TYPE_TRANSFORMS
+from src.etl.definitions.datasets import DATASETS
 
 logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# MODULE-LEVEL PRE-INDEXED COLUMN REGISTRIES
+# COLUMN LOOKUP HELPERS
 # ============================================================================
 
-# Index for get_all_sources_for_entity: {entity_type: [(col_name, col_meta), ...]}
-_COLUMNS_BY_ENTITY: Dict[str, List[Tuple[str, Dict[str, Any]]]] = {}
-# Index for build_call_groups: {table_name: [(col_name, col_meta), ...]}
-_COLUMNS_BY_TABLE: Dict[str, List[Tuple[str, Dict[str, Any]]]] = {}
-
-for col_name, col_meta in DB_COLUMNS.items():
-    tables = col_meta.get('tables', [])
-    if isinstance(tables, str):
-        tables = [tables]
-
-    entities = set()
-    for t in tables:
-        if t == 'all':
-            entities.update({'league', 'player', 'team', 'country'})
-        else:
-            ent = TABLE_ENTITY.get(t)
-            if ent:
-                entities.add(ent)
-
-    for ent in entities:
-        _COLUMNS_BY_ENTITY.setdefault(ent, []).append((col_name, col_meta))
-
-    for t in tables:
-        if t == 'all':
-            for known_table in TABLE_ENTITY.keys():
-                _COLUMNS_BY_TABLE.setdefault(known_table, []).append((col_name, col_meta))
-        else:
-            _COLUMNS_BY_TABLE.setdefault(t, []).append((col_name, col_meta))
+def _columns_for_table(table_name: str) -> List[Tuple[str, Dict[str, Any]]]:
+    """Return columns whose ``tables`` list includes *table_name* or ``'all'``."""
+    matched: List[Tuple[str, Dict[str, Any]]] = []
+    for col_name, col_meta in DB_COLUMNS.items():
+        tables = col_meta.get('tables', [])
+        if isinstance(tables, str):
+            tables = [tables]
+        if table_name in tables or 'all' in tables:
+            matched.append((col_name, col_meta))
+    return matched
 
 
 # ============================================================================
@@ -97,10 +80,10 @@ def _get_source_definition(
 def is_dataset_available(
     dataset_name: str,
     season: str,
-    datasets: Dict[str, Dict[str, Any]],
+    source_key: str,
 ) -> bool:
     """Check whether a dataset has data for the given season."""
-    ds = datasets.get(dataset_name)
+    ds = DATASETS.get(source_key, {}).get(dataset_name)
     if not ds:
         return False
     min_season = ds.get('min_season')
@@ -125,9 +108,8 @@ def get_columns_for_dataset(
     Returns ``{col_name: enriched_source_dict}`` with default transforms injected.
     """
     matched: Dict[str, Dict[str, Any]] = {}
-    matched_cols = _COLUMNS_BY_ENTITY.get(entity, [])
 
-    for col_name, col_meta in matched_cols:
+    for col_name, col_meta in DB_COLUMNS.items():
         source = _get_source_definition(
             col_meta, entity, source_key, league_key=league_key,
         )
@@ -153,7 +135,6 @@ def get_columns_for_dataset(
 def get_all_sources_for_entity(
     entity: str,
     source_key: str,
-    datasets: Dict[str, Dict[str, Any]],
     season: Union[str, None] = None,
     league_key: Union[str, None] = None,
 ) -> Dict[str, Dict[str, Any]]:
@@ -162,9 +143,8 @@ def get_all_sources_for_entity(
     If ``season`` is provided, excludes datasets not available for that season.
     """
     matched: Dict[str, Dict[str, Any]] = {}
-    matched_cols = _COLUMNS_BY_ENTITY.get(entity, [])
 
-    for col_name, col_meta in matched_cols:
+    for col_name, col_meta in DB_COLUMNS.items():
         source = _get_source_definition(
             col_meta, entity, source_key, league_key=league_key,
         )
@@ -173,7 +153,7 @@ def get_all_sources_for_entity(
 
         if season:
             ds = source.get('dataset') or source.get('pipeline', {}).get('dataset', '')
-            if not is_dataset_available(ds, season, datasets):
+            if not is_dataset_available(ds, season, source_key):
                 continue
 
         matched[col_name] = _enrich_source(source, col_meta)
@@ -185,19 +165,12 @@ def get_all_sources_for_entity(
 # EXECUTION TIER RESOLUTION
 # ============================================================================
 
-def tier_for_dataset(
-    dataset: str,
-    datasets: Dict[str, Dict[str, Any]],
-) -> str:
+def tier_for_dataset(dataset: str, source_key: str) -> str:
     """Get the default execution tier for a dataset."""
-    return datasets.get(dataset, {}).get('execution_tier', 'per_league')
+    return DATASETS.get(source_key, {}).get(dataset, {}).get('execution_tier', 'per_league')
 
 
-def tier_for_source(
-    source: Dict[str, Any],
-    dataset: str,
-    datasets: Dict[str, Dict[str, Any]],
-) -> str:
+def tier_for_source(source: Dict[str, Any], dataset: str, source_key: str) -> str:
     """Resolve execution tier from a source config or the dataset default."""
     tier = source.get('tier')
     if tier:
@@ -205,7 +178,7 @@ def tier_for_source(
     pipeline = source.get('pipeline', {})
     if pipeline.get('tier'):
         return pipeline['tier']
-    return tier_for_dataset(dataset, datasets)
+    return tier_for_dataset(dataset, source_key)
 
 
 # ============================================================================
@@ -216,7 +189,6 @@ def build_call_groups(
     entity: str,
     season: str,
     source_key: str,
-    datasets: Dict[str, Dict[str, Any]],
     scope: Union[str, None] = None,
     league_key: Union[str, None] = None,
     in_season: bool = True,
@@ -235,7 +207,7 @@ def build_call_groups(
                    are always included regardless of season state.
 
     Returns a list of dicts, each with:
-        dataset, params, tier, extraction_mode, columns ({col_name: enriched_source})
+        dataset, params, tier, columns ({col_name: enriched_source})
     """
     simple_groups: Dict[tuple, Dict[str, Dict[str, Any]]] = {}
     special: List[Dict[str, Any]] = []
@@ -250,9 +222,9 @@ def build_call_groups(
     }
     if scope:
         table_name = _ENTITY_SCOPE_TABLE[(entity, scope)]
-        matched_cols = _COLUMNS_BY_TABLE.get(table_name, [])
+        matched_cols = _columns_for_table(table_name)
     else:
-        matched_cols = _COLUMNS_BY_ENTITY.get(entity, [])
+        matched_cols = list(DB_COLUMNS.items())
 
     for col_name, col_meta in matched_cols:
         # Filter in_season_source columns during off-season
@@ -273,15 +245,14 @@ def build_call_groups(
             ds = enriched.get('pipeline', {}).get('dataset')
         if not ds:
             continue
-        if not is_dataset_available(ds, season, datasets):
+        if not is_dataset_available(ds, season, source_key):
             continue
 
         if 'pipeline' in enriched:
             special.append({
                 'dataset': ds,
                 'params': enriched.get('params', {}),
-                'tier': tier_for_source(enriched, ds, datasets),
-                'extraction_mode': datasets.get(ds, {}).get('extraction_mode', 'standard'),
+                'tier': tier_for_source(enriched, ds, source_key),
                 'columns': {col_name: enriched},
             })
         elif enriched.get('tier') == 'per_team':
@@ -289,7 +260,6 @@ def build_call_groups(
                 'dataset': ds,
                 'params': enriched.get('params', {}),
                 'tier': enriched.get('tier'),
-                'extraction_mode': datasets.get(ds, {}).get('extraction_mode', 'standard'),
                 'columns': {col_name: enriched},
             })
         else:
@@ -306,8 +276,7 @@ def build_call_groups(
         groups.append({
             'dataset': ds,
             'params': dict(frozen_params),
-            'tier': tier_for_dataset(ds, datasets),
-            'extraction_mode': datasets.get(ds, {}).get('extraction_mode', 'standard'),
+            'tier': tier_for_dataset(ds, source_key),
             'columns': cols,
             'removed_refresh_mode': removed_refresh_mode,
         })
@@ -340,7 +309,6 @@ def build_call_groups(
                 'dataset': ds,
                 'params': bucket['params'],
                 'tier': tier,
-                'extraction_mode': datasets.get(ds, {}).get('extraction_mode', 'standard'),
                 'columns': bucket['columns'],
                 'removed_refresh_mode': 'null_only',
             })

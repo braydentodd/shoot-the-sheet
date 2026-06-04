@@ -191,7 +191,7 @@ TABLES: Dict[str, TableDef] = {
     # ROSTERS SCHEMA
     # ------------------------------------------------------------------
     'leagues_teams': {
-        'entity': 'team',
+        'entity': 'league',
         'schema': 'rosters',
         'primary_key': ['league_id', 'team_id'],
         'foreign_keys': [
@@ -219,10 +219,19 @@ TABLES: Dict[str, TableDef] = {
         'source_ids': False,
     },
     'teams_players': {
-        'entity': 'player',
+        'entity': 'team',
         'schema': 'rosters',
-        'primary_key': ['team_id', 'player_id'],
+        'primary_key': ['league_id', 'team_id', 'player_id'],
         'foreign_keys': [
+            {
+                'column':     'league_id',
+                'ref_schema': 'profiles',
+                'ref_table':  'leagues',
+                'ref_column': 'the_glass_id',
+                'strategy':   'profile_lookup',
+                'on_update':  'CASCADE',
+                'on_delete':  'CASCADE',
+            },
             {
                 'column':     'team_id',
                 'ref_schema': 'profiles',
@@ -247,7 +256,7 @@ TABLES: Dict[str, TableDef] = {
         'source_ids': False,
     },
     'countries_players': {
-        'entity': 'player',
+        'entity': 'country',
         'schema': 'rosters',
         'primary_key': ['player_id', 'country_id'],
         'foreign_keys': [

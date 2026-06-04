@@ -10,8 +10,12 @@ from typing import Any, Callable, Dict, List, Union
 
 import requests
 
+from src.core.definitions.leagues import LEAGUES
 from src.core.lib.rate_limiter import get_rate_limiter
-from src.etl.sources.pbp_stats.config import API_CONFIG, DATASETS
+from src.core.lib.seasons_resolver import format_season_param
+from src.etl.definitions.datasets import DATASETS
+from src.etl.lib.sources_resolver import get_source_league_id
+from src.etl.sources.pbp_stats.config import API_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -83,15 +87,21 @@ def _to_result_set(
 
 
 def _build_dataset_params(
-    season: str,
+    league_key: str,
+    season_end_year: int,
     season_type_name: str,
     entity: str,
     extra_params: Union[Dict[str, Any], None] = None,
+    wire: Union[Dict[str, Any], None] = None,
     endpoint: Union[str, None] = None,
 ) -> Dict[str, Any]:
     """Build query params for pbpstats requests."""
+    league_cfg = LEAGUES[league_key]
+    param_format = wire.get('season_param_format', 'SSSS-EE')
+    season_label = format_season_param(season_end_year, param_format, league_cfg['season_format'])
+
     params: Dict[str, Any] = {
-        'Season': season,
+        'Season': season_label,
         'SeasonType': season_type_name,
     }
 
@@ -111,7 +121,7 @@ def _build_dataset_params(
     return params
 
 
-def make_fetcher(season: str, season_type_name: str, entity: str) -> Callable:
+def make_fetcher(league_key: str, season_end_year: int, season_type_name: str, entity: str) -> Callable:
     """Create an API fetcher closure for pbpstats datasets."""
     rate_limiter = get_rate_limiter('pbp_stats')
 
@@ -119,15 +129,17 @@ def make_fetcher(season: str, season_type_name: str, entity: str) -> Callable:
         dataset: str,
         extra_params: Union[Dict[str, Any], None] = None,
     ) -> Union[Dict[str, Any], None]:
-        ds_cfg = DATASETS.get(dataset)
+        ds_cfg = DATASETS.get('pbp_stats', {}).get(dataset)
         if ds_cfg is None:
             logger.warning('Unknown pbp_stats dataset: %s', dataset)
             return None
 
-        endpoint = ds_cfg['endpoint']
-        url_suffix = ds_cfg.get('url_suffix') or ''
-        url = f"{API_CONFIG['base_url']}/{endpoint}/{API_CONFIG['league']}{url_suffix}"
-        params = _build_dataset_params(season, season_type_name, entity, extra_params, endpoint=endpoint)
+        wire = ds_cfg.get('source_mapping', {})
+        endpoint = wire.get('endpoint', '')
+        url_suffix = wire.get('url_suffix') or ''
+        source_league_id = get_source_league_id('pbp_stats', league_key)
+        url = f"{API_CONFIG['base_url']}/{endpoint}/{source_league_id}{url_suffix}"
+        params = _build_dataset_params(league_key, season_end_year, season_type_name, entity, extra_params, wire=wire, endpoint=endpoint)
 
         def _call() -> Dict[str, Any]:
             response = requests.get(
@@ -143,7 +155,7 @@ def make_fetcher(season: str, season_type_name: str, entity: str) -> Callable:
 
             is_on_off = endpoint == 'get-on-off'
             rows = _extract_rows(payload, is_on_off=is_on_off)
-            return _to_result_set(rows, ds_cfg['default_result_set'])
+            return _to_result_set(rows, wire.get('result_set', 'Results'))
 
         return rate_limiter.with_retry(_call)
 

@@ -1,10 +1,11 @@
 """
-
 The Glass - League Definitions
 
-Per-league operational settings: calendar window, retention, season grammar,
-and source role ownership. Pure declarative data;
-helpers live in :mod:`src.core.lib.leagues`.
+Per-league operational settings: calendar window, retention, season grammar.
+Dataset-level role assignments and source wiring have moved to
+:data:`src.etl.definitions.datasets.DATASETS`.
+
+Pure declarative data; helpers live in :mod:`src.core.lib.leagues`.
 """
 
 from typing import Dict, List, TypedDict
@@ -16,25 +17,10 @@ from typing import Dict, List, TypedDict
 
 VALID_LEAGUE_SEASON_FORMATS = frozenset({'same_year', 'split_year'})
 VALID_LEAGUE_GENDERS = frozenset({'M', 'W'})
-VALID_SOURCE_ROLE_KEYS = frozenset({'roster_maintainer', 'season_detector'})
 
 # ============================================================================
 # SCHEMA
 # ============================================================================
-
-class SourceRoleParams(TypedDict, total=False):
-    is_only_current_season: str
-    activity_window_days: int
-
-class SourceRoleDef(TypedDict):
-    dataset: str
-    team_id_field: str
-    player_id_field: str
-    params: SourceRoleParams
-
-class LeagueRoles(TypedDict, total=False):
-    roster_maintainer: Dict[str, SourceRoleDef]
-    season_detector: Dict[str, SourceRoleDef]
 
 class LeagueDef(TypedDict):
     name: str
@@ -42,8 +28,7 @@ class LeagueDef(TypedDict):
     season_format: str
     regular_season_types: List[str]
     postseason_types: List[str]
-    calendar_flip_md: str
-    source_roles: LeagueRoles
+    calendar_flip: str
 
 LEAGUES: Dict[str, LeagueDef] = {
     'NBA': {
@@ -52,24 +37,6 @@ LEAGUES: Dict[str, LeagueDef] = {
         'season_format':          'split_year',
         'regular_season_types':   ['rs'],
         'postseason_types':       ['po', 'pi'],
-        'calendar_flip_md':       '08-01',
-        'source_roles': {
-            'roster_maintainer': {
-                'nba_api': {
-                    'dataset': 'commonallplayers',
-                    'team_id_field': 'TEAM_ID',
-                    'player_id_field': 'PERSON_ID',
-                    'params': {'is_only_current_season': '1'},
-                },
-            },
-            'season_detector': {
-                'nba_api': {
-                    'dataset': 'leaguegamefinder',
-                    'team_id_field': 'TEAM_ID',
-                    'player_id_field': 'PLAYER_ID',
-                    'params': {'activity_window_days': 2},
-                }
-            }
-        },
-    }
+        'calendar_flip':          '08/01',
+    },
 }

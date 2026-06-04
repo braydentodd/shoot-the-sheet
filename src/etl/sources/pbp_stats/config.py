@@ -1,29 +1,20 @@
 """
 The Glass - PBP Stats Source Configuration
 
-Pure data definitions for the ``pbp_stats`` source: dataset metadata,
-season-type mapping, and field-name mappings.
+Pure data definitions for the ``pbp_stats`` source: season-type mapping,
+rate limits, and field-name mappings.
+
+Dataset metadata lives in the unified registry
+(:mod:`src.etl.definitions.datasets`).  This module is purely about
+how to talk to the source itself.
 """
 
-from typing import Any, Dict, List, TypedDict, Union
+from typing import Any, Dict, TypedDict, Union
 
 
 class ApiConfigDef(TypedDict):
     base_url: str
-    league: str
     max_consecutive_failures: int
-
-
-class DatasetDef(TypedDict):
-    min_season: Union[str, None]
-    execution_tier: str
-    extraction_mode: str
-    default_result_set: str
-    season_type_param: Union[str, None]
-    per_mode_param: Union[str, None]
-    entity_types: List[str]
-    endpoint: str
-    url_suffix: Union[str, None]
 
 
 class SeasonTypeDef(TypedDict):
@@ -53,50 +44,7 @@ SEASON_TYPES: Dict[str, SeasonTypeDef] = {
 
 API_CONFIG: ApiConfigDef = {
     'base_url': 'https://api.pbpstats.com',
-    'league': 'nba',
     'max_consecutive_failures': 5,
-}
-
-
-# ==========================================================================
-# DATASET DEFINITIONS
-# ==========================================================================
-
-DATASETS: Dict[str, DatasetDef] = {
-    # Team and opponent aggregate totals from pbpstats API.
-    'pbp_team_totals': {
-        'min_season': '2000-01',
-        'execution_tier': 'per_league',
-        'extraction_mode': 'standard',
-        'default_result_set': 'PbpTotals',
-        'season_type_param': None,
-        'per_mode_param': None,
-        'entity_types': ['team'],
-        'endpoint': 'get-totals',
-        'url_suffix': None,
-    },
-    'pbp_player_totals': {
-        'min_season': '2000-01',
-        'execution_tier': 'per_team',
-        'extraction_mode': 'raw',
-        'default_result_set': 'PbpTotals',
-        'season_type_param': None,
-        'per_mode_param': None,
-        'entity_types': ['player'],
-        'endpoint': 'get-totals',
-        'url_suffix': None,
-    },
-    'pbp_on_off': {
-        'min_season': '2000-01',
-        'execution_tier': 'per_team',
-        'extraction_mode': 'raw',
-        'default_result_set': 'OnOffStats',
-        'season_type_param': None,
-        'per_mode_param': None,
-        'entity_types': ['player'],
-        'endpoint': 'get-on-off',
-        'url_suffix': '/team',
-    },
 }
 
 

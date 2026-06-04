@@ -1,39 +1,46 @@
 import logging
+from typing import Any, Dict, List, Tuple
 
 from src.core.definitions.leagues import LEAGUES
+from src.etl.definitions.datasets import DATASETS
 
 logger = logging.getLogger(__name__)
 
 
-def is_league_in_season(league_key: str) -> bool:
-    """
-    Check if a league is currently 'in season' based on recent activity.
+# ============================================================================
+# Dataset-level season detector discovery
+# ============================================================================
 
-    Uses the `season_detector` block from the league's source_roles config.
-    Auto-detects the appropriate source from config. Dynamically delegates
+def _find_season_detector_datasets(league_key: str) -> List[Tuple[str, str]]:
+    """Return [(source_key, dataset_name), ...] for datasets tagged as season_detector."""
+    matches: List[Tuple[str, str]] = []
+    for source_key, datasets in DATASETS.items():
+        for dataset_name, ds_cfg in datasets.items():
+            if ds_cfg.get('role') == 'season_detector' and league_key in ds_cfg.get('leagues', []):
+                matches.append((source_key, dataset_name))
+    return matches
+
+
+def is_league_in_season(league_key: str) -> bool:
+    """Check if a league is currently 'in season' based on recent activity.
+
+    Discovers the season_detector dataset from :data:`DATASETS`.  Delegates
     to the source client's ``check_activity`` function if one is registered;
-    defaults to ``True`` if no implementation exists.
+    defaults to ``True`` if none exists.
     """
-    league = LEAGUES.get(league_key)
-    if not league:
+    if league_key not in LEAGUES:
         raise ValueError(f"Unknown league_key: {league_key}")
 
-    detector_configs = league.get('source_roles', {}).get('season_detector', {})
-    if not detector_configs:
+    detectors = _find_season_detector_datasets(league_key)
+    if not detectors:
         logger.warning(
-            "No season_detector registered for league='%s'. "
-            "Defaulting to in_season=True",
+            "No season_detector dataset for league='%s'. Defaulting to in_season=True",
             league_key,
         )
         return True
-    
-    # Use the first configured season_detector source
-    source_key = next(iter(detector_configs.keys()))
-    detector_def = detector_configs[source_key]
 
-    dataset = detector_def['dataset']
-    params = detector_def.get('params', {})
-    activity_window_days = params.get('activity_window_days', 8)
+    source_key, dataset = detectors[0]
+    activity_window_days = 8
 
     import importlib
 

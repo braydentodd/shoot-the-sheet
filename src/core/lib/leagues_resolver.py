@@ -21,15 +21,15 @@ def _league_or_raise(league_key: str) -> dict:
 
 
 def _parse_flip_md(value: str) -> Tuple[int, int]:
-    """Parse ``'MM-DD'`` into ``(month, day)``."""
-    month_str, day_str = value.split('-')
+    """Parse ``'MM/DD'`` into ``(month, day)``."""
+    month_str, day_str = value.split('/')
     return int(month_str), int(day_str)
 
 
 def get_current_season_year(league_key: str, now: datetime = None) -> int:
-    """End-year of the current season for ``league_key``, respecting calendar_flip_md."""
+    """End-year of the current season for ``league_key``, respecting calendar_flip."""
     cfg = _league_or_raise(league_key)
-    flip_month, flip_day = _parse_flip_md(cfg['calendar_flip_md'])
+    flip_month, flip_day = _parse_flip_md(cfg['calendar_flip'])
     now = now or datetime.now()
     if (now.month, now.day) >= (flip_month, flip_day):
         return now.year + 1

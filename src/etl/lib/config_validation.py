@@ -19,6 +19,8 @@ in :func:`validate_config`.
 import logging
 from typing import Dict, List, Union
 
+from src.etl.definitions.datasets import get_source_entities
+
 VALID_ENTITY_TYPES = frozenset({'league', 'player', 'team', 'country'})
 
 
@@ -80,7 +82,7 @@ def _validate_source_structure(
                 if provider not in sources:
                     errors.append(f"{prefix}: sources['{league}']['{provider}'] not registered in SOURCES")
                     continue
-                applies_to = sources[provider].get('applies_to', [])
+                entity_types = get_source_entities(provider)
                 if not isinstance(entities, dict):
                     errors.append(f"{prefix}: sources['{league}']['{provider}'] must be dict")
                     continue
@@ -96,20 +98,21 @@ def _validate_source_structure(
                             f"{prefix}: sources['{league}']['{provider}']['{entity_name}'] must be dict"
                         )
                         continue
-                    if entity_name not in applies_to:
+                    if entity_name not in entity_types:
                         errors.append(
                             f"{prefix}: sources['{league}']['{provider}']['{entity_name}'] - "
-                            f"source '{provider}' does not declare applies_to {entity_name!r}"
+                            f"source '{provider}' does not declare entity_types {entity_name!r}"
                         )
     return errors
 
 
 def _validate_dataset_refs(
     db_columns: Dict[str, Dict],
-    datasets: Dict[str, Dict],
     provider_filter: Union[str, None] = None,
 ) -> List[str]:
     """Validate that source dataset references exist in DATASETS."""
+    from src.etl.definitions.datasets import DATASETS
+
     errors = []
     for col_name, meta in db_columns.items():
         sources = meta.get('dataset_mapping')
@@ -125,6 +128,7 @@ def _validate_dataset_refs(
                     continue
                 if not isinstance(entities, dict):
                     continue
+                source_datasets = DATASETS.get(provider, {})
                 for entity_name, source_def in entities.items():
                     if entity_name not in VALID_ENTITY_TYPES:
                         continue
@@ -134,7 +138,7 @@ def _validate_dataset_refs(
                         source_def.get('dataset')
                         or source_def.get('pipeline', {}).get('dataset')
                     )
-                    if ds and ds not in datasets:
+                    if ds and ds not in source_datasets:
                         errors.append(
                             f"{prefix}: references unknown dataset '{ds}' "
                             f"for sources['{league_key}']['{provider}']['{entity_name}']"
@@ -248,143 +252,6 @@ def _validate_table_definitions(
     return errors
 
 
-def _validate_league_source_roles(
-    leagues: Dict[str, Dict],
-    sources: Dict[str, Dict],
-) -> List[str]:
-    """Validate league source role mappings against SOURCES registry."""
-    from src.core.definitions.leagues import VALID_SOURCE_ROLE_KEYS
-
-    errors = []
-    for league_key, meta in leagues.items():
-        role_map = meta.get('source_roles')
-        prefix = f"LEAGUES['{league_key}'].source_roles"
-        if not isinstance(role_map, dict):
-            errors.append(f"{prefix}: expected dict")
-            continue
-
-        missing_roles = sorted(role for role in VALID_SOURCE_ROLE_KEYS if role not in role_map)
-        if missing_roles:
-            errors.append(f"{prefix}: missing required roles {missing_roles}")
-
-        extra_roles = sorted(role for role in role_map if role not in VALID_SOURCE_ROLE_KEYS)
-        if extra_roles:
-            errors.append(f"{prefix}: unsupported roles {extra_roles}")
-
-        for role, role_cfg in role_map.items():
-            role_prefix = f"{prefix}['{role}']"
-            if not isinstance(role_cfg, dict):
-                errors.append(f"{role_prefix}: expected dict")
-                continue
-
-            if len(role_cfg) != 1:
-                errors.append(f"{role_prefix}: must contain exactly one source_key mapping")
-                continue
-            
-            source_key = list(role_cfg.keys())[0]
-
-            if not isinstance(source_key, str) or not source_key:
-                errors.append(f"{role_prefix}: missing required source_key")
-                continue
-
-            if source_key not in sources:
-                errors.append(f"{role_prefix}: source '{source_key}' not in SOURCES")
-                continue
-            src = sources[source_key]
-            if not src.get('external'):
-                errors.append(f"{role_prefix}: source '{source_key}' has external=False")
-            if league_key not in src.get('leagues', []):
-                errors.append(
-                    f"{role_prefix}: source '{source_key}' does not list "
-                    f"'{league_key}' in its leagues"
-                )
-
-            applies_to = set(src.get('applies_to', []))
-            if role == 'roster_maintainer' and not {'team', 'player'}.issubset(applies_to):
-                errors.append(
-                    f"{role_prefix}: source '{source_key}' must apply to both team and player"
-                )
-
-            snapshot_cfg = role_cfg[source_key]
-            # Both roles can hold explicit dataset payload properties if populated
-            if snapshot_cfg and isinstance(snapshot_cfg, dict):
-                required_keys = {
-                    'dataset',
-                    'team_id_field',
-                    'player_id_field',
-                    'params',
-                }
-                extra_snapshot_keys = sorted(k for k in snapshot_cfg if k not in required_keys)
-                if extra_snapshot_keys:
-                    errors.append(
-                        f"{role_prefix}.{source_key}: unsupported keys {extra_snapshot_keys}; "
-                        f"allowed keys are {sorted(required_keys)}"
-                    )
-                missing = sorted(k for k in required_keys if k not in snapshot_cfg)
-                if missing:
-                    errors.append(
-                        f"{role_prefix}.{source_key}: missing required keys {missing}"
-                    )
-                else:
-                    if not isinstance(snapshot_cfg['dataset'], str):
-                        errors.append(f"{role_prefix}.{source_key}.dataset: expected str")
-                    if not isinstance(snapshot_cfg['team_id_field'], str):
-                        errors.append(f"{role_prefix}.{source_key}.team_id_field: expected str")
-                    if not isinstance(snapshot_cfg['player_id_field'], str):
-                        errors.append(f"{role_prefix}.{source_key}.player_id_field: expected str")
-                    if not isinstance(snapshot_cfg['params'], dict):
-                        errors.append(f"{role_prefix}.{source_key}.params: expected dict")
-            elif role == 'roster_maintainer':
-                errors.append(f"{role_prefix}.{source_key}: expected dict with snapshot config")
-
-    return errors
-
-
-def _validate_legacy_source_fields(leagues: Dict[str, Dict]) -> List[str]:
-    """Disallow legacy league source fields after source-role migration."""
-    errors: List[str] = []
-    for league_key, meta in leagues.items():
-        if 'primary_source' in meta:
-            errors.append(
-                f"LEAGUES['{league_key}']: legacy field 'primary_source' is not allowed; stats/profile source selection is driven by DB_COLUMNS sources"
-            )
-        if 'roster_maintainer' in meta:
-            errors.append(
-                f"LEAGUES['{league_key}']: legacy field 'roster_maintainer' is not allowed; use source_roles['roster_maintainer']"
-            )
-    return errors
-
-
-def _validate_legacy_pipeline_fields(leagues: Dict[str, Dict]) -> List[str]:
-    """Disallow pipeline-policy fields in league config.
-
-    Pipeline behavior is defined globally in ``src.etl.definitions.pipeline``.
-    """
-    errors: List[str] = []
-    for league_key, meta in leagues.items():
-        if 'pipeline' in meta:
-            errors.append(
-                f"LEAGUES['{league_key}']: field 'pipeline' is not allowed; use src.etl.definitions.pipeline"
-            )
-        if 'pipeline_profile' in meta:
-            errors.append(
-                f"LEAGUES['{league_key}']: legacy field 'pipeline_profile' is not allowed; use src.etl.definitions.pipeline"
-            )
-        if 'entity_identity_columns' in meta:
-            errors.append(
-                f"LEAGUES['{league_key}']: legacy field 'entity_identity_columns' is not allowed"
-            )
-        if 'entity_matcher' in meta:
-            errors.append(
-                f"LEAGUES['{league_key}']: legacy field 'entity_matcher' is not allowed; use ENTITY_MATCHER_POLICY"
-            )
-        if 'etl_stages' in meta:
-            errors.append(
-                f"LEAGUES['{league_key}']: legacy field 'etl_stages' is not allowed; use PIPELINE_STEPS/PIPELINE_PHASES"
-            )
-    return errors
-
-
 def _validate_domain_primaries() -> List[str]:
     from src.core.definitions.stats import STAT_DOMAINS
     errors = []
@@ -432,61 +299,19 @@ def _validate_fk_targets(tables: Dict[str, Dict]) -> List[str]:
 
 
 def _validate_league_stage_definitions() -> List[str]:
-    """Validate global ETL steps and phase ordering declarations."""
+    """Validate global ETL phase ordering declarations."""
     from src.etl.definitions.pipeline import (
         PIPELINE_PHASES,
-        PIPELINE_STEPS,
         VALID_ETL_PHASES,
         VALID_ETL_STEP_HANDLERS,
-        VALID_SEASON_TYPE_MODES,
-        VALID_SEASON_WINDOWS,
     )
-    
+
     errors: List[str] = []
-    expected_keys = {'handler', 'season_window', 'season_type_mode'}
-    referenced_steps = set()
-
-    if not isinstance(PIPELINE_STEPS, dict):
-        return [
-            f"PIPELINE_STEPS: expected dict, got {type(PIPELINE_STEPS).__name__}"
-        ]
-
-    for step_name, step in PIPELINE_STEPS.items():
-        prefix = f"PIPELINE_STEPS['{step_name}']"
-        if not isinstance(step_name, str) or not step_name:
-            errors.append('PIPELINE_STEPS: step key must be non-empty str')
-            continue
-        if not isinstance(step, dict):
-            errors.append(f"{prefix}: expected dict, got {type(step).__name__}")
-            continue
-
-        step_keys = set(step.keys())
-        if step_keys != expected_keys:
-            errors.append(
-                f"{prefix}: keys must exactly match {sorted(expected_keys)}; "
-                f"got {sorted(step_keys)}"
-            )
-        handler = step.get('handler')
-        if handler not in VALID_ETL_STEP_HANDLERS:
-            errors.append(
-                f"{prefix}.handler: expected one of {sorted(VALID_ETL_STEP_HANDLERS)}, got {handler!r}"
-            )
-        season_window = step.get('season_window')
-        if season_window not in VALID_SEASON_WINDOWS:
-            errors.append(
-                f"{prefix}.season_window: expected one of {sorted(VALID_SEASON_WINDOWS)}, got {season_window!r}"
-            )
-        season_type_mode = step.get('season_type_mode')
-        if season_type_mode not in VALID_SEASON_TYPE_MODES:
-            errors.append(
-                f"{prefix}.season_type_mode: expected one of {sorted(VALID_SEASON_TYPE_MODES)}, got {season_type_mode!r}"
-            )
 
     if not isinstance(PIPELINE_PHASES, dict):
-        errors.append(
+        return [
             f"PIPELINE_PHASES: expected dict, got {type(PIPELINE_PHASES).__name__}"
-        )
-        return errors
+        ]
 
     unsupported_phases = sorted(
         phase for phase in PIPELINE_PHASES if phase not in VALID_ETL_PHASES
@@ -504,52 +329,30 @@ def _validate_league_stage_definitions() -> List[str]:
             f"PIPELINE_PHASES: missing required phases {missing_phases}"
         )
 
-    for phase, step_names in PIPELINE_PHASES.items():
+    for phase, handlers in PIPELINE_PHASES.items():
         phase_prefix = f"PIPELINE_PHASES['{phase}']"
-        if not isinstance(step_names, list):
-            errors.append(f"{phase_prefix}: expected list, got {type(step_names).__name__}")
+        if not isinstance(handlers, list):
+            errors.append(f"{phase_prefix}: expected list, got {type(handlers).__name__}")
             continue
-        if not step_names:
+        if not handlers:
             errors.append(f"{phase_prefix}: must not be empty")
             continue
 
         seen = set()
-        for idx, step_name in enumerate(step_names):
+        for idx, handler in enumerate(handlers):
             prefix = f"{phase_prefix}[{idx}]"
-            if not isinstance(step_name, str) or not step_name:
+            if not isinstance(handler, str) or not handler:
                 errors.append(f"{prefix}: expected non-empty str")
                 continue
-            if step_name in seen:
-                errors.append(f"{phase_prefix}: duplicate step {step_name!r}")
+            if handler in seen:
+                errors.append(f"{phase_prefix}: duplicate handler {handler!r}")
                 continue
-            seen.add(step_name)
-            if step_name not in PIPELINE_STEPS:
-                errors.append(f"{prefix}: unknown step key {step_name!r}")
-                continue
-            referenced_steps.add(step_name)
+            seen.add(handler)
+            if handler not in VALID_ETL_STEP_HANDLERS:
+                errors.append(
+                    f"{prefix}: unknown handler {handler!r}; expected one of {sorted(VALID_ETL_STEP_HANDLERS)}"
+                )
 
-    unused_steps = sorted(step for step in PIPELINE_STEPS if step not in referenced_steps)
-    if unused_steps:
-        errors.append(
-            f"PIPELINE_STEPS: unreferenced step keys {unused_steps}"
-        )
-
-    return errors
-
-
-def _validate_pipeline_structure() -> List[str]:
-    """Validate global pipeline policy top-level shape."""
-    from src.etl.definitions.pipeline import PIPELINE_PHASES, PIPELINE_STEPS
-
-    errors: List[str] = []
-    if not isinstance(PIPELINE_STEPS, dict):
-        errors.append(
-            f"PIPELINE_STEPS: expected dict, got {type(PIPELINE_STEPS).__name__}"
-        )
-    if not isinstance(PIPELINE_PHASES, dict):
-        errors.append(
-            f"PIPELINE_PHASES: expected dict, got {type(PIPELINE_PHASES).__name__}"
-        )
     return errors
 
 
@@ -569,13 +372,9 @@ def validate_config() -> List[str]:
     errors.extend(_validate_pg_types(DB_COLUMNS))
     errors.extend(_validate_source_structure(DB_COLUMNS, SOURCES))
     errors.extend(_validate_table_definitions(TABLES, DB_COLUMNS))
-    errors.extend(_validate_league_source_roles(LEAGUES, SOURCES))
-    errors.extend(_validate_legacy_source_fields(LEAGUES))
-    errors.extend(_validate_legacy_pipeline_fields(LEAGUES))
     errors.extend(_validate_domain_coverage(DB_COLUMNS))
     errors.extend(_validate_domain_primaries())
     errors.extend(_validate_fk_targets(TABLES))
-    
     errors.extend(_validate_league_stage_definitions())
     
     return errors
@@ -596,31 +395,18 @@ def validate_all() -> List[str]:
     # Cross-cuts ETL definitions + per-source DATASETS (no league required).
     validate_config()
 
-    # Source-specific validation folded into the center.  Each source is
-    # validated explicitly so that adding a new source requires editing this
-    # module (intentional: it keeps the validation surface visible).
+    # Source-specific validation folded into the center.
+    from src.core.definitions.db_columns import DB_COLUMNS
+
     aggregated: List[str] = []
     for source_key in sorted(SOURCES):
         source_meta = SOURCES[source_key]
-        if not source_meta.get('external'):
+        if source_meta.get('external_id') is None:
             continue
-
-        try:
-            cfg_mod = __import__(f'src.etl.sources.{source_key}.config', fromlist=['config'])
-        except ModuleNotFoundError:
-            logger.warning(
-                'External source %r is missing config module; '
-                'skipping source-specific validation.', source_key,
-            )
-            continue
-        datasets = getattr(cfg_mod, 'DATASETS', None)
-        if datasets is not None:
-            from src.core.definitions.db_columns import DB_COLUMNS
-            aggregated.extend(_validate_dataset_refs(
-                DB_COLUMNS,
-                datasets,
-                provider_filter=source_key,
-            ))
+        aggregated.extend(_validate_dataset_refs(
+            DB_COLUMNS,
+            provider_filter=source_key,
+        ))
 
     if aggregated:
         for err in aggregated:
