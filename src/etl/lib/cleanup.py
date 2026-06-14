@@ -25,7 +25,6 @@ from typing import Dict, List, Union
 from src.core.definitions.db_columns import DB_COLUMNS
 from src.core.definitions.leagues import LEAGUES
 from src.core.definitions.schema import TABLE_ENTITY, TABLES
-from src.core.definitions.stats import STAT_RATES
 from src.core.lib.leagues_resolver import get_oldest_retained_season
 from src.core.lib.postgres import db_connection, get_db_connection, quote_col
 
@@ -46,17 +45,30 @@ def _stats_table_for_entity(entity: str) -> Union[str, None]:
 
 
 def _collect_domain_columns(entity: str) -> Dict[str, List[str]]:
-    """Return ``{domain_name: [counter columns]}`` for every non-primary
+    """Return ``{domain_name: [counter columns]}`` for every non-base
     domain whose stats apply to ``entity``.
 
-    Counter columns are everything in the domain *except* its ``minutes_col``
-    denominator.  Minutes is the single coherency signal: if it is 0 / NULL
-    every other column in the domain is nulled to
-    keep the row internally consistent.
+    Domain configuration comes from each dataset's ``source_mapping.domain``.
+    The base domain (``mins_x10``) is always present and is not included here.
     """
+    from src.etl.definitions.datasets import DATASETS
+
     target_table = _stats_table_for_entity(entity)
     if not target_table:
         return {}
+
+    # Build domain -> minutes_col lookup from datasets
+    domain_configs: Dict[str, dict] = {}
+    for identity_key, datasets in DATASETS.items():
+        for ds_name, ds_def in datasets.items():
+            domain = (ds_def.get("source_mapping") or {}).get("domain")
+            if not domain:
+                continue
+            name = domain.get("name")
+            if not name or name == "base":
+                continue
+            domain_configs[name] = domain
+
     out: Dict[str, List[str]] = {}
     for col_name, col_meta in DB_COLUMNS.items():
         tables = col_meta.get("tables", [])
@@ -64,15 +76,15 @@ def _collect_domain_columns(entity: str) -> Dict[str, List[str]]:
             tables = [tables]
         if target_table not in tables:
             continue
-        domain = col_meta.get("domain")
-        if not domain or domain not in STAT_DOMAINS:
+        col_domain = col_meta.get("domain")
+        if not col_domain or col_domain == "base":
             continue
-        domain_cfg = STAT_DOMAINS[domain]
-        if domain_cfg.get("primary", True):
+        if col_domain not in domain_configs:
             continue
-        if col_name == domain_cfg["minutes_col"]:
+        mins_col = f"{col_domain}_mins_x10"
+        if col_name == mins_col:
             continue
-        out.setdefault(domain, []).append(col_name)
+        out.setdefault(col_domain, []).append(col_name)
     return out
 
 
@@ -106,7 +118,7 @@ def normalize_stats_domains(
     with db_connection() as conn:
         with conn.cursor() as cur:
             for domain, cols in domain_cols.items():
-                minutes_col = quote_col(STAT_DOMAINS[domain]["minutes_col"])
+                minutes_col = quote_col(f"{domain}_mins_x10")
 
                 set_to_zero = ", ".join(
                     f"{quote_col(c)} = COALESCE({quote_col(c)}, 0)" for c in cols

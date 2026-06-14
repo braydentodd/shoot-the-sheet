@@ -32,6 +32,24 @@ class SeasonTypeDef(TypedDict):
     min_season: Union[str, None]
 
 
+# ============================================================================
+# RATE LIMITS
+# ============================================================================
+
+RATE_LIMITS: Dict[str, Union[float, int]] = {
+    "requests_per_second": 0.8,
+    "max_retries": 3,
+    "backoff_base": 30,
+    "timeout_default": 30,
+    "timeout_bulk": 120,
+    "max_consecutive_failures": 5,
+}
+
+
+# ============================================================================
+# SEASON TYPES
+# ============================================================================
+
 SEASON_TYPES: Dict[str, SeasonTypeDef] = {
     "regular_season": {
         "wire_name": "Regular Season",
@@ -45,7 +63,7 @@ SEASON_TYPES: Dict[str, SeasonTypeDef] = {
         "wire_name": "PlayIn",
         "min_season": "2020-21",
     },
-    "showcase_cup": {
+    "showcase": {
         "wire_name": "Showcase Cup",
         "min_season": "2022-23",
     },
@@ -83,7 +101,6 @@ REQUEST_HEADERS: Dict[str, str] = {
 
 # NBA-specific API parameters
 API_CONFIG: ApiConfigDef = {
-    "league_id": "00",
     "per_mode_simple": "Totals",
     "per_mode_time": "Totals",
     "per_mode_detailed": "Totals",

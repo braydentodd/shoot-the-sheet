@@ -60,6 +60,12 @@ class LeagueDef(TypedDict):
             season-type keys.  Keys are "regular_season" / "postseason";
             values are lists of canonical type identifiers
             (e.g. ``["regular_season", "showcase_cup"]``).
+        combined_season_types: Mapping of a "lead" canonical key to the
+            full list of canonical keys it covers in a single API call.
+            e.g. ``{"regular_season": ["regular_season", "showcase_cup"]}``
+            means one call with wire_name "Regular Season" also returns
+            Showcase Cup data, saving an API call for the latter.
+            Leagues without combinations use an empty dict.
         calendar_flip: "MM/DD" string -- the approximate month/day when
             the off-season turns into the next season year.
         stat_rates: Which rate modes to compute (e.g. ["per_poss", "per_min"]).
@@ -77,6 +83,7 @@ class LeagueDef(TypedDict):
     gender: str
     season_format: str
     season_types: Dict[str, List[str]]
+    combined_season_types: Dict[str, List[str]]
     calendar_flip: str
     stat_rates: List[str]
     retention_seasons: int
@@ -97,6 +104,7 @@ LEAGUES: Dict[str, LeagueDef] = {
             "regular_season": ["regular_season"],
             "postseason": ["playoffs", "play_in"],
         },
+        "combined_season_types": {},
         "calendar_flip": "08/01",
         "stat_rates": ["per_poss", "per_min"],
         "retention_seasons": 6,
@@ -111,6 +119,7 @@ LEAGUES: Dict[str, LeagueDef] = {
             "regular_season": ["regular_season"],
             "postseason": ["playoffs"],
         },
+        "combined_season_types": {},
         "calendar_flip": "12/31",
         "stat_rates": ["per_poss", "per_min"],
         "retention_seasons": 6,
@@ -124,6 +133,9 @@ LEAGUES: Dict[str, LeagueDef] = {
         "season_types": {
             "regular_season": ["regular_season", "showcase_cup"],
             "postseason": ["playoffs"],
+        },
+        "combined_season_types": {
+            "regular_season": ["regular_season", "showcase_cup"],
         },
         "calendar_flip": "08/01",
         "stat_rates": ["per_poss", "per_min"],

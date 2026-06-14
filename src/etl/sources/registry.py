@@ -1,16 +1,18 @@
 from typing import Any, Tuple
 
-from src.etl.sources.nba_api import config as nba_config
 from src.etl.sources.nba_api import client as nba_client
-from src.etl.sources.pbp_stats import config as pbp_config
+from src.etl.sources.nba_api import config as nba_config
 from src.etl.sources.pbp_stats import client as pbp_client
+from src.etl.sources.pbp_stats import config as pbp_config
 from src.etl.sources.shoot_the_sheet import client as sheets_client
+from src.etl.sources.shoot_the_sheet import config as sheets_config
 
 SOURCE_MODULES = {
-    'nba_api': (nba_config, nba_client),
-    'pbp_stats': (pbp_config, pbp_client),
-    'shoot_the_sheet': (None, sheets_client)
+    "nba_api": (nba_config, nba_client),
+    "pbp_stats": (pbp_config, pbp_client),
+    "shoot_the_sheet": (sheets_config, sheets_client),
 }
+
 
 def get_source_modules(source_key: str) -> Tuple[Any, Any]:
     if source_key not in SOURCE_MODULES:

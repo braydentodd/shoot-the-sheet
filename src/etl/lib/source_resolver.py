@@ -100,6 +100,21 @@ def get_external_sources_for_league(league_key: str) -> list[str]:
 
 def get_source_league_id(source_key: str, league_key: str) -> str:
     """Return the source-specific league identifier for a league/source pair."""
+    entry = _get_league_entry(source_key, league_key)
+    return entry["id"]
+
+
+def get_source_league_season_param_format(source_key: str, league_key: str) -> str:
+    """Return the wire season token format for a league/source pair.
+
+    e.g. ``"SSSS-EE"`` for NBA on nba_api, ``"EEEE"`` for WNBA on nba_api.
+    """
+    entry = _get_league_entry(source_key, league_key)
+    return entry["season_param_format"]
+
+
+def _get_league_entry(source_key: str, league_key: str) -> dict:
+    """Return the league entry dict (``{id, season_format}``)."""
     if source_key not in SOURCES:
         raise ValueError(f"Unknown source: {source_key!r}")
     if league_key not in LEAGUES:

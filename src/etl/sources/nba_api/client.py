@@ -18,7 +18,10 @@ from src.core.definitions.leagues import LEAGUES
 from src.core.lib.rate_limiter import get_rate_limiter
 from src.core.lib.season_resolver import format_season_param, parse_season_end_year
 from src.etl.definitions.datasets import DATASETS
-from src.etl.lib.source_resolver import get_source_league_id
+from src.etl.lib.source_resolver import (
+    get_source_league_id,
+    get_source_league_season_param_format,
+)
 from src.etl.sources.nba_api.config import (
     API_CONFIG,
     REQUEST_HEADERS,
@@ -172,6 +175,7 @@ def build_dataset_params(
     season_end_year: int,
     season_type_name: str,
     entity: str,
+    identity_key: str = "nba_id",
     extra_params: Union[Dict[str, Any], None] = None,
 ) -> Dict[str, Any]:
     """Assemble the full parameter dict for an NBA API call.
@@ -179,11 +183,14 @@ def build_dataset_params(
     Merges standard parameters (season, league_id, per_mode, season_type)
     with dataset-specific defaults and caller-supplied overrides.
     """
-    ds_cfg = DATASETS.get("nba_api", {}).get(dataset_name, {})
+    ds_cfg = DATASETS.get(identity_key, {}).get(dataset_name, {})
     wire = ds_cfg.get("source_mapping", {})
     league_cfg = LEAGUES[league_key]
     source_league_id = get_source_league_id("nba_api", league_key)
-    param_format = wire.get("season_param_format", "SSSS-EE")
+
+    # Season parameter format: source config > dataset override > auto-inferred
+    source_format = get_source_league_season_param_format("nba_api", league_key)
+    param_format = wire.get("season_param_format", source_format)
 
     # Season parameter — format according to source's token spec
     season_param = wire.get("season_param", "season")
@@ -247,7 +254,7 @@ def make_fetcher(
     def fetch(
         dataset: str, extra_params: Union[Dict[str, Any], None] = None
     ) -> Union[Dict, None]:
-        ds_cfg = DATASETS.get("nba_api", {}).get(dataset, {})
+        ds_cfg = DATASETS.get("nba_id", {}).get(dataset, {})
         class_name = ds_cfg.get("source_mapping", {}).get("class_name", dataset)
         DatasetClass = load_dataset_class(class_name)
         if DatasetClass is None:

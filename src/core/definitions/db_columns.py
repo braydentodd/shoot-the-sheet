@@ -247,7 +247,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "player": {"dataset": "player_info", "field": "HEIGHT"},
+                    "player": {"dataset": "team_roster", "field": "HEIGHT"},
                 },
             },
         },
@@ -269,7 +269,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "player": {"dataset": "player_info", "field": "WEIGHT"},
+                    "player": {"dataset": "team_roster", "field": "WEIGHT"},
                 },
             },
         },
@@ -323,7 +323,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_info",
+                        "dataset": "team_roster",
                         "field": "BIRTHDATE",
                         "transform": "parse_birthdate",
                     },
@@ -2046,7 +2046,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "player": {"dataset": "player_info", "field": "JERSEY"},
+                    "player": {"dataset": "team_roster", "field": "JERSEY"},
                 },
             },
         },

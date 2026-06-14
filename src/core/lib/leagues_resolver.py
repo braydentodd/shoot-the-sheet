@@ -115,3 +115,29 @@ def build_consolidation_map(league_key: str) -> Dict[str, str]:
         for key in keys:
             result[key] = group
     return result
+
+
+def get_effective_season_types(league_key: str) -> List[str]:
+    """Return the canonical keys that need individual API calls.
+
+    When ``combined_season_types`` declares that a lead key covers
+    sub-keys (e.g. G League where ``regular_season`` also returns
+    ``showcase_cup`` data), only the lead key is included.  Sub-keys
+    are still part of ``get_all_canonical_season_types`` but are
+    deduplicated here to avoid redundant API calls.
+    """
+    cfg = _league_or_raise(league_key)
+    all_keys = get_all_canonical_season_types(league_key)
+    combined = cfg.get("combined_season_types", {})
+    covered: set = set()
+    for lead, sub_keys in combined.items():
+        covered.update(k for k in sub_keys if k != lead)
+    return [k for k in all_keys if k not in covered]
+
+
+def get_combined_covers(league_key: str, canonical_key: str) -> List[str]:
+    """Return the list of canonical keys that *canonical_key* covers
+    in a single API call, or ``[canonical_key]`` if not combined."""
+    cfg = _league_or_raise(league_key)
+    combined = cfg.get("combined_season_types", {})
+    return list(combined.get(canonical_key, [canonical_key]))

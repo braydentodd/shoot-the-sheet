@@ -278,36 +278,6 @@ def _validate_table_definitions(
     return errors
 
 
-def _validate_domain_primaries() -> List[str]:
-    from src.core.definitions.stats import STAT_DOMAINS
-
-    errors = []
-    primaries = [k for k, v in STAT_DOMAINS.items() if v.get("primary")]
-    if len(primaries) != 1:
-        errors.append(
-            f"STAT_DOMAINS: expected exactly one entry with primary=True, got {primaries!r}"
-        )
-    return errors
-
-
-def _validate_domain_coverage(db_columns: Dict[str, Dict]) -> List[str]:
-    """Every non-primary domain in STAT_DOMAINS must be referenced by at
-    least one DB_COLUMNS entry (otherwise the domain is dead config)."""
-    from src.core.definitions.stats import STAT_DOMAINS
-
-    used = {meta.get("domain") for meta in db_columns.values() if meta.get("domain")}
-    errors: List[str] = []
-    for domain, cfg in STAT_DOMAINS.items():
-        if cfg.get("primary"):
-            continue
-        if domain not in used:
-            errors.append(
-                f"STAT_DOMAINS['{domain}']: declared but no DB_COLUMNS entry "
-                f"sets domain={domain!r}"
-            )
-    return errors
-
-
 def _validate_fk_targets(tables: Dict[str, Dict]) -> List[str]:
     """Every FK ref_schema/ref_table must resolve to a known table, and the
     on_update / on_delete actions must be in the allowed set."""
@@ -426,8 +396,14 @@ def validate_all() -> List[str]:
 
     aggregated: List[str] = []
     for source_key in sorted(SOURCES):
-        source_meta = SOURCES[source_key]
-        if source_meta.get("external_id") is None:
+        # Only validate external sources (those not under sts_id identity)
+        from src.etl.definitions.datasets import DATASETS
+
+        is_internal = any(
+            ds_def.get("source") == source_key
+            for ds_def in DATASETS.get("sts_id", {}).values()
+        )
+        if is_internal:
             continue
         aggregated.extend(
             _validate_dataset_refs(

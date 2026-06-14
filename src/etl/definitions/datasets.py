@@ -17,21 +17,32 @@ Shape:
 This mirrors the ``dataset_mapping`` pattern in ``db_columns.py``.
 """
 
-from typing import Dict, List, TypedDict, Union
+from typing import Any, Dict, List, TypedDict, Union
+
+
+class DomainDef(TypedDict, total=False):
+    """Per-dataset stat domain configuration.
+
+    ``name`` is the domain identifier (``"base"``, ``"tracking"``, etc.).
+    ``minutes_present`` / ``possessions_present`` indicate which denominator
+    columns this dataset provides beyond the base ``mins_x10`` / ``poss``.
+    """
+
+    name: str
+    minutes_present: bool
+    possessions_present: bool
 
 
 class SourceMappingDef(TypedDict, total=False):
-    """Source-specific wire parameters.  Optional fields vary by source type."""
+    """Source-specific wire parameters -- how to call the API endpoint."""
 
     class_name: str
     result_set: Union[str, None]
-    season_param_format: Union[str, None]
     season_type_param: Union[str, None]
     per_mode_param: Union[str, None]
     requires_params: Union[List[str], None]
     season_param: Union[str, None]
     endpoint: Union[str, None]
-    url_suffix: Union[str, None]
 
 
 class DatasetDef(TypedDict):
@@ -40,6 +51,7 @@ class DatasetDef(TypedDict):
     min_season: Union[str, None]
     execution_tier: str
     source: str
+    domain: Union[DomainDef, None]
     source_mapping: SourceMappingDef
 
 
@@ -53,10 +65,10 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2003-04",
             "execution_tier": "per_team",
             "source": "nba_api",
+            "domain": {"name": "base"},
             "source_mapping": {
                 "class_name": "leaguedashplayerstats",
                 "result_set": "LeagueDashPlayerStats",
-                "season_param_format": "SSSS-EE",
                 "season_type_param": "season_type_all_star",
                 "per_mode_param": "per_mode_detailed",
             },
@@ -65,10 +77,10 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2003-04",
             "execution_tier": "per_league",
             "source": "nba_api",
+            "domain": {"name": "base"},
             "source_mapping": {
                 "class_name": "leaguedashteamstats",
                 "result_set": "LeagueDashTeamStats",
-                "season_param_format": "SSSS-EE",
                 "season_type_param": "season_type_all_star",
                 "per_mode_param": "per_mode_detailed",
             },
@@ -78,10 +90,10 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2013-14",
             "execution_tier": "per_team",
             "source": "nba_api",
+            "domain": {"name": "tracking", "minutes_present": True, "possessions_present": False},
             "source_mapping": {
                 "class_name": "leaguedashptstats",
                 "result_set": "LeagueDashPtStats",
-                "season_param_format": "SSSS-EE",
                 "season_type_param": "season_type_all_star",
                 "per_mode_param": "per_mode_simple",
                 "requires_params": ["pt_measure_type"],
@@ -91,10 +103,10 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2013-14",
             "execution_tier": "per_league",
             "source": "nba_api",
+            "domain": {"name": "tracking", "minutes_present": True, "possessions_present": False},
             "source_mapping": {
                 "class_name": "leaguedashptstats",
                 "result_set": "LeagueDashPtStats",
-                "season_param_format": "SSSS-EE",
                 "season_type_param": "season_type_all_star",
                 "per_mode_param": "per_mode_simple",
                 "requires_params": ["pt_measure_type"],
@@ -108,7 +120,6 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "source_mapping": {
                 "class_name": "leaguehustlestatsplayer",
                 "result_set": "HustleStatsPlayer",
-                "season_param_format": "SSSS-EE",
                 "season_type_param": "season_type_all_star",
                 "per_mode_param": "per_mode_time",
             },
@@ -120,7 +131,6 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "source_mapping": {
                 "class_name": "leaguehustlestatsteam",
                 "result_set": "HustleStatsTeam",
-                "season_param_format": "SSSS-EE",
                 "season_type_param": "season_type_all_star",
                 "per_mode_param": "per_mode_time",
             },
@@ -133,7 +143,6 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "source_mapping": {
                 "class_name": "leaguedashptdefend",
                 "result_set": "LeagueDashPtDefend",
-                "season_param_format": "SSSS-EE",
                 "season_type_param": "season_type_all_star",
                 "per_mode_param": "per_mode_simple",
                 "requires_params": ["defense_category"],
@@ -146,7 +155,6 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "source_mapping": {
                 "class_name": "leaguedashptteamdefend",
                 "result_set": "LeagueDashPtTeamDefend",
-                "season_param_format": "SSSS-EE",
                 "season_type_param": "season_type_all_star",
                 "per_mode_param": "per_mode_simple",
                 "requires_params": ["defense_category"],
@@ -160,7 +168,6 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "source_mapping": {
                 "class_name": "commonteamroster",
                 "result_set": "CommonTeamRoster",
-                "season_param_format": "SSSS-EE",
             },
         },
         # --- Team discovery (all active teams, 1 call) ---
@@ -181,7 +188,6 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "source_mapping": {
                 "class_name": "draftcombineplayeranthro",
                 "result_set": "DraftCombinePlayerAnthro",
-                "season_param_format": "SSSS-EE",
                 "season_param": "season_year",
             },
         },
@@ -193,7 +199,6 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "source_mapping": {
                 "class_name": "teamplayeronoffdetails",
                 "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
-                "season_param_format": "SSSS-EE",
                 "season_type_param": "season_type_all_star",
                 "per_mode_param": "per_mode_detailed",
             },
@@ -205,7 +210,6 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "source_mapping": {
                 "class_name": "teamplayeronoffdetails",
                 "result_set": "PlayersOffCourtTeamPlayerOnOffDetails",
-                "season_param_format": "SSSS-EE",
                 "season_type_param": "season_type_all_star",
                 "per_mode_param": "per_mode_detailed",
             },
@@ -218,7 +222,6 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "source_mapping": {
                 "class_name": "teaminfocommon",
                 "result_set": "TeamInfoCommon",
-                "season_param_format": "SSSS-EE",
                 "season_type_param": "season_type_all_star",
             },
         },
@@ -228,9 +231,7 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "source": "pbp_stats",
             "source_mapping": {
                 "result_set": "PbpTotals",
-                "season_param_format": "SSSS-EE",
                 "endpoint": "get-totals",
-                "url_suffix": None,
             },
         },
         "player_totals": {
@@ -239,9 +240,7 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "source": "pbp_stats",
             "source_mapping": {
                 "result_set": "PbpTotals",
-                "season_param_format": "SSSS-EE",
                 "endpoint": "get-totals",
-                "url_suffix": None,
             },
         },
         # --- Activity / game detection (all seasons) ---
@@ -252,7 +251,6 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "source_mapping": {
                 "class_name": "leaguegamefinder",
                 "result_set": "LeagueGameFinderResults",
-                "season_param_format": "SSSS-EE",
                 "season_type_param": "season_type_all_star",
             },
         },

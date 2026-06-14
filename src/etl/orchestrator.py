@@ -278,17 +278,28 @@ def _run_groups(
 
 
 def _get_internal_sources() -> List[str]:
-    """Return source keys with no external_id (internal/product-of-system sources)."""
-    return [sk for sk, meta in SOURCES.items() if meta.get("external_id") is None]
+    """Return source keys whose datasets live under the ``sts_id`` identity."""
+    from src.etl.definitions.datasets import DATASETS
+
+    internal = set()
+    for ds_name, ds_def in DATASETS.get("sts_id", {}).items():
+        internal.add(ds_def.get("source"))
+    return sorted(internal)
 
 
 def _get_external_sources(league_key: str) -> List[str]:
-    """Return external source keys for a league, in SOURCES dict order."""
-    return [
-        sk
-        for sk, meta in SOURCES.items()
-        if meta.get("external_id") is not None and league_key in meta.get("leagues", {})
-    ]
+    """Return source keys with datasets under non-``sts_id`` identities."""
+    from src.etl.definitions.datasets import DATASETS
+
+    external = set()
+    for identity_key, datasets in DATASETS.items():
+        if identity_key == "sts_id":
+            continue
+        for ds_name, ds_def in datasets.items():
+            source = ds_def.get("source")
+            if source and source != "shoot_the_sheet":
+                external.add(source)
+    return sorted(external)
 
 
 def _update_internal(

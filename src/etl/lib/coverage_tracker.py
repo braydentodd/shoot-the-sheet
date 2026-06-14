@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Tuple
 from src.core.definitions.db_columns import DB_COLUMNS
 from src.core.definitions.schema import TABLES
 from src.core.lib.postgres import db_connection, quote_col
+from src.etl.lib.load import _resolve_league_id
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 def _entities_for_column(col_meta: Dict[str, Any]) -> set:
     """Return all entity keys present anywhere in the column's dataset_mapping."""
     entities = set()
-    mapping = col_meta.get('dataset_mapping')
+    mapping = col_meta.get("dataset_mapping")
     if not mapping:
         return entities
     for league_sources in mapping.values():
@@ -38,22 +39,9 @@ def _entities_for_column(col_meta: Dict[str, Any]) -> set:
     return entities
 
 
-def _resolve_league_id(conn: Any, league_key: str) -> int:
-    """Resolve league_id for a league_key by looking it up in profiles.leagues."""
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT sts_id FROM profiles.leagues WHERE code = %s",
-            (league_key,),
-        )
-        row = cur.fetchone()
-        if not row:
-            raise ValueError(f"League profile with code {league_key!r} not found in profiles.leagues")
-        return int(row[0])
-
-
 def _serialize_params(params: Dict[str, Any]) -> str:
     """Serialize params dict to a canonical string for comparison."""
-    return json.dumps(params, sort_keys=True, separators=(',', ':'))
+    return json.dumps(params, sort_keys=True, separators=(",", ":"))
 
 
 def is_group_coverage_current(
@@ -67,16 +55,16 @@ def is_group_coverage_current(
 ) -> bool:
     """Return True if every field in this group has current coverage."""
     league_id = _resolve_league_id(conn, league_key)
-    dataset = group.get('dataset', '')
-    params_str = _serialize_params(group.get('params', {}))
-    fields = list((group.get('columns') or {}).keys())
+    dataset = group.get("dataset", "")
+    params_str = _serialize_params(group.get("params", {}))
+    fields = list((group.get("columns") or {}).keys())
 
     if not fields:
         return False
 
-    meta = TABLES['coverages']
-    schema = meta['schema']
-    table = 'coverages'
+    meta = TABLES["coverages"]
+    schema = meta["schema"]
+    table = "coverages"
 
     query = f"""
         SELECT field, params
@@ -90,7 +78,9 @@ def is_group_coverage_current(
            AND field = ANY(%s)
     """
     with conn.cursor() as cur:
-        cur.execute(query, (league_id, entity, season, season_type, source_key, dataset, fields))
+        cur.execute(
+            query, (league_id, entity, season, season_type, source_key, dataset, fields)
+        )
         stored = {row[0]: row[1] for row in cur.fetchall()}
 
     if len(stored) != len(fields):
@@ -109,17 +99,17 @@ def upsert_group_coverage(
 ) -> None:
     """Upsert coverage rows for every field produced by this call group."""
     league_id = _resolve_league_id(conn, league_key)
-    dataset = group.get('dataset', '')
-    params_str = _serialize_params(group.get('params', {}))
-    fields = list((group.get('columns') or {}).keys())
+    dataset = group.get("dataset", "")
+    params_str = _serialize_params(group.get("params", {}))
+    fields = list((group.get("columns") or {}).keys())
 
     if not fields:
         return
 
-    meta = TABLES['coverages']
-    schema = meta['schema']
-    table = 'coverages'
-    pks = meta['primary_key']
+    meta = TABLES["coverages"]
+    schema = meta["schema"]
+    table = "coverages"
+    pks = meta["primary_key"]
     conflict_cols = ", ".join(quote_col(col) for col in pks)
 
     query = f"""
@@ -136,7 +126,16 @@ def upsert_group_coverage(
         for field in fields:
             cur.execute(
                 query,
-                (league_id, entity, season, season_type, source_key, dataset, field, params_str),
+                (
+                    league_id,
+                    entity,
+                    season,
+                    season_type,
+                    source_key,
+                    dataset,
+                    field,
+                    params_str,
+                ),
             )
     conn.commit()
 
@@ -160,7 +159,8 @@ def prune_coverages(league_key: str) -> int:
                 (league_id,),
             )
             to_delete: List[Tuple[str, str]] = [
-                (row[0], row[1]) for row in cur.fetchall()
+                (row[0], row[1])
+                for row in cur.fetchall()
                 if (row[0], row[1]) not in valid
             ]
 
@@ -174,7 +174,9 @@ def prune_coverages(league_key: str) -> int:
                 """
                 DELETE FROM ops.coverages
                 WHERE league_id = %s
-                  AND (entity_type, field) IN (VALUES """ + values + """)
+                  AND (entity_type, field) IN (VALUES """
+                + values
+                + """)
                 """,
                 (league_id,) + tuple(flat),
             )
@@ -182,5 +184,5 @@ def prune_coverages(league_key: str) -> int:
         conn.commit()
 
     if deleted:
-        logger.info('Pruned %d stale coverage rows for %s', deleted, league_key)
+        logger.info("Pruned %d stale coverage rows for %s", deleted, league_key)
     return deleted
