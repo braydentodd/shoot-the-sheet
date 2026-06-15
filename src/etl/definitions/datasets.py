@@ -17,6 +17,7 @@ Shape:
 This mirrors the ``dataset_mapping`` pattern in ``db_columns.py``.
 """
 
+from os import name
 from typing import Any, Dict, List, TypedDict, Union
 
 
@@ -24,13 +25,18 @@ class DomainDef(TypedDict, total=False):
     """Per-dataset stat domain configuration.
 
     ``name`` is the domain identifier (``"base"``, ``"tracking"``, etc.).
-    ``minutes_present`` / ``possessions_present`` indicate which denominator
-    columns this dataset provides beyond the base ``mins_x10`` / ``poss``.
+    ``minutes_field`` is the API response field name for the domain's minutes
+    column, or ``None`` if not directly available (derived from base).
+    ``possessions_field`` is the API response field name for possessions,
+    or ``None`` if not available (derived from base minutes proportion).
+
+    For the ``"base"`` domain, both are always ``None`` — the base
+    denominator columns ``mins_x10`` and ``poss`` are always present.
     """
 
     name: str
-    minutes_present: bool
-    possessions_present: bool
+    minutes_field: Union[str, None]
+    possessions_field: Union[str, None]
 
 
 class SourceMappingDef(TypedDict, total=False):
@@ -51,7 +57,7 @@ class DatasetDef(TypedDict):
     min_season: Union[str, None]
     execution_tier: str
     source: str
-    domain: Union[DomainDef, None]
+    stats_domain: Union[DomainDef, None]
     source_mapping: SourceMappingDef
 
 
@@ -61,11 +67,15 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
     # ========================================================================
     "nba_id": {
         # --- Basic stats (since 2003-04) ---
-        "player_stats": {
+        "player_basic_stats": {
             "min_season": "2003-04",
             "execution_tier": "per_team",
             "source": "nba_api",
-            "domain": {"name": "base"},
+            "stats_domain": {
+                "name": "base",
+                "minutes_field": None,
+                "possessions_field": None,
+            },
             "source_mapping": {
                 "class_name": "leaguedashplayerstats",
                 "result_set": "LeagueDashPlayerStats",
@@ -73,11 +83,15 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
                 "per_mode_param": "per_mode_detailed",
             },
         },
-        "team_stats": {
+        "team_basic_stats": {
             "min_season": "2003-04",
             "execution_tier": "per_league",
             "source": "nba_api",
-            "domain": {"name": "base"},
+            "stats_domain": {
+                "name": "base",
+                "minutes_field": None,
+                "possessions_field": None,
+            },
             "source_mapping": {
                 "class_name": "leaguedashteamstats",
                 "result_set": "LeagueDashTeamStats",
@@ -86,11 +100,15 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             },
         },
         # --- Player tracking (since 2013-14) ---
-        "player_tracking": {
+        "player_tracking_stats": {
             "min_season": "2013-14",
             "execution_tier": "per_team",
             "source": "nba_api",
-            "domain": {"name": "tracking", "minutes_present": True, "possessions_present": False},
+            "stats_domain": {
+                "name": "tracking",
+                "minutes_field": "MIN",
+                "possessions_field": None,
+            },
             "source_mapping": {
                 "class_name": "leaguedashptstats",
                 "result_set": "LeagueDashPtStats",
@@ -99,11 +117,15 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
                 "requires_params": ["pt_measure_type"],
             },
         },
-        "team_tracking": {
+        "team_tracking_stats": {
             "min_season": "2013-14",
             "execution_tier": "per_league",
             "source": "nba_api",
-            "domain": {"name": "tracking", "minutes_present": True, "possessions_present": False},
+            "stats_domain": {
+                "name": "tracking",
+                "minutes_field": "MIN",
+                "possessions_field": None,
+            },
             "source_mapping": {
                 "class_name": "leaguedashptstats",
                 "result_set": "LeagueDashPtStats",
@@ -113,10 +135,15 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             },
         },
         # --- Hustle stats (since 2015-16) ---
-        "player_hustle": {
+        "player_hustle_stats": {
             "min_season": "2015-16",
             "execution_tier": "per_team",
             "source": "nba_api",
+            "stats_domain": {
+                "name": "hustle",
+                "minutes_field": "MIN",
+                "possessions_field": None,
+            },
             "source_mapping": {
                 "class_name": "leaguehustlestatsplayer",
                 "result_set": "HustleStatsPlayer",
@@ -124,10 +151,15 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
                 "per_mode_param": "per_mode_time",
             },
         },
-        "team_hustle": {
+        "team_hustle_stats": {
             "min_season": "2015-16",
             "execution_tier": "per_league",
             "source": "nba_api",
+            "stats_domain": {
+                "name": "hustle",
+                "minutes_field": "MIN",
+                "possessions_field": None,
+            },
             "source_mapping": {
                 "class_name": "leaguehustlestatsteam",
                 "result_set": "HustleStatsTeam",
@@ -136,10 +168,15 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             },
         },
         # --- Defensive matchup (since 2013-14) ---
-        "player_defense": {
+        "player_defense_stats": {
             "min_season": "2013-14",
             "execution_tier": "per_team",
             "source": "nba_api",
+            "stats_domain": {
+                "name": "defense",
+                "minutes_field": "MIN",
+                "possessions_field": None,
+            },
             "source_mapping": {
                 "class_name": "leaguedashptdefend",
                 "result_set": "LeagueDashPtDefend",
@@ -148,10 +185,15 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
                 "requires_params": ["defense_category"],
             },
         },
-        "team_defense": {
+        "team_defense_stats": {
             "min_season": "2013-14",
             "execution_tier": "per_league",
             "source": "nba_api",
+            "stats_domain": {
+                "name": "defense",
+                "minutes_field": "MIN",
+                "possessions_field": None,
+            },
             "source_mapping": {
                 "class_name": "leaguedashptteamdefend",
                 "result_set": "LeagueDashPtTeamDefend",
@@ -161,30 +203,45 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             },
         },
         # --- Player roster / profiles (per-team, current season) ---
-        "team_roster": {
+        "team_player_rosters": {
             "min_season": None,
             "execution_tier": "per_team",
             "source": "nba_api",
+            "stats_domain": None,
             "source_mapping": {
                 "class_name": "commonteamroster",
                 "result_set": "CommonTeamRoster",
             },
         },
         # --- Team discovery (all active teams, 1 call) ---
-        "team_years": {
+        "active_teams": {
             "min_season": None,
             "execution_tier": "per_league",
             "source": "nba_api",
+            "stats_domain": None,
             "source_mapping": {
                 "class_name": "commonteamyears",
                 "result_set": "TeamYears",
             },
         },
+        # --- Season activity detector ---
+        "recent_games": {
+            "min_season": None,
+            "execution_tier": "per_league",
+            "source": "nba_api",
+            "stats_domain": None,
+            "source_mapping": {
+                "class_name": "leaguegamefinder",
+                "result_set": "LeagueGameFinderResults",
+                "season_type_param": "season_type_all_star",
+            },
+        },
         # --- Draft combine (since 2000-01) ---
-        "combine_anthro": {
+        "combine_measurements": {
             "min_season": "2000-01",
             "execution_tier": "per_league",
             "source": "nba_api",
+            "stats_domain": None,
             "source_mapping": {
                 "class_name": "draftcombineplayeranthro",
                 "result_set": "DraftCombinePlayerAnthro",
@@ -192,10 +249,15 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             },
         },
         # --- On/Off court (since 2007-08) ---
-        "player_on_court": {
+        "player_on_team_stats": {
             "min_season": "2007-08",
             "execution_tier": "per_team",
             "source": "nba_api",
+            "stats_domain": {
+                "name": "base",
+                "minutes_field": None,
+                "possessions_field": None,
+            },
             "source_mapping": {
                 "class_name": "teamplayeronoffdetails",
                 "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
@@ -203,10 +265,15 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
                 "per_mode_param": "per_mode_detailed",
             },
         },
-        "player_off_court": {
+        "player_off_team_stats": {
             "min_season": "2007-08",
             "execution_tier": "per_team",
             "source": "nba_api",
+            "stats_domain": {
+                "name": "off",
+                "minutes_field": "MIN",
+                "possessions_field": None,
+            },
             "source_mapping": {
                 "class_name": "teamplayeronoffdetails",
                 "result_set": "PlayersOffCourtTeamPlayerOnOffDetails",
@@ -215,43 +282,43 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             },
         },
         # --- Team info (all time) ---
-        "team_info": {
+        "team_profiles": {
             "min_season": None,
             "execution_tier": "per_team",
             "source": "nba_api",
+            "stats_domain": None,
             "source_mapping": {
                 "class_name": "teaminfocommon",
                 "result_set": "TeamInfoCommon",
                 "season_type_param": "season_type_all_star",
             },
         },
-        "team_totals": {
+        "team_pbp_stats": {
             "min_season": "2000-01",
             "execution_tier": "per_league",
             "source": "pbp_stats",
+            "stats_domain": {
+                "name": "pbp",
+                "minutes_field": "idk",
+                "possessions_field": "idk",
+            },
             "source_mapping": {
                 "result_set": "PbpTotals",
                 "endpoint": "get-totals",
             },
         },
-        "player_totals": {
+        "player_pbp_stats": {
             "min_season": "2000-01",
             "execution_tier": "per_team",
             "source": "pbp_stats",
+            "stats_domain": {
+                "name": "pbp",
+                "minutes_field": "idk",
+                "possessions_field": "idk",
+            },
             "source_mapping": {
                 "result_set": "PbpTotals",
                 "endpoint": "get-totals",
-            },
-        },
-        # --- Activity / game detection (all seasons) ---
-        "league_game_finder": {
-            "min_season": None,
-            "execution_tier": "per_league",
-            "source": "nba_api",
-            "source_mapping": {
-                "class_name": "leaguegamefinder",
-                "result_set": "LeagueGameFinderResults",
-                "season_type_param": "season_type_all_star",
             },
         },
     },
@@ -263,12 +330,14 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": None,
             "execution_tier": "per_league",
             "source": "shoot_the_sheet",
+            "stats_domain": None,
             "source_mapping": {},
         },
         "teams": {
             "min_season": None,
             "execution_tier": "per_league",
             "source": "shoot_the_sheet",
+            "stats_domain": None,
             "source_mapping": {},
         },
     },

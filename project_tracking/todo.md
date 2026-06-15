@@ -1,5 +1,5 @@
 Short term:
-- [ ] review dataset names and domains
+- [ ] review dataset domain MIN and POSS fields
 - [ ] set up per_poss table and per_min table with domain normalization and rating
 - [ ] set up staging/mapping to core tables
 - [ ] set up matching

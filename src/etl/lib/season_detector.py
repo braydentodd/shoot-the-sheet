@@ -49,6 +49,7 @@ def _check_via_nba_api(
     league_key: str,
     dataset_name: str,
     season: str,
+    identity_key: str = "nba_id",
 ) -> List[str]:
     """Detect recent activity via an nba_api dataset.
 
@@ -69,7 +70,7 @@ def _check_via_nba_api(
     league_cfg = LEAGUES[league_key]
     season_end_year = parse_season_end_year(season, league_cfg["season_format"])
 
-    ds_cfg = DATASETS.get("nba_id", {}).get(dataset_name)
+    ds_cfg = DATASETS.get(identity_key, {}).get(dataset_name)
     if not ds_cfg:
         logger.debug(
             "No season_detector dataset config for %s/%s; assuming active",
@@ -176,6 +177,7 @@ def _check_via_pbp_stats(
     league_key: str,
     dataset_name: str,
     season: str,
+    identity_key: str = "nba_id",
 ) -> List[str]:
     """Detect recent activity via a pbpstats dataset.
 
@@ -190,7 +192,7 @@ def _check_via_pbp_stats(
 
     import requests
 
-    ds_cfg = DATASETS.get("nba_id", {}).get(dataset_name)
+    ds_cfg = DATASETS.get(identity_key, {}).get(dataset_name)
     if not ds_cfg:
         return _all_canonical_keys(league_cfg)
 
@@ -252,16 +254,13 @@ def detect_active_season_types(
     Hits the league's ``season_detector`` dataset and filters to games
     within the last ``GAME_LOOKBACK_DAYS`` days.
 
-    Args:
-        league_key: Registered league key (e.g. ``"NBA"``).
-        season: Optional season label override.  If not provided, the
-            current season is computed from the league's calendar flip.
+    The ``season_detector`` config value is an id-prefixed reference like
+    ``"nba_id.recent_games"`` — parsed into identity key + dataset name.
 
     Returns:
-        List of source season-type codes (e.g. ``["rs", "po"]``) that
-        appeared in the recent game data.  An empty list means no
-        recent activity was detected -- the ETL should skip stats
-        refresh and only update profiles / rosters.
+        List of source season-type codes (e.g. ``["regular_season", "playoffs"]``)
+        that appeared in the recent game data.  An empty list means no
+        recent activity was detected.
     """
     if league_key not in LEAGUES:
         raise ValueError(f"Unknown league_key: {league_key}")
@@ -271,20 +270,21 @@ def detect_active_season_types(
     cfg = LEAGUES[league_key]
     all_keys = _all_canonical_keys(cfg)
 
-    detector_dataset = cfg.get("season_detector")
-    if not detector_dataset:
+    detector_ref = cfg.get("season_detector")
+    if not detector_ref:
         logger.debug(
             "No season_detector configured for %s; assuming active", league_key
         )
         return all_keys
 
+    identity_key, dataset_name = _parse_dataset_ref(detector_ref)
     active_season = season or get_current_season(league_key)
 
-    ds_cfg = DATASETS.get("nba_id", {}).get(detector_dataset)
+    ds_cfg = DATASETS.get(identity_key, {}).get(dataset_name)
     if not ds_cfg:
         logger.debug(
             "Season detector dataset %r not registered for %s; assuming active",
-            detector_dataset,
+            detector_ref,
             league_key,
         )
         return all_keys
@@ -292,14 +292,24 @@ def detect_active_season_types(
     source = ds_cfg.get("source", "nba_api")
 
     if source == "nba_api":
-        return _check_via_nba_api(league_key, detector_dataset, active_season)
+        return _check_via_nba_api(league_key, dataset_name, active_season, identity_key)
     elif source == "pbp_stats":
-        return _check_via_pbp_stats(league_key, detector_dataset, active_season)
+        return _check_via_pbp_stats(
+            league_key, dataset_name, active_season, identity_key
+        )
     else:
         logger.debug(
             "Unsupported source %r for season detector; assuming active", source
         )
         return all_keys
+
+
+def _parse_dataset_ref(ref: str) -> tuple:
+    """Parse ``"identity_key.dataset_name"`` into ``(identity_key, dataset_name)``."""
+    if "." in ref:
+        identity_key, dataset_name = ref.split(".", 1)
+        return identity_key, dataset_name
+    return "nba_id", ref
 
 
 def _all_canonical_keys(cfg: dict) -> List[str]:

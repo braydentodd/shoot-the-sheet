@@ -225,12 +225,12 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_stats",
+                        "dataset": "player_basic_stats",
                         "field": "PLAYER_NAME",
                         "transform": "safe_str",
                     },
                     "team": {
-                        "dataset": "team_stats",
+                        "dataset": "team_basic_stats",
                         "field": "TEAM_NAME",
                         "transform": "safe_str",
                     },
@@ -247,7 +247,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "player": {"dataset": "team_roster", "field": "HEIGHT"},
+                    "player": {"dataset": "team_player_rosters", "field": "HEIGHT"},
                 },
             },
         },
@@ -269,7 +269,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "player": {"dataset": "team_roster", "field": "WEIGHT"},
+                    "player": {"dataset": "team_player_rosters", "field": "WEIGHT"},
                 },
             },
         },
@@ -284,7 +284,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "combine_anthro",
+                        "dataset": "combine_measurements",
                         "field": "WINGSPAN",
                         "transform": "parse_height",
                         "multi_season": {
@@ -323,7 +323,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "team_roster",
+                        "dataset": "team_player_rosters",
                         "field": "BIRTHDATE",
                         "transform": "parse_birthdate",
                     },
@@ -429,8 +429,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "player": {"dataset": "player_stats", "field": "GP"},
-                    "team": {"dataset": "team_stats", "field": "GP"},
+                    "player": {"dataset": "player_basic_stats", "field": "GP"},
+                    "team": {"dataset": "team_basic_stats", "field": "GP"},
                 },
             },
         },
@@ -444,8 +444,16 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "player": {"dataset": "player_stats", "field": "MIN", "scale": 10},
-                    "team": {"dataset": "team_stats", "field": "MIN", "scale": 10},
+                    "player": {
+                        "dataset": "player_basic_stats",
+                        "field": "MIN",
+                        "scale": 10,
+                    },
+                    "team": {
+                        "dataset": "team_basic_stats",
+                        "field": "MIN",
+                        "scale": 10,
+                    },
                 },
             },
         },
@@ -459,8 +467,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "player": {"dataset": "player_stats", "field": "W"},
-                    "team": {"dataset": "team_stats", "field": "W"},
+                    "player": {"dataset": "player_basic_stats", "field": "W"},
+                    "team": {"dataset": "team_basic_stats", "field": "W"},
                 },
             },
         },
@@ -478,11 +486,11 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_stats",
+                        "dataset": "player_basic_stats",
                         "derived": {"math": "FGM - FG3M", "fields": ["FGM", "FG3M"]},
                     },
                     "team": {
-                        "dataset": "team_stats",
+                        "dataset": "team_basic_stats",
                         "derived": {"math": "FGM - FG3M", "fields": ["FGM", "FG3M"]},
                     },
                 },
@@ -499,11 +507,11 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_stats",
+                        "dataset": "player_basic_stats",
                         "derived": {"math": "FGA - FG3A", "fields": ["FGA", "FG3A"]},
                     },
                     "team": {
-                        "dataset": "team_stats",
+                        "dataset": "team_basic_stats",
                         "derived": {"math": "FGA - FG3A", "fields": ["FGA", "FG3A"]},
                     },
                 },
@@ -522,8 +530,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "player": {"dataset": "player_stats", "field": "FG3M"},
-                    "team": {"dataset": "team_stats", "field": "FG3M"},
+                    "player": {"dataset": "player_basic_stats", "field": "FG3M"},
+                    "team": {"dataset": "team_basic_stats", "field": "FG3M"},
                 },
             },
         },
@@ -537,8 +545,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "player": {"dataset": "player_stats", "field": "FG3A"},
-                    "team": {"dataset": "team_stats", "field": "FG3A"},
+                    "player": {"dataset": "player_basic_stats", "field": "FG3A"},
+                    "team": {"dataset": "team_basic_stats", "field": "FG3A"},
                 },
             },
         },
@@ -555,8 +563,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "player": {"dataset": "player_stats", "field": "FTM"},
-                    "team": {"dataset": "team_stats", "field": "FTM"},
+                    "player": {"dataset": "player_basic_stats", "field": "FTM"},
+                    "team": {"dataset": "team_basic_stats", "field": "FTM"},
                 },
             },
         },
@@ -570,8 +578,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "player": {"dataset": "player_stats", "field": "FTA"},
-                    "team": {"dataset": "team_stats", "field": "FTA"},
+                    "player": {"dataset": "player_basic_stats", "field": "FTA"},
+                    "team": {"dataset": "team_basic_stats", "field": "FTA"},
                 },
             },
         },
@@ -589,13 +597,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_stats",
+                        "dataset": "player_basic_stats",
                         "field": "PCT_UAST_2PM",
                         "scale": 10,
                         "params": {"measure_type_detailed_defense": "Scoring"},
                     },
                     "team": {
-                        "dataset": "team_stats",
+                        "dataset": "team_basic_stats",
                         "field": "PCT_UAST_2PM",
                         "scale": 10,
                         "params": {"measure_type_detailed_defense": "Scoring"},
@@ -614,13 +622,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_stats",
+                        "dataset": "player_basic_stats",
                         "field": "PCT_UAST_3PM",
                         "scale": 10,
                         "params": {"measure_type_detailed_defense": "Scoring"},
                     },
                     "team": {
-                        "dataset": "team_stats",
+                        "dataset": "team_basic_stats",
                         "field": "PCT_UAST_3PM",
                         "scale": 10,
                         "params": {"measure_type_detailed_defense": "Scoring"},
@@ -642,13 +650,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_stats",
+                        "dataset": "player_basic_stats",
                         "field": "OREB_PCT",
                         "scale": 1000,
                         "params": {"measure_type_detailed_defense": "Advanced"},
                     },
                     "team": {
-                        "dataset": "team_stats",
+                        "dataset": "team_basic_stats",
                         "field": "OREB_PCT",
                         "scale": 1000,
                         "params": {"measure_type_detailed_defense": "Advanced"},
@@ -667,13 +675,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_stats",
+                        "dataset": "player_basic_stats",
                         "field": "DREB_PCT",
                         "scale": 1000,
                         "params": {"measure_type_detailed_defense": "Advanced"},
                     },
                     "team": {
-                        "dataset": "team_stats",
+                        "dataset": "team_basic_stats",
                         "field": "DREB_PCT",
                         "scale": 1000,
                         "params": {"measure_type_detailed_defense": "Advanced"},
@@ -694,8 +702,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "player": {"dataset": "player_stats", "field": "AST"},
-                    "team": {"dataset": "team_stats", "field": "AST"},
+                    "player": {"dataset": "player_basic_stats", "field": "AST"},
+                    "team": {"dataset": "team_basic_stats", "field": "AST"},
                 },
             },
         },
@@ -710,12 +718,12 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_tracking",
+                        "dataset": "player_tracking_stats",
                         "field": "POTENTIAL_AST",
                         "params": {"pt_measure_type": "Passing"},
                     },
                     "team": {
-                        "dataset": "team_tracking",
+                        "dataset": "team_tracking_stats",
                         "field": "POTENTIAL_AST",
                         "params": {"pt_measure_type": "Passing"},
                     },
@@ -733,12 +741,12 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_tracking",
+                        "dataset": "player_tracking_stats",
                         "field": "PASSES_MADE",
                         "params": {"pt_measure_type": "Passing"},
                     },
                     "team": {
-                        "dataset": "team_tracking",
+                        "dataset": "team_tracking_stats",
                         "field": "PASSES_MADE",
                         "params": {"pt_measure_type": "Passing"},
                     },
@@ -756,12 +764,12 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_tracking",
+                        "dataset": "player_tracking_stats",
                         "field": "SECONDARY_AST",
                         "params": {"pt_measure_type": "Passing"},
                     },
                     "team": {
-                        "dataset": "team_tracking",
+                        "dataset": "team_tracking_stats",
                         "field": "SECONDARY_AST",
                         "params": {"pt_measure_type": "Passing"},
                     },
@@ -782,12 +790,12 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_tracking",
+                        "dataset": "player_tracking_stats",
                         "field": "TOUCHES",
                         "params": {"pt_measure_type": "Possessions"},
                     },
                     "team": {
-                        "dataset": "team_tracking",
+                        "dataset": "team_tracking_stats",
                         "field": "TOUCHES",
                         "params": {"pt_measure_type": "Possessions"},
                     },
@@ -805,12 +813,12 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_tracking",
+                        "dataset": "player_tracking_stats",
                         "field": "TIME_OF_POSS",
                         "params": {"pt_measure_type": "Possessions"},
                     },
                     "team": {
-                        "dataset": "team_tracking",
+                        "dataset": "team_tracking_stats",
                         "field": "TIME_OF_POSS",
                         "params": {"pt_measure_type": "Possessions"},
                     },
@@ -830,8 +838,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "player": {"dataset": "player_stats", "field": "TOV"},
-                    "team": {"dataset": "team_stats", "field": "TOV"},
+                    "player": {"dataset": "player_basic_stats", "field": "TOV"},
+                    "team": {"dataset": "team_basic_stats", "field": "TOV"},
                 },
             },
         },
@@ -849,13 +857,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_tracking",
+                        "dataset": "player_tracking_stats",
                         "field": "DIST_MILES_OFF",
                         "scale": 10,
                         "params": {"pt_measure_type": "SpeedDistance"},
                     },
                     "team": {
-                        "dataset": "team_tracking",
+                        "dataset": "team_tracking_stats",
                         "field": "DIST_MILES_OFF",
                         "scale": 10,
                         "params": {"pt_measure_type": "SpeedDistance"},
@@ -874,13 +882,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_tracking",
+                        "dataset": "player_tracking_stats",
                         "field": "DIST_MILES_DEF",
                         "scale": 10,
                         "params": {"pt_measure_type": "SpeedDistance"},
                     },
                     "team": {
-                        "dataset": "team_tracking",
+                        "dataset": "team_tracking_stats",
                         "field": "DIST_MILES_DEF",
                         "scale": 10,
                         "params": {"pt_measure_type": "SpeedDistance"},
@@ -901,8 +909,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "player": {"dataset": "player_stats", "field": "STL"},
-                    "team": {"dataset": "team_stats", "field": "STL"},
+                    "player": {"dataset": "player_basic_stats", "field": "STL"},
+                    "team": {"dataset": "team_basic_stats", "field": "STL"},
                 },
             },
         },
@@ -916,8 +924,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "player": {"dataset": "player_stats", "field": "BLK"},
-                    "team": {"dataset": "team_stats", "field": "BLK"},
+                    "player": {"dataset": "player_basic_stats", "field": "BLK"},
+                    "team": {"dataset": "team_basic_stats", "field": "BLK"},
                 },
             },
         },
@@ -931,8 +939,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "player": {"dataset": "player_stats", "field": "PF"},
-                    "team": {"dataset": "team_stats", "field": "PF"},
+                    "player": {"dataset": "player_basic_stats", "field": "PF"},
+                    "team": {"dataset": "team_basic_stats", "field": "PF"},
                 },
             },
         },
@@ -949,8 +957,11 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "player": {"dataset": "player_hustle", "field": "DEFLECTIONS"},
-                    "team": {"dataset": "team_hustle", "field": "DEFLECTIONS"},
+                    "player": {
+                        "dataset": "player_hustle_stats",
+                        "field": "DEFLECTIONS",
+                    },
+                    "team": {"dataset": "team_hustle_stats", "field": "DEFLECTIONS"},
                 },
             },
         },
@@ -965,10 +976,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_hustle",
+                        "dataset": "player_hustle_stats",
                         "field": "CONTESTED_SHOTS_2PT",
                     },
-                    "team": {"dataset": "team_hustle", "field": "CONTESTED_SHOTS_2PT"},
+                    "team": {
+                        "dataset": "team_hustle_stats",
+                        "field": "CONTESTED_SHOTS_2PT",
+                    },
                 },
             },
         },
@@ -983,10 +997,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_hustle",
+                        "dataset": "player_hustle_stats",
                         "field": "CONTESTED_SHOTS_3PT",
                     },
-                    "team": {"dataset": "team_hustle", "field": "CONTESTED_SHOTS_3PT"},
+                    "team": {
+                        "dataset": "team_hustle_stats",
+                        "field": "CONTESTED_SHOTS_3PT",
+                    },
                 },
             },
         },
@@ -1004,12 +1021,12 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_defense",
+                        "dataset": "player_defense_stats",
                         "field": "FG2M",
                         "params": {"defense_category": "2 Pointers"},
                     },
                     "team": {
-                        "dataset": "team_defense",
+                        "dataset": "team_defense_stats",
                         "field": "FG2M",
                         "params": {"defense_category": "2 Pointers"},
                     },
@@ -1027,12 +1044,12 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_defense",
+                        "dataset": "player_defense_stats",
                         "field": "FG2A",
                         "params": {"defense_category": "2 Pointers"},
                     },
                     "team": {
-                        "dataset": "team_defense",
+                        "dataset": "team_defense_stats",
                         "field": "FG2A",
                         "params": {"defense_category": "2 Pointers"},
                     },
@@ -1050,12 +1067,12 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_defense",
+                        "dataset": "player_defense_stats",
                         "field": "FG3M",
                         "params": {"defense_category": "3 Pointers"},
                     },
                     "team": {
-                        "dataset": "team_defense",
+                        "dataset": "team_defense_stats",
                         "field": "FG3M",
                         "params": {"defense_category": "3 Pointers"},
                     },
@@ -1073,12 +1090,12 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_defense",
+                        "dataset": "player_defense_stats",
                         "field": "FG3A",
                         "params": {"defense_category": "3 Pointers"},
                     },
                     "team": {
-                        "dataset": "team_defense",
+                        "dataset": "team_defense_stats",
                         "field": "FG3A",
                         "params": {"defense_category": "3 Pointers"},
                     },
@@ -1099,7 +1116,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_on_court",
+                        "dataset": "player_on_team_stats",
                         "derived": {"math": "FGM - FG3M", "fields": ["FGM", "FG3M"]},
                     },
                 },
@@ -1116,7 +1133,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_on_court",
+                        "dataset": "player_on_team_stats",
                         "derived": {"math": "FGA - FG3A", "fields": ["FGA", "FG3A"]},
                     },
                 },
@@ -1133,7 +1150,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_on_court",
+                        "dataset": "player_on_team_stats",
                         "field": "FG3M",
                     },
                 },
@@ -1150,7 +1167,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_on_court",
+                        "dataset": "player_on_team_stats",
                         "field": "FG3A",
                     },
                 },
@@ -1167,7 +1184,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_on_court",
+                        "dataset": "player_on_team_stats",
                         "field": "FTA",
                     },
                 },
@@ -1184,7 +1201,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_on_court",
+                        "dataset": "player_on_team_stats",
                         "field": "FTM",
                     },
                 },
@@ -1201,7 +1218,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_on_court",
+                        "dataset": "player_on_team_stats",
                         "field": "TOV",
                     },
                 },
@@ -1218,7 +1235,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_on_court",
+                        "dataset": "player_on_team_stats",
                         "field": "BLK",
                     },
                 },
@@ -1235,7 +1252,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_off_court",
+                        "dataset": "player_off_team_stats",
                         "derived": {"math": "FGM - FG3M", "fields": ["FGM", "FG3M"]},
                     },
                 },
@@ -1252,7 +1269,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_off_court",
+                        "dataset": "player_off_team_stats",
                         "derived": {"math": "FGA - FG3A", "fields": ["FGA", "FG3A"]},
                     },
                 },
@@ -1269,7 +1286,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_off_court",
+                        "dataset": "player_off_team_stats",
                         "field": "FG3M",
                     },
                 },
@@ -1286,7 +1303,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_off_court",
+                        "dataset": "player_off_team_stats",
                         "field": "FG3A",
                     },
                 },
@@ -1303,7 +1320,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_off_court",
+                        "dataset": "player_off_team_stats",
                         "field": "FTA",
                     },
                 },
@@ -1320,7 +1337,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_off_court",
+                        "dataset": "player_off_team_stats",
                         "field": "FTM",
                     },
                 },
@@ -1337,7 +1354,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_off_court",
+                        "dataset": "player_off_team_stats",
                         "field": "TOV",
                     },
                 },
@@ -1354,7 +1371,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_off_court",
+                        "dataset": "player_off_team_stats",
                         "field": "BLK",
                     },
                 },
@@ -1371,7 +1388,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_on_court",
+                        "dataset": "player_on_team_stats",
                         "derived": {"math": "FGM - FG3M", "fields": ["FGM", "FG3M"]},
                         "params": {"measure_type_detailed_defense": "Opponent"},
                     },
@@ -1389,7 +1406,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_on_court",
+                        "dataset": "player_on_team_stats",
                         "derived": {"math": "FGA - FG3A", "fields": ["FGA", "FG3A"]},
                         "params": {"measure_type_detailed_defense": "Opponent"},
                     },
@@ -1407,7 +1424,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_on_court",
+                        "dataset": "player_on_team_stats",
                         "field": "FG3M",
                         "params": {"measure_type_detailed_defense": "Opponent"},
                     },
@@ -1425,7 +1442,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_on_court",
+                        "dataset": "player_on_team_stats",
                         "field": "FG3A",
                         "params": {"measure_type_detailed_defense": "Opponent"},
                     },
@@ -1443,7 +1460,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_on_court",
+                        "dataset": "player_on_team_stats",
                         "field": "FTA",
                         "params": {"measure_type_detailed_defense": "Opponent"},
                     },
@@ -1461,7 +1478,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_on_court",
+                        "dataset": "player_on_team_stats",
                         "field": "FTM",
                         "params": {"measure_type_detailed_defense": "Opponent"},
                     },
@@ -1479,7 +1496,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_on_court",
+                        "dataset": "player_on_team_stats",
                         "field": "TOV",
                         "params": {"measure_type_detailed_defense": "Opponent"},
                     },
@@ -1497,7 +1514,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_off_court",
+                        "dataset": "player_off_team_stats",
                         "derived": {"math": "FGM - FG3M", "fields": ["FGM", "FG3M"]},
                         "params": {"measure_type_detailed_defense": "Opponent"},
                     },
@@ -1515,7 +1532,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_off_court",
+                        "dataset": "player_off_team_stats",
                         "derived": {"math": "FGA - FG3A", "fields": ["FGA", "FG3A"]},
                         "params": {"measure_type_detailed_defense": "Opponent"},
                     },
@@ -1533,7 +1550,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_off_court",
+                        "dataset": "player_off_team_stats",
                         "field": "FG3M",
                         "params": {"measure_type_detailed_defense": "Opponent"},
                     },
@@ -1551,7 +1568,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_off_court",
+                        "dataset": "player_off_team_stats",
                         "field": "FG3A",
                         "params": {"measure_type_detailed_defense": "Opponent"},
                     },
@@ -1569,7 +1586,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_off_court",
+                        "dataset": "player_off_team_stats",
                         "field": "FTA",
                         "params": {"measure_type_detailed_defense": "Opponent"},
                     },
@@ -1587,7 +1604,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_off_court",
+                        "dataset": "player_off_team_stats",
                         "field": "FTM",
                         "params": {"measure_type_detailed_defense": "Opponent"},
                     },
@@ -1605,7 +1622,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_off_court",
+                        "dataset": "player_off_team_stats",
                         "field": "TOV",
                         "params": {"measure_type_detailed_defense": "Opponent"},
                     },
@@ -1626,7 +1643,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_on_court",
+                        "dataset": "player_on_team_stats",
                         "field": "OREB_PCT",
                         "params": {"measure_type_detailed_defense": "Advanced"},
                         "scale": 1000,
@@ -1645,7 +1662,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_on_court",
+                        "dataset": "player_on_team_stats",
                         "field": "DREB_PCT",
                         "params": {"measure_type_detailed_defense": "Advanced"},
                         "scale": 1000,
@@ -1664,7 +1681,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_off_court",
+                        "dataset": "player_off_team_stats",
                         "field": "OREB_PCT",
                         "params": {"measure_type_detailed_defense": "Advanced"},
                         "scale": 1000,
@@ -1683,7 +1700,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_off_court",
+                        "dataset": "player_off_team_stats",
                         "field": "DREB_PCT",
                         "params": {"measure_type_detailed_defense": "Advanced"},
                         "scale": 1000,
@@ -1702,12 +1719,12 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_tracking",
+                        "dataset": "player_tracking_stats",
                         "field": "FT_AST",
                         "params": {"pt_measure_type": "Passing"},
                     },
                     "team": {
-                        "dataset": "team_tracking",
+                        "dataset": "team_tracking_stats",
                         "field": "FT_AST",
                         "params": {"pt_measure_type": "Passing"},
                     },
@@ -1725,12 +1742,12 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_stats",
+                        "dataset": "team_basic_stats",
                         "field": "POSS",
                         "params": {"measure_type_detailed_defense": "Advanced"},
                     },
                     "player": {
-                        "dataset": "player_stats",
+                        "dataset": "player_basic_stats",
                         "field": "POSS",
                         "params": {"measure_type_detailed_defense": "Advanced"},
                     },
@@ -1748,11 +1765,11 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_totals",
+                        "dataset": "team_pbp_stats",
                         "field": "Offensive Fouls Drawn",
                     },
                     "player": {
-                        "dataset": "player_totals",
+                        "dataset": "player_pbp_stats",
                         "field": "Offensive Fouls Drawn",
                     },
                 },
@@ -1769,11 +1786,11 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_totals",
+                        "dataset": "team_pbp_stats",
                         "field": "AssistPoints",
                     },
                     "player": {
-                        "dataset": "player_totals",
+                        "dataset": "player_pbp_stats",
                         "field": "AssistPoints",
                     },
                 },
@@ -1790,7 +1807,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_totals",
+                        "dataset": "team_pbp_stats",
                         "derived": {
                             "math": "TwoPtShootingFoulsDrawn + ThreePtShootingFoulsDrawn + NonShootingFoulsDrawn",
                             "fields": [
@@ -1801,7 +1818,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         },
                     },
                     "player": {
-                        "dataset": "player_totals",
+                        "dataset": "player_pbp_stats",
                         "derived": {
                             "math": "TwoPtShootingFoulsDrawn + ThreePtShootingFoulsDrawn + NonShootingFoulsDrawn",
                             "fields": [
@@ -1825,12 +1842,12 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_totals",
+                        "dataset": "team_pbp_stats",
                         "field": "SecondsPerPossOff",
                         "scale": 10,
                     },
                     "player": {
-                        "dataset": "player_totals",
+                        "dataset": "player_pbp_stats",
                         "field": "SecondsPerPossOff",
                         "scale": 10,
                     },
@@ -1848,12 +1865,12 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_totals",
+                        "dataset": "team_pbp_stats",
                         "field": "SecondsPerPossDef",
                         "scale": 10,
                     },
                     "player": {
-                        "dataset": "player_totals",
+                        "dataset": "player_pbp_stats",
                         "field": "SecondsPerPossDef",
                         "scale": 10,
                     },
@@ -2046,7 +2063,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "player": {"dataset": "team_roster", "field": "JERSEY"},
+                    "player": {"dataset": "team_player_rosters", "field": "JERSEY"},
                 },
             },
         },
@@ -2064,7 +2081,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_stats",
+                        "dataset": "team_basic_stats",
                         "field": "FGM",
                         "params": {"measure_type_detailed_defense": "Opponent"},
                         "derived": {"math": "FGM - FG3M", "fields": ["FGM", "FG3M"]},
@@ -2083,7 +2100,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_stats",
+                        "dataset": "team_basic_stats",
                         "field": "FGA",
                         "params": {"measure_type_detailed_defense": "Opponent"},
                         "derived": {"math": "FGA - FG3A", "fields": ["FGA", "FG3A"]},
@@ -2102,7 +2119,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_stats",
+                        "dataset": "team_basic_stats",
                         "field": "FG3M",
                         "params": {"measure_type_detailed_defense": "Opponent"},
                     }
@@ -2120,7 +2137,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_stats",
+                        "dataset": "team_basic_stats",
                         "field": "FG3A",
                         "params": {"measure_type_detailed_defense": "Opponent"},
                     }
@@ -2138,7 +2155,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_stats",
+                        "dataset": "team_basic_stats",
                         "field": "FTM",
                         "params": {"measure_type_detailed_defense": "Opponent"},
                     }
@@ -2156,7 +2173,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_stats",
+                        "dataset": "team_basic_stats",
                         "field": "FTA",
                         "params": {"measure_type_detailed_defense": "Opponent"},
                     }
@@ -2174,7 +2191,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_stats",
+                        "dataset": "team_basic_stats",
                         "field": "AST",
                         "params": {"measure_type_detailed_defense": "Opponent"},
                     }
@@ -2192,7 +2209,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_stats",
+                        "dataset": "team_basic_stats",
                         "field": "TOV",
                         "params": {"measure_type_detailed_defense": "Opponent"},
                     }
@@ -2210,7 +2227,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_stats",
+                        "dataset": "team_basic_stats",
                         "field": "PF",
                         "params": {"measure_type_detailed_defense": "Opponent"},
                     }
@@ -2228,7 +2245,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_stats",
+                        "dataset": "team_basic_stats",
                         "field": "STL",
                         "params": {"measure_type_detailed_defense": "Opponent"},
                     }
@@ -2246,7 +2263,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_stats",
+                        "dataset": "team_basic_stats",
                         "field": "BLK",
                         "params": {"measure_type_detailed_defense": "Opponent"},
                     }

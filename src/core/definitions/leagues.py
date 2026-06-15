@@ -70,13 +70,12 @@ class LeagueDef(TypedDict):
             the off-season turns into the next season year.
         stat_rates: Which rate modes to compute (e.g. ["per_poss", "per_min"]).
         retention_seasons: Number of past seasons to keep in stats tables.
-        season_detector: Dataset name (from
-            :data:`src.etl.definitions.datasets.DATASETS["nba_id"]`)
+        season_detector: Dataset reference (e.g. ``"nba_id.recent_games"``)
             that provides game-by-game data used to check whether any
             games have been played recently (within ``GAME_LOOKBACK_DAYS``).
-        team_discovery_dataset: Dataset name that provides the full list
-            of active team source IDs for the current season.  Used by
-            the pipeline to discover which per-team calls to make.
+        team_discoverer: Dataset reference (e.g. ``"nba_id.active_teams"``)
+            that provides the full list of active team source IDs for
+            the current season.
     """
 
     name: str
@@ -88,7 +87,7 @@ class LeagueDef(TypedDict):
     stat_rates: List[str]
     retention_seasons: int
     season_detector: str
-    team_discovery_dataset: str
+    team_discoverer: str
 
 
 # ============================================================================
@@ -108,8 +107,8 @@ LEAGUES: Dict[str, LeagueDef] = {
         "calendar_flip": "08/01",
         "stat_rates": ["per_poss", "per_min"],
         "retention_seasons": 6,
-        "season_detector": "league_game_finder",
-        "team_discovery_dataset": "team_years",
+        "season_detector": "nba_id.recent_games",
+        "team_discoverer": "nba_id.active_teams",
     },
     "WNBA": {
         "name": "Women's National Basketball Association",
@@ -123,8 +122,8 @@ LEAGUES: Dict[str, LeagueDef] = {
         "calendar_flip": "12/31",
         "stat_rates": ["per_poss", "per_min"],
         "retention_seasons": 6,
-        "season_detector": "league_game_finder",
-        "team_discovery_dataset": "team_years",
+        "season_detector": "nba_id.recent_games",
+        "team_discoverer": "nba_id.active_teams",
     },
     "GLG": {
         "name": "NBA G League",
@@ -140,7 +139,7 @@ LEAGUES: Dict[str, LeagueDef] = {
         "calendar_flip": "08/01",
         "stat_rates": ["per_poss", "per_min"],
         "retention_seasons": 6,
-        "season_detector": "league_game_finder",
-        "team_discovery_dataset": "team_years",
+        "season_detector": "nba_id.recent_games",
+        "team_discoverer": "nba_id.active_teams",
     },
 }
