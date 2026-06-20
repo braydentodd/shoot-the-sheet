@@ -1,13 +1,12 @@
 """
-
 Shoot the Sheet - Column Registry
 
 Single source of truth for database column definitions and provider source
 mappings.  Column names match the actual PostgreSQL schema exactly.
 
-Each column entry carries a ``sources`` attribute using this shape:
+Every column with an external source follows this shape:
 
-    dataset_mapping[league_key][source_key][entity] -> source definition
+    dataset_mapping[league_key][identity_key][entity_name][dataset_name] -> DatasetMapping
 
 Columns with no external source (system columns) have ``dataset_mapping: None``.
 
@@ -16,6 +15,7 @@ columns (e.g. ``nba_id_id``) are emitted directly by the DDL generator
 (see src/core/lib/ddl.py); they are intentionally not represented here.
 """
 
+from tkinter import Scale
 from typing import Any, Dict, List, TypedDict, Union
 
 
@@ -25,13 +25,12 @@ class MultiSeasonConfig(TypedDict, total=False):
 
 
 class DatasetMapping(TypedDict, total=False):
-    dataset: str
-    field: str
+    field: Union[str, None]
     transform: Union[str, None]
-    scale: int
-    params: Dict[str, Any]
-    derived: Dict[str, Any]
-    multi_season: MultiSeasonConfig
+    scale: Union[int, None]
+    params: Union[Dict[str, Any], None]
+    derived: Union[Dict[str, Any], None]
+    multi_season: Union[MultiSeasonConfig, None]
 
 
 class ColumnDef(TypedDict):
@@ -39,8 +38,12 @@ class ColumnDef(TypedDict):
     tables: Union[str, List[str]]
     nullable: bool
     default: Union[str, int, None]
-    comment: Union[str, None]
-    dataset_mapping: Union[Dict[str, Dict[str, Dict[str, DatasetMapping]]], None]
+    rate: Union[str, None]
+    scale: Union[int, None]
+    dataset_mapping: Union[
+        Dict[str, Dict[str, Dict[str, Dict[str, DatasetMapping]]]],
+        None,
+    ]
 
 
 DB_COLUMNS: Dict[str, ColumnDef] = {
@@ -52,7 +55,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["runs", "tasks"],
         "nullable": False,
         "default": "nextval('ops.process_id_seq')",
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": None,
     },
     "run_id": {
@@ -60,7 +64,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["tasks"],
         "nullable": False,
         "default": None,
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": None,
     },
     "sts_id": {
@@ -68,7 +73,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["teams", "players"],
         "nullable": False,
         "default": "nextval('profiles.sts_id_seq')",
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": None,
     },
     "entity": {
@@ -76,7 +82,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["tasks", "coverages", "identities_entities"],
         "nullable": False,
         "default": None,
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": None,
     },
     "updated_at": {
@@ -84,7 +91,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["all"],
         "nullable": False,
         "default": "NOW()",
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": None,
     },
     "created_at": {
@@ -92,7 +100,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["all"],
         "nullable": False,
         "default": "NOW()",
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": None,
     },
     "season": {
@@ -107,7 +116,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         ],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": None,
     },
     "season_type": {
@@ -122,7 +132,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         ],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": None,
     },
     "notes": {
@@ -130,15 +141,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["teams", "players"],
         "nullable": True,
         "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "internal": {
-                    "player": {"dataset": "players", "field": "Notes"},
-                    "team": {"dataset": "teams", "field": "Notes"},
-                },
-            },
-        },
+        "rate": None,
+        "scale": None,
+        "dataset_mapping": None,
     },
     "identity": {
         "type": "TEXT",
@@ -155,7 +160,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         ],
         "nullable": False,
         "default": None,
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": None,
     },
     "entity_id": {
@@ -163,7 +169,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["identities_entities"],
         "nullable": False,
         "default": None,
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": None,
     },
     "identity_code": {
@@ -178,7 +185,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         ],
         "nullable": False,
         "default": None,
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": None,
     },
     "team_identity_code": {
@@ -186,7 +194,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["players_staging", "leagues_teams_staging", "teams_players_staging"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": None,
     },
     "player_identity_code": {
@@ -194,7 +203,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["teams_players_staging"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": None,
     },
     "matched_sts_id": {
@@ -202,7 +212,17 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["teams_staging", "players_staging"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": None,
+        "scale": None,
+        "dataset_mapping": None,
+    },
+    "reviewed": {
+        "type": "BOOLEAN",
+        "tables": ["teams_staging", "players_staging"],
+        "nullable": False,
+        "default": False,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": None,
     },
     # ------------------------------------------------------------------
@@ -220,19 +240,29 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         ],
         "nullable": False,
         "default": None,
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_basic_stats",
-                        "field": "PLAYER_NAME",
-                        "transform": "safe_str",
+                        "team_player_rosters": {
+                            "field": "PLAYER",
+                            "transform": "normalize_name",
+                        },
+                        "player_index": {
+                            "derived": {
+                                "concat": ["PLAYER_FIRST_NAME", "PLAYER_LAST_NAME"],
+                                "separator": " ",
+                            },
+                            "transform": "normalize_name",
+                        },
                     },
                     "team": {
-                        "dataset": "team_basic_stats",
-                        "field": "TEAM_NAME",
-                        "transform": "safe_str",
+                        "team_basic_stats": {
+                            "field": "TEAM_NAME",
+                            "transform": "normalize_name",
+                        },
                     },
                 },
             },
@@ -243,11 +273,21 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["players", "players_staging"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "player": {"dataset": "team_player_rosters", "field": "HEIGHT"},
+                    "player": {
+                        "team_player_rosters": {
+                            "field": "HEIGHT",
+                            "transform": "parse_height",
+                        },
+                        "player_index": {
+                            "field": "HEIGHT",
+                            "transform": "parse_height",
+                        },
+                    },
                 },
             },
         },
@@ -257,7 +297,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["players", "players_staging"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": None,
     },
     "weight_lbs": {
@@ -265,11 +306,15 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["players", "players_staging"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "player": {"dataset": "team_player_rosters", "field": "WEIGHT"},
+                    "player": {
+                        "team_player_rosters": {"field": "WEIGHT"},
+                        "player_index": {"field": "WEIGHT"},
+                    },
                 },
             },
         },
@@ -279,22 +324,21 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["players", "players_staging"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "combine_measurements",
-                        "field": "WINGSPAN",
-                        "transform": "parse_height",
-                        "multi_season": {
-                            "start_year": 2003,
-                            "aggregation": "most_recent_non_null",
+                        "combine_measurements": {
+                            "field": "WINGSPAN",
+                            "transform": "parse_height",
+                            "multi_season": {
+                                "start_year": 2003,
+                                "aggregation": "most_recent_non_null",
+                            },
                         },
                     },
-                },
-                "internal": {
-                    "player": {"dataset": "players", "field": "Wingspan"},
                 },
             },
         },
@@ -304,28 +348,46 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["players", "players_staging"],
         "nullable": True,
         "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "internal": {
-                    "player": {"dataset": "players", "field": "Handedness"},
-                },
-            },
-        },
+        "rate": None,
+        "scale": None,
+        "dataset_mapping": None,
     },
     "birthdate": {
         "type": "DATE",
         "tables": ["players", "players_staging"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "team_player_rosters",
-                        "field": "BIRTHDATE",
-                        "transform": "parse_birthdate",
+                        "team_player_rosters": {
+                            "field": "BIRTHDATE",
+                            "transform": "parse_birthdate",
+                        },
+                        "player_index": {
+                            "field": "BIRTHDATE",
+                            "transform": "parse_birthdate",
+                        },
+                    },
+                },
+            },
+        },
+    },
+    "seasons_exp": {
+        "type": "SMALLINT",
+        "tables": ["teams_players", "players_staging"],
+        "nullable": True,
+        "default": None,
+        "rate": None,
+        "scale": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player": {
+                        "team_player_rosters": {"field": "EXP"},
                     },
                 },
             },
@@ -336,7 +398,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["leagues", "countries", "teams", "identities_entities"],
         "nullable": False,
         "default": None,
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": None,
     },
     "country_code": {
@@ -344,22 +407,42 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["teams", "countries_players"],
         "nullable": True,
         "default": None,
-        "comment": None,
-        "dataset_mapping": None,
+        "rate": None,
+        "scale": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player": {
+                        "player_index": {
+                            "field": "COUNTRY",
+                            "transform": "match_country",
+                        },
+                    },
+                    "team": {
+                        "team_profiles": {
+                            "field": "TEAM_COUNTRY",
+                            "transform": "match_country",
+                        },
+                    },
+                },
+            },
+        },
     },
     "abbr": {
         "type": "TEXT",
         "tables": ["teams", "teams_staging"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_info",
-                        "field": "TEAM_ABBREVIATION",
-                        "transform": "safe_str",
+                        "team_profiles": {
+                            "field": "TEAM_ABBREVIATION",
+                            "transform": "safe_str",
+                        },
                     },
                 },
             },
@@ -370,14 +453,16 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["leagues_teams", "leagues_teams_staging"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_info",
-                        "field": "TEAM_CONFERENCE",
-                        "transform": "safe_str",
+                        "team_profiles": {
+                            "field": "TEAM_CONFERENCE",
+                            "transform": "safe_str",
+                        },
                     },
                 },
             },
@@ -388,25 +473,37 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["teams", "teams_staging"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_info",
-                        "field": "TEAM_CITY",
-                        "transform": "safe_str",
+                        "team_profiles": {
+                            "field": "TEAM_CITY",
+                            "transform": "safe_str",
+                        },
                     },
                 },
             },
         },
     },
-    "external_country": {
+    "region": {
+        "type": "TEXT",
+        "tables": ["teams", "teams_staging"],
+        "nullable": True,
+        "default": None,
+        "rate": None,
+        "scale": None,
+        "dataset_mapping": None,
+    },
+    "identity_country": {
         "type": "TEXT",
         "tables": ["teams_staging", "players_staging"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": None,
     },
     "gender": {
@@ -414,7 +511,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["leagues", "teams", "players", "teams_staging", "players_staging"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": None,
     },
     # ------------------------------------------------------------------
@@ -425,12 +523,17 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["team_seasons", "player_seasons"],
         "nullable": False,
         "default": 0,
-        "comment": None,
+        "rate": "ratio",
+        "scale": None,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "player": {"dataset": "player_basic_stats", "field": "GP"},
-                    "team": {"dataset": "team_basic_stats", "field": "GP"},
+                    "player": {
+                        "player_basic_stats": {"field": "GP"},
+                    },
+                    "team": {
+                        "team_basic_stats": {"field": "GP"},
+                    },
                 },
             },
         },
@@ -440,19 +543,16 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["team_seasons", "player_seasons"],
         "nullable": False,
         "default": 0,
-        "comment": None,
+        "rate": "counting",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_basic_stats",
-                        "field": "MIN",
-                        "scale": 10,
+                        "player_basic_stats": {"field": "MIN"},
                     },
                     "team": {
-                        "dataset": "team_basic_stats",
-                        "field": "MIN",
-                        "scale": 10,
+                        "team_basic_stats": {"field": "MIN"},
                     },
                 },
             },
@@ -463,12 +563,17 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["team_seasons", "player_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "ratio",
+        "scale": None,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "player": {"dataset": "player_basic_stats", "field": "W"},
-                    "team": {"dataset": "team_basic_stats", "field": "W"},
+                    "player": {
+                        "player_basic_stats": {"field": "W"},
+                    },
+                    "team": {
+                        "team_basic_stats": {"field": "W"},
+                    },
                 },
             },
         },
@@ -476,77 +581,72 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     # SCORING: 2-POINT
     # ------------------------------------------------------------------
-    "fg2m": {
+    "fg2m_x10": {
         "type": "SMALLINT",
         "tables": ["team_seasons", "player_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "counting",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_basic_stats",
-                        "derived": {"math": "FGM - FG3M", "fields": ["FGM", "FG3M"]},
+                        "player_basic_stats": {
+                            "derived": {
+                                "math": "FGM - FG3M",
+                                "fields": ["FGM", "FG3M"],
+                            },
+                        },
                     },
                     "team": {
-                        "dataset": "team_basic_stats",
-                        "derived": {"math": "FGM - FG3M", "fields": ["FGM", "FG3M"]},
+                        "team_basic_stats": {
+                            "derived": {
+                                "math": "FGM - FG3M",
+                                "fields": ["FGM", "FG3M"],
+                            },
+                        },
                     },
                 },
             },
         },
     },
-    "fg2a": {
+    "fg3m_x10": {
         "type": "SMALLINT",
         "tables": ["team_seasons", "player_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "counting",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_basic_stats",
-                        "derived": {"math": "FGA - FG3A", "fields": ["FGA", "FG3A"]},
+                        "player_basic_stats": {"field": "FG3M"},
                     },
                     "team": {
-                        "dataset": "team_basic_stats",
-                        "derived": {"math": "FGA - FG3A", "fields": ["FGA", "FG3A"]},
+                        "team_basic_stats": {"field": "FG3M"},
                     },
                 },
             },
         },
     },
-    # ------------------------------------------------------------------
-    # SCORING: 3-POINT
-    # ------------------------------------------------------------------
-    "fg3m": {
+    "fg3a_x10": {
         "type": "SMALLINT",
         "tables": ["team_seasons", "player_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "counting",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "player": {"dataset": "player_basic_stats", "field": "FG3M"},
-                    "team": {"dataset": "team_basic_stats", "field": "FG3M"},
-                },
-            },
-        },
-    },
-    "fg3a": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {"dataset": "player_basic_stats", "field": "FG3A"},
-                    "team": {"dataset": "team_basic_stats", "field": "FG3A"},
+                    "player": {
+                        "player_basic_stats": {"field": "FG3A"},
+                    },
+                    "team": {
+                        "team_basic_stats": {"field": "FG3A"},
+                    },
                 },
             },
         },
@@ -554,84 +654,41 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     # SCORING: FREE THROWS
     # ------------------------------------------------------------------
-    "ftm": {
+    "ftm_x10": {
         "type": "SMALLINT",
         "tables": ["team_seasons", "player_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {"dataset": "player_basic_stats", "field": "FTM"},
-                    "team": {"dataset": "team_basic_stats", "field": "FTM"},
-                },
-            },
-        },
-    },
-    "fta": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {"dataset": "player_basic_stats", "field": "FTA"},
-                    "team": {"dataset": "team_basic_stats", "field": "FTA"},
-                },
-            },
-        },
-    },
-    # ------------------------------------------------------------------
-    # UNASSISTED FIELD GOALS  (per-player shooting splits)
-    # ------------------------------------------------------------------
-    "unassisted_fg2m_pct_x10": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
+        "rate": "counting",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_basic_stats",
-                        "field": "PCT_UAST_2PM",
-                        "scale": 10,
-                        "params": {"measure_type_detailed_defense": "Scoring"},
+                        "player_basic_stats": {"field": "FTM"},
                     },
                     "team": {
-                        "dataset": "team_basic_stats",
-                        "field": "PCT_UAST_2PM",
-                        "scale": 10,
-                        "params": {"measure_type_detailed_defense": "Scoring"},
+                        "team_basic_stats": {"field": "FTM"},
                     },
                 },
             },
         },
     },
-    "unassisted_fg3m_pct_x10": {
+    "fta_x10": {
         "type": "SMALLINT",
         "tables": ["team_seasons", "player_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "counting",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_basic_stats",
-                        "field": "PCT_UAST_3PM",
-                        "scale": 10,
-                        "params": {"measure_type_detailed_defense": "Scoring"},
+                        "player_basic_stats": {"field": "FTA"},
                     },
                     "team": {
-                        "dataset": "team_basic_stats",
-                        "field": "PCT_UAST_3PM",
-                        "scale": 10,
-                        "params": {"measure_type_detailed_defense": "Scoring"},
+                        "team_basic_stats": {"field": "FTA"},
                     },
                 },
             },
@@ -640,51 +697,57 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     # REBOUNDS
     # ------------------------------------------------------------------
-    "o_reb_pct_x1000": {
+    "o_reb_pct_x10": {
         "type": "SMALLINT",
         "tables": ["team_seasons", "player_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "ratio",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_basic_stats",
-                        "field": "OREB_PCT",
-                        "scale": 1000,
-                        "params": {"measure_type_detailed_defense": "Advanced"},
+                        "player_basic_stats": {
+                            "field": "OREB_PCT",
+                            "params": {"measure_type_detailed_defense": "Advanced"},
+                            "scale": 100,
+                        },
                     },
                     "team": {
-                        "dataset": "team_basic_stats",
-                        "field": "OREB_PCT",
-                        "scale": 1000,
-                        "params": {"measure_type_detailed_defense": "Advanced"},
+                        "team_basic_stats": {
+                            "field": "OREB_PCT",
+                            "params": {"measure_type_detailed_defense": "Advanced"},
+                            "scale": 100,
+                        },
                     },
                 },
             },
         },
     },
-    "d_reb_pct_x1000": {
+    "d_reb_pct_x10": {
         "type": "SMALLINT",
         "tables": ["team_seasons", "player_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "ratio",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_basic_stats",
-                        "field": "DREB_PCT",
-                        "scale": 1000,
-                        "params": {"measure_type_detailed_defense": "Advanced"},
+                        "player_basic_stats": {
+                            "field": "DREB_PCT",
+                            "params": {"measure_type_detailed_defense": "Advanced"},
+                            "scale": 100,
+                        },
                     },
                     "team": {
-                        "dataset": "team_basic_stats",
-                        "field": "DREB_PCT",
-                        "scale": 1000,
-                        "params": {"measure_type_detailed_defense": "Advanced"},
+                        "team_basic_stats": {
+                            "field": "DREB_PCT",
+                            "params": {"measure_type_detailed_defense": "Advanced"},
+                            "scale": 100,
+                        },
                     },
                 },
             },
@@ -693,85 +756,47 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     # PLAYMAKING
     # ------------------------------------------------------------------
-    "assists": {
+    "assists_x10": {
         "type": "SMALLINT",
         "tables": ["team_seasons", "player_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {"dataset": "player_basic_stats", "field": "AST"},
-                    "team": {"dataset": "team_basic_stats", "field": "AST"},
-                },
-            },
-        },
-    },
-    "pot_assists": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
+        "rate": "counting",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_tracking_stats",
-                        "field": "POTENTIAL_AST",
-                        "params": {"pt_measure_type": "Passing"},
+                        "player_basic_stats": {"field": "AST"},
                     },
                     "team": {
-                        "dataset": "team_tracking_stats",
-                        "field": "POTENTIAL_AST",
-                        "params": {"pt_measure_type": "Passing"},
+                        "team_basic_stats": {"field": "AST"},
                     },
                 },
             },
         },
     },
-    "passes": {
+    "pot_assists_x10": {
         "type": "SMALLINT",
         "tables": ["team_seasons", "player_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "counting",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_tracking_stats",
-                        "field": "PASSES_MADE",
-                        "params": {"pt_measure_type": "Passing"},
+                        "player_tracking_stats": {
+                            "field": "POTENTIAL_AST",
+                            "params": {"pt_measure_type": "Passing"},
+                        },
                     },
                     "team": {
-                        "dataset": "team_tracking_stats",
-                        "field": "PASSES_MADE",
-                        "params": {"pt_measure_type": "Passing"},
-                    },
-                },
-            },
-        },
-    },
-    "sec_assists": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_tracking_stats",
-                        "field": "SECONDARY_AST",
-                        "params": {"pt_measure_type": "Passing"},
-                    },
-                    "team": {
-                        "dataset": "team_tracking_stats",
-                        "field": "SECONDARY_AST",
-                        "params": {"pt_measure_type": "Passing"},
+                        "team_tracking_stats": {
+                            "field": "POTENTIAL_AST",
+                            "params": {"pt_measure_type": "Passing"},
+                        },
                     },
                 },
             },
@@ -780,47 +805,55 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     # BALL HANDLING
     # ------------------------------------------------------------------
-    "touches": {
+    "touches_x10": {
         "type": "INTEGER",
         "tables": ["team_seasons", "player_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "counting",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_tracking_stats",
-                        "field": "TOUCHES",
-                        "params": {"pt_measure_type": "Possessions"},
+                        "player_tracking_stats": {
+                            "field": "TOUCHES",
+                            "params": {"pt_measure_type": "Possessions"},
+                        },
                     },
                     "team": {
-                        "dataset": "team_tracking_stats",
-                        "field": "TOUCHES",
-                        "params": {"pt_measure_type": "Possessions"},
+                        "team_tracking_stats": {
+                            "field": "TOUCHES",
+                            "params": {"pt_measure_type": "Possessions"},
+                        },
                     },
                 },
             },
         },
     },
-    "time_on_ball": {
+    "seconds_on_ball": {
         "type": "SMALLINT",
         "tables": ["team_seasons", "player_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "counting",
+        "scale": None,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_tracking_stats",
-                        "field": "TIME_OF_POSS",
-                        "params": {"pt_measure_type": "Possessions"},
+                        "player_tracking_stats": {
+                            "field": "TIME_OF_POSS",
+                            "params": {"pt_measure_type": "Possessions"},
+                            "scale": 60,
+                        },
                     },
                     "team": {
-                        "dataset": "team_tracking_stats",
-                        "field": "TIME_OF_POSS",
-                        "params": {"pt_measure_type": "Possessions"},
+                        "team_tracking_stats": {
+                            "field": "TIME_OF_POSS",
+                            "params": {"pt_measure_type": "Possessions"},
+                            "scale": 60,
+                        },
                     },
                 },
             },
@@ -829,69 +862,21 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     # TURNOVERS
     # ------------------------------------------------------------------
-    "turnovers": {
+    "turnovers_x10": {
         "type": "SMALLINT",
         "tables": ["team_seasons", "player_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {"dataset": "player_basic_stats", "field": "TOV"},
-                    "team": {"dataset": "team_basic_stats", "field": "TOV"},
-                },
-            },
-        },
-    },
-    # ------------------------------------------------------------------
-    # DISTANCE
-    # ------------------------------------------------------------------
-    "o_dist_x10": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
+        "rate": "counting",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_tracking_stats",
-                        "field": "DIST_MILES_OFF",
-                        "scale": 10,
-                        "params": {"pt_measure_type": "SpeedDistance"},
+                        "player_basic_stats": {"field": "TOV"},
                     },
                     "team": {
-                        "dataset": "team_tracking_stats",
-                        "field": "DIST_MILES_OFF",
-                        "scale": 10,
-                        "params": {"pt_measure_type": "SpeedDistance"},
-                    },
-                },
-            },
-        },
-    },
-    "d_dist_x10": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_tracking_stats",
-                        "field": "DIST_MILES_DEF",
-                        "scale": 10,
-                        "params": {"pt_measure_type": "SpeedDistance"},
-                    },
-                    "team": {
-                        "dataset": "team_tracking_stats",
-                        "field": "DIST_MILES_DEF",
-                        "scale": 10,
-                        "params": {"pt_measure_type": "SpeedDistance"},
+                        "team_basic_stats": {"field": "TOV"},
                     },
                 },
             },
@@ -900,47 +885,62 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     # DEFENSE: STEALS / BLOCKS / FOULS
     # ------------------------------------------------------------------
-    "steals": {
+    "steals_x10": {
         "type": "SMALLINT",
         "tables": ["team_seasons", "player_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "counting",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "player": {"dataset": "player_basic_stats", "field": "STL"},
-                    "team": {"dataset": "team_basic_stats", "field": "STL"},
+                    "player": {
+                        "player_basic_stats": {"field": "STL"},
+                    },
+                    "team": {
+                        "team_basic_stats": {"field": "STL"},
+                    },
                 },
             },
         },
     },
-    "blocks": {
+    "blocks_x10": {
         "type": "SMALLINT",
         "tables": ["team_seasons", "player_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "counting",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "player": {"dataset": "player_basic_stats", "field": "BLK"},
-                    "team": {"dataset": "team_basic_stats", "field": "BLK"},
+                    "player": {
+                        "player_basic_stats": {"field": "BLK"},
+                    },
+                    "team": {
+                        "team_basic_stats": {"field": "BLK"},
+                    },
                 },
             },
         },
     },
-    "fouls": {
+    "fouls_x10": {
         "type": "SMALLINT",
         "tables": ["team_seasons", "player_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "counting",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "player": {"dataset": "player_basic_stats", "field": "PF"},
-                    "team": {"dataset": "team_basic_stats", "field": "PF"},
+                    "player": {
+                        "player_basic_stats": {"field": "PF"},
+                    },
+                    "team": {
+                        "team_basic_stats": {"field": "PF"},
+                    },
                 },
             },
         },
@@ -948,884 +948,210 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     # ------------------------------------------------------------------
     # HUSTLE STATS
     # ------------------------------------------------------------------
-    "deflections": {
+    "deflections_x10": {
         "type": "SMALLINT",
         "tables": ["team_seasons", "player_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "counting",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_hustle_stats",
-                        "field": "DEFLECTIONS",
-                    },
-                    "team": {"dataset": "team_hustle_stats", "field": "DEFLECTIONS"},
-                },
-            },
-        },
-    },
-    "cont_d_fg2a": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_hustle_stats",
-                        "field": "CONTESTED_SHOTS_2PT",
+                        "player_hustle_stats": {"field": "DEFLECTIONS"},
                     },
                     "team": {
-                        "dataset": "team_hustle_stats",
-                        "field": "CONTESTED_SHOTS_2PT",
+                        "team_hustle_stats": {"field": "DEFLECTIONS"},
                     },
                 },
             },
         },
     },
-    "cont_d_fg3a": {
+    "cont_d_fga_x10": {
         "type": "SMALLINT",
         "tables": ["team_seasons", "player_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "counting",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "player": {
-                        "dataset": "player_hustle_stats",
-                        "field": "CONTESTED_SHOTS_3PT",
+                        "player_hustle_stats": {"field": "CONTESTED_SHOTS"},
                     },
                     "team": {
-                        "dataset": "team_hustle_stats",
-                        "field": "CONTESTED_SHOTS_3PT",
+                        "team_hustle_stats": {"field": "CONTESTED_SHOTS"},
                     },
                 },
             },
         },
     },
     # ------------------------------------------------------------------
-    # DEFENSIVE SHOT TRACKING  (player_defense / team_defense)
+    # POSSESSIONS
     # ------------------------------------------------------------------
-    "d_fg2m": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_defense_stats",
-                        "field": "FG2M",
-                        "params": {"defense_category": "2 Pointers"},
-                    },
-                    "team": {
-                        "dataset": "team_defense_stats",
-                        "field": "FG2M",
-                        "params": {"defense_category": "2 Pointers"},
-                    },
-                },
-            },
-        },
-    },
-    "d_fg2a": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_defense_stats",
-                        "field": "FG2A",
-                        "params": {"defense_category": "2 Pointers"},
-                    },
-                    "team": {
-                        "dataset": "team_defense_stats",
-                        "field": "FG2A",
-                        "params": {"defense_category": "2 Pointers"},
-                    },
-                },
-            },
-        },
-    },
-    "d_fg3m": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_defense_stats",
-                        "field": "FG3M",
-                        "params": {"defense_category": "3 Pointers"},
-                    },
-                    "team": {
-                        "dataset": "team_defense_stats",
-                        "field": "FG3M",
-                        "params": {"defense_category": "3 Pointers"},
-                    },
-                },
-            },
-        },
-    },
-    "d_fg3a": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_defense_stats",
-                        "field": "FG3A",
-                        "params": {"defense_category": "3 Pointers"},
-                    },
-                    "team": {
-                        "dataset": "team_defense_stats",
-                        "field": "FG3A",
-                        "params": {"defense_category": "3 Pointers"},
-                    },
-                },
-            },
-        },
-    },
-    # ------------------------------------------------------------------
-    # ON/OFF COUNTING STATS
-    # ------------------------------------------------------------------
-    "on_2fgm": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_on_team_stats",
-                        "derived": {"math": "FGM - FG3M", "fields": ["FGM", "FG3M"]},
-                    },
-                },
-            },
-        },
-    },
-    "on_2fga": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_on_team_stats",
-                        "derived": {"math": "FGA - FG3A", "fields": ["FGA", "FG3A"]},
-                    },
-                },
-            },
-        },
-    },
-    "on_3fgm": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_on_team_stats",
-                        "field": "FG3M",
-                    },
-                },
-            },
-        },
-    },
-    "on_3fga": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_on_team_stats",
-                        "field": "FG3A",
-                    },
-                },
-            },
-        },
-    },
-    "on_fta": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_on_team_stats",
-                        "field": "FTA",
-                    },
-                },
-            },
-        },
-    },
-    "on_ftm": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_on_team_stats",
-                        "field": "FTM",
-                    },
-                },
-            },
-        },
-    },
-    "on_tovs": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_on_team_stats",
-                        "field": "TOV",
-                    },
-                },
-            },
-        },
-    },
-    "on_blocks": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_on_team_stats",
-                        "field": "BLK",
-                    },
-                },
-            },
-        },
-    },
-    "off_2fgm": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_off_team_stats",
-                        "derived": {"math": "FGM - FG3M", "fields": ["FGM", "FG3M"]},
-                    },
-                },
-            },
-        },
-    },
-    "off_2fga": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_off_team_stats",
-                        "derived": {"math": "FGA - FG3A", "fields": ["FGA", "FG3A"]},
-                    },
-                },
-            },
-        },
-    },
-    "off_3fgm": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_off_team_stats",
-                        "field": "FG3M",
-                    },
-                },
-            },
-        },
-    },
-    "off_3fga": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_off_team_stats",
-                        "field": "FG3A",
-                    },
-                },
-            },
-        },
-    },
-    "off_fta": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_off_team_stats",
-                        "field": "FTA",
-                    },
-                },
-            },
-        },
-    },
-    "off_ftm": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_off_team_stats",
-                        "field": "FTM",
-                    },
-                },
-            },
-        },
-    },
-    "off_tovs": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_off_team_stats",
-                        "field": "TOV",
-                    },
-                },
-            },
-        },
-    },
-    "off_blocks": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_off_team_stats",
-                        "field": "BLK",
-                    },
-                },
-            },
-        },
-    },
-    "on_opp_2fgm": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_on_team_stats",
-                        "derived": {"math": "FGM - FG3M", "fields": ["FGM", "FG3M"]},
-                        "params": {"measure_type_detailed_defense": "Opponent"},
-                    },
-                },
-            },
-        },
-    },
-    "on_opp_2fga": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_on_team_stats",
-                        "derived": {"math": "FGA - FG3A", "fields": ["FGA", "FG3A"]},
-                        "params": {"measure_type_detailed_defense": "Opponent"},
-                    },
-                },
-            },
-        },
-    },
-    "on_opp_3fgm": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_on_team_stats",
-                        "field": "FG3M",
-                        "params": {"measure_type_detailed_defense": "Opponent"},
-                    },
-                },
-            },
-        },
-    },
-    "on_opp_3fga": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_on_team_stats",
-                        "field": "FG3A",
-                        "params": {"measure_type_detailed_defense": "Opponent"},
-                    },
-                },
-            },
-        },
-    },
-    "on_opp_fta": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_on_team_stats",
-                        "field": "FTA",
-                        "params": {"measure_type_detailed_defense": "Opponent"},
-                    },
-                },
-            },
-        },
-    },
-    "on_opp_ftm": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_on_team_stats",
-                        "field": "FTM",
-                        "params": {"measure_type_detailed_defense": "Opponent"},
-                    },
-                },
-            },
-        },
-    },
-    "on_opp_tovs": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_on_team_stats",
-                        "field": "TOV",
-                        "params": {"measure_type_detailed_defense": "Opponent"},
-                    },
-                },
-            },
-        },
-    },
-    "off_opp_2fgm": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_off_team_stats",
-                        "derived": {"math": "FGM - FG3M", "fields": ["FGM", "FG3M"]},
-                        "params": {"measure_type_detailed_defense": "Opponent"},
-                    },
-                },
-            },
-        },
-    },
-    "off_opp_2fga": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_off_team_stats",
-                        "derived": {"math": "FGA - FG3A", "fields": ["FGA", "FG3A"]},
-                        "params": {"measure_type_detailed_defense": "Opponent"},
-                    },
-                },
-            },
-        },
-    },
-    "off_opp_3fgm": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_off_team_stats",
-                        "field": "FG3M",
-                        "params": {"measure_type_detailed_defense": "Opponent"},
-                    },
-                },
-            },
-        },
-    },
-    "off_opp_3fga": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_off_team_stats",
-                        "field": "FG3A",
-                        "params": {"measure_type_detailed_defense": "Opponent"},
-                    },
-                },
-            },
-        },
-    },
-    "off_opp_fta": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_off_team_stats",
-                        "field": "FTA",
-                        "params": {"measure_type_detailed_defense": "Opponent"},
-                    },
-                },
-            },
-        },
-    },
-    "off_opp_ftm": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_off_team_stats",
-                        "field": "FTM",
-                        "params": {"measure_type_detailed_defense": "Opponent"},
-                    },
-                },
-            },
-        },
-    },
-    "off_opp_tovs": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_off_team_stats",
-                        "field": "TOV",
-                        "params": {"measure_type_detailed_defense": "Opponent"},
-                    },
-                },
-            },
-        },
-    },
-    # ------------------------------------------------------------------
-    # ON/OFF REBOUND PCT (player_on_court / player_off_court — Advanced)
-    # ------------------------------------------------------------------
-    "on_o_reb_pct_x1000": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_on_team_stats",
-                        "field": "OREB_PCT",
-                        "params": {"measure_type_detailed_defense": "Advanced"},
-                        "scale": 1000,
-                    },
-                },
-            },
-        },
-    },
-    "on_d_reb_pct_x1000": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_on_team_stats",
-                        "field": "DREB_PCT",
-                        "params": {"measure_type_detailed_defense": "Advanced"},
-                        "scale": 1000,
-                    },
-                },
-            },
-        },
-    },
-    "off_o_reb_pct_x1000": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_off_team_stats",
-                        "field": "OREB_PCT",
-                        "params": {"measure_type_detailed_defense": "Advanced"},
-                        "scale": 1000,
-                    },
-                },
-            },
-        },
-    },
-    "off_d_reb_pct_x1000": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_off_team_stats",
-                        "field": "DREB_PCT",
-                        "params": {"measure_type_detailed_defense": "Advanced"},
-                        "scale": 1000,
-                    },
-                },
-            },
-        },
-    },
-    "ft_assists": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player": {
-                        "dataset": "player_tracking_stats",
-                        "field": "FT_AST",
-                        "params": {"pt_measure_type": "Passing"},
-                    },
-                    "team": {
-                        "dataset": "team_tracking_stats",
-                        "field": "FT_AST",
-                        "params": {"pt_measure_type": "Passing"},
-                    },
-                },
-            },
-        },
-    },
     "poss": {
         "type": "SMALLINT",
         "tables": ["team_seasons", "player_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "ratio",
+        "scale": None,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "team": {
-                        "dataset": "team_basic_stats",
-                        "field": "POSS",
-                        "params": {"measure_type_detailed_defense": "Advanced"},
-                    },
                     "player": {
-                        "dataset": "player_basic_stats",
-                        "field": "POSS",
-                        "params": {"measure_type_detailed_defense": "Advanced"},
-                    },
-                },
-            },
-        },
-    },
-    "o_fouls_drawn": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "team": {
-                        "dataset": "team_pbp_stats",
-                        "field": "Offensive Fouls Drawn",
-                    },
-                    "player": {
-                        "dataset": "player_pbp_stats",
-                        "field": "Offensive Fouls Drawn",
-                    },
-                },
-            },
-        },
-    },
-    "assist_points": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "team": {
-                        "dataset": "team_pbp_stats",
-                        "field": "AssistPoints",
-                    },
-                    "player": {
-                        "dataset": "player_pbp_stats",
-                        "field": "AssistPoints",
-                    },
-                },
-            },
-        },
-    },
-    "true_ft_trips": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "team": {
-                        "dataset": "team_pbp_stats",
-                        "derived": {
-                            "math": "TwoPtShootingFoulsDrawn + ThreePtShootingFoulsDrawn + NonShootingFoulsDrawn",
-                            "fields": [
-                                "TwoPtShootingFoulsDrawn",
-                                "ThreePtShootingFoulsDrawn",
-                                "NonShootingFoulsDrawn",
-                            ],
+                        "player_basic_stats": {
+                            "field": "POSS",
+                            "params": {"measure_type_detailed_defense": "Advanced"},
                         },
                     },
+                    "team": {
+                        "team_basic_stats": {
+                            "field": "POSS",
+                            "params": {"measure_type_detailed_defense": "Advanced"},
+                        },
+                    },
+                },
+            },
+        },
+    },
+    "o_rtg_x10": {
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons"],
+        "nullable": True,
+        "default": None,
+        "rate": "ratio",
+        "scale": 10,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
                     "player": {
-                        "dataset": "player_pbp_stats",
-                        "derived": {
-                            "math": "TwoPtShootingFoulsDrawn + ThreePtShootingFoulsDrawn + NonShootingFoulsDrawn",
-                            "fields": [
-                                "TwoPtShootingFoulsDrawn",
-                                "ThreePtShootingFoulsDrawn",
-                                "NonShootingFoulsDrawn",
-                            ],
+                        "player_basic_stats": {
+                            "field": "OFF_RTG",
+                            "params": {"measure_type_detailed_defense": "Advanced"},
+                        },
+                    },
+                    "team": {
+                        "team_basic_stats": {
+                            "field": "OFF_RTG",
+                            "params": {"measure_type_detailed_defense": "Advanced"},
+                        },
+                    },
+                },
+            },
+        },
+    },
+    "d_rtg_x10": {
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons"],
+        "nullable": True,
+        "default": None,
+        "rate": "ratio",
+        "scale": 10,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player": {
+                        "player_basic_stats": {
+                            "field": "DEF_RTG",
+                            "params": {"measure_type_detailed_defense": "Advanced"},
+                        },
+                    },
+                    "team": {
+                        "team_basic_stats": {
+                            "field": "DEF_RTG",
+                            "params": {"measure_type_detailed_defense": "Advanced"},
+                        },
+                    },
+                },
+            },
+        },
+    },
+    # ------------------------------------------------------------------
+    # PBP STATS
+    # ------------------------------------------------------------------
+    "o_fouls_drawn_x10": {
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons"],
+        "nullable": True,
+        "default": None,
+        "rate": "counting",
+        "scale": 10,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player": {
+                        "player_pbp_stats": {"field": "Offensive Fouls Drawn"},
+                    },
+                    "team": {
+                        "team_pbp_stats": {"field": "Offensive Fouls Drawn"},
+                    },
+                },
+            },
+        },
+    },
+    "assist_points_x10": {
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons"],
+        "nullable": True,
+        "default": None,
+        "rate": "counting",
+        "scale": 10,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player": {
+                        "player_pbp_stats": {"field": "AssistPoints"},
+                    },
+                    "team": {
+                        "team_pbp_stats": {"field": "AssistPoints"},
+                    },
+                },
+            },
+        },
+    },
+    "true_ft_trips_x10": {
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons"],
+        "nullable": True,
+        "default": None,
+        "rate": "counting",
+        "scale": 10,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player": {
+                        "player_pbp_stats": {
+                            "derived": {
+                                "math": (
+                                    "TwoPtShootingFoulsDrawn"
+                                    " + ThreePtShootingFoulsDrawn"
+                                    " + NonShootingFoulsDrawn"
+                                ),
+                                "fields": [
+                                    "TwoPtShootingFoulsDrawn",
+                                    "ThreePtShootingFoulsDrawn",
+                                    "NonShootingFoulsDrawn",
+                                ],
+                            },
+                        },
+                    },
+                    "team": {
+                        "team_pbp_stats": {
+                            "derived": {
+                                "math": (
+                                    "TwoPtShootingFoulsDrawn"
+                                    " + ThreePtShootingFoulsDrawn"
+                                    " + NonShootingFoulsDrawn"
+                                ),
+                                "fields": [
+                                    "TwoPtShootingFoulsDrawn",
+                                    "ThreePtShootingFoulsDrawn",
+                                    "NonShootingFoulsDrawn",
+                                ],
+                            },
                         },
                     },
                 },
@@ -1837,19 +1163,16 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["team_seasons", "player_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "ratio",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "team": {
-                        "dataset": "team_pbp_stats",
-                        "field": "SecondsPerPossOff",
-                        "scale": 10,
-                    },
                     "player": {
-                        "dataset": "player_pbp_stats",
-                        "field": "SecondsPerPossOff",
-                        "scale": 10,
+                        "player_pbp_stats": {"field": "SecondsPerPossOff"},
+                    },
+                    "team": {
+                        "team_pbp_stats": {"field": "SecondsPerPossOff"},
                     },
                 },
             },
@@ -1860,19 +1183,71 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["team_seasons", "player_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "ratio",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "team": {
-                        "dataset": "team_pbp_stats",
-                        "field": "SecondsPerPossDef",
-                        "scale": 10,
-                    },
                     "player": {
-                        "dataset": "player_pbp_stats",
-                        "field": "SecondsPerPossDef",
-                        "scale": 10,
+                        "player_pbp_stats": {"field": "SecondsPerPossDef"},
+                    },
+                    "team": {
+                        "team_pbp_stats": {"field": "SecondsPerPossDef"},
+                    },
+                },
+            },
+        },
+    },
+    "off_d_rtg_x10": {
+        "type": "SMALLINT",
+        "tables": ["player_seasons"],
+        "nullable": True,
+        "default": None,
+        "rate": "ratio",
+        "scale": 10,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player": {
+                        "player_off_team_stats": {"field": "DEF_RTG"},
+                    },
+                },
+            },
+        },
+    },
+    "off_o_rtg_x10": {
+        "type": "SMALLINT",
+        "tables": ["player_seasons"],
+        "nullable": True,
+        "default": None,
+        "rate": "ratio",
+        "scale": 10,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player": {
+                        "player_off_team_stats": {"field": "OFF_RTG"},
+                    },
+                },
+            },
+        },
+    },
+    # ------------------------------------------------------------------
+    # ROSTER COLUMNS
+    # ------------------------------------------------------------------
+    "jersey_num": {
+        "type": "TEXT",
+        "tables": ["teams_players", "players_staging"],
+        "nullable": True,
+        "default": None,
+        "rate": None,
+        "scale": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player": {
+                        "team_player_rosters": {"field": "NUM"},
+                        "player_index": {"field": "JERSEY_NUMBER"},
                     },
                 },
             },
@@ -1886,7 +1261,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["runs", "tasks"],
         "nullable": False,
         "default": None,
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": None,
     },
     "status": {
@@ -1894,7 +1270,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["runs", "tasks"],
         "nullable": False,
         "default": "'pending'",
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": None,
     },
     "completed_at": {
@@ -1902,7 +1279,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["runs", "tasks", "coverages"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": None,
     },
     "total_tasks": {
@@ -1910,7 +1288,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["runs"],
         "nullable": False,
         "default": "0",
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": None,
     },
     "completed_tasks": {
@@ -1918,7 +1297,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["runs"],
         "nullable": False,
         "default": "0",
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": None,
     },
     "error_message": {
@@ -1926,19 +1306,101 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["runs", "tasks"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": None,
+        "scale": None,
+        "dataset_mapping": None,
+    },
+    "task_name": {
+        "type": "TEXT",
+        "tables": ["tasks"],
+        "nullable": False,
+        "default": None,
+        "rate": None,
+        "scale": None,
+        "dataset_mapping": None,
+    },
+    "dataset": {
+        "type": "TEXT",
+        "tables": ["tasks", "coverages"],
+        "nullable": True,
+        "default": None,
+        "rate": None,
+        "scale": None,
+        "dataset_mapping": None,
+    },
+    "tier": {
+        "type": "TEXT",
+        "tables": ["tasks"],
+        "nullable": True,
+        "default": None,
+        "rate": None,
+        "scale": None,
+        "dataset_mapping": None,
+    },
+    "field": {
+        "type": "TEXT",
+        "tables": ["coverages"],
+        "nullable": False,
+        "default": None,
+        "rate": None,
+        "scale": None,
+        "dataset_mapping": None,
+    },
+    "source_params": {
+        "type": "TEXT",
+        "tables": ["tasks", "coverages"],
+        "nullable": True,
+        "default": None,
+        "rate": None,
+        "scale": None,
+        "dataset_mapping": None,
+    },
+    "dataset_params": {
+        "type": "TEXT",
+        "tables": ["tasks", "coverages"],
+        "nullable": True,
+        "default": None,
+        "rate": None,
+        "scale": None,
+        "dataset_mapping": None,
+    },
+    "col_name": {
+        "type": "TEXT",
+        "tables": ["coverages"],
+        "nullable": False,
+        "default": None,
+        "rate": None,
+        "scale": None,
+        "dataset_mapping": None,
+    },
+    "rows_written": {
+        "type": "INTEGER",
+        "tables": ["tasks"],
+        "nullable": False,
+        "default": "0",
+        "rate": None,
+        "scale": None,
+        "dataset_mapping": None,
+    },
+    "retry_count": {
+        "type": "INTEGER",
+        "tables": ["tasks"],
+        "nullable": False,
+        "default": "0",
+        "rate": None,
+        "scale": None,
         "dataset_mapping": None,
     },
     # ------------------------------------------------------------------
-    # REFERENCE ID COLUMNS (foreign keys referencing core.*_profiles)
-    # These are resolved by the ETL (execution context) prior to writes.
+    # REFERENCE ID COLUMNS
     # ------------------------------------------------------------------
     "player_id": {
         "type": "BIGINT",
         "tables": ["player_seasons", "teams_players", "countries_players"],
         "nullable": False,
         "default": None,
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": None,
     },
     "team_id": {
@@ -1946,7 +1408,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["team_seasons", "player_seasons", "teams_players", "leagues_teams"],
         "nullable": False,
         "default": None,
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": None,
     },
     "league_code": {
@@ -1965,7 +1428,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         ],
         "nullable": False,
         "default": None,
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": None,
     },
     "sovereign_code": {
@@ -1973,302 +1437,239 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": ["countries"],
         "nullable": True,
         "default": None,
-        "comment": None,
-        "dataset_mapping": None,
-    },
-    "task_name": {
-        "type": "TEXT",
-        "tables": ["tasks"],
-        "nullable": False,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": None,
-    },
-    "dataset": {
-        "type": "TEXT",
-        "tables": ["tasks", "coverages"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": None,
-    },
-    "tier": {
-        "type": "TEXT",
-        "tables": ["tasks"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": None,
-    },
-    "field": {
-        "type": "TEXT",
-        "tables": ["coverages"],
-        "nullable": False,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": None,
-    },
-    "source_params": {
-        "type": "TEXT",
-        "tables": ["tasks", "coverages"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": None,
-    },
-    "dataset_params": {
-        "type": "TEXT",
-        "tables": ["tasks", "coverages"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": None,
-    },
-    "col_name": {
-        "type": "TEXT",
-        "tables": ["coverages"],
-        "nullable": False,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": None,
-    },
-    "rows_written": {
-        "type": "INTEGER",
-        "tables": ["tasks"],
-        "nullable": False,
-        "default": "0",
-        "comment": None,
-        "dataset_mapping": None,
-    },
-    "retry_count": {
-        "type": "INTEGER",
-        "tables": ["tasks"],
-        "nullable": False,
-        "default": "0",
-        "comment": None,
+        "rate": None,
+        "scale": None,
         "dataset_mapping": None,
     },
     # ------------------------------------------------------------------
-    # ROSTER COLUMNS (league_rosters, team_rosters)
-    # Shared operational/data columns only.  FK columns (league_id, team_id,
-    # player_id) are derived directly from ROSTER_TABLES.foreign_keys by
-    # the DDL generator, so they do not belong here.
+    # OPPONENT STATS  (team_seasons only)
     # ------------------------------------------------------------------
-    "jersey_num": {
-        "type": "TEXT",
-        "tables": ["teams_players", "players_staging"],
+    "opp_fg2m_x10": {
+        "type": "SMALLINT",
+        "tables": ["team_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "counting",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "player": {"dataset": "team_player_rosters", "field": "JERSEY"},
+                    "team": {
+                        "team_basic_stats": {
+                            "field": "FGM",
+                            "params": {"measure_type_detailed_defense": "Opponent"},
+                            "derived": {
+                                "math": "FGM - FG3M",
+                                "fields": ["FGM", "FG3M"],
+                            },
+                        },
+                    },
                 },
             },
         },
     },
-    # ------------------------------------------------------------------
-    # OPPONENT STATS
-    # ------------------------------------------------------------------
-    "opp_fg2m": {
+    "opp_fg2a_x10": {
         "type": "SMALLINT",
         "tables": ["team_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "counting",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_basic_stats",
-                        "field": "FGM",
-                        "params": {"measure_type_detailed_defense": "Opponent"},
-                        "derived": {"math": "FGM - FG3M", "fields": ["FGM", "FG3M"]},
-                    }
-                }
-            }
+                        "team_basic_stats": {
+                            "field": "FGA",
+                            "params": {"measure_type_detailed_defense": "Opponent"},
+                            "derived": {
+                                "math": "FGA - FG3A",
+                                "fields": ["FGA", "FG3A"],
+                            },
+                        },
+                    },
+                },
+            },
         },
     },
-    "opp_fg2a": {
+    "opp_fg3m_x10": {
         "type": "SMALLINT",
         "tables": ["team_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "counting",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_basic_stats",
-                        "field": "FGA",
-                        "params": {"measure_type_detailed_defense": "Opponent"},
-                        "derived": {"math": "FGA - FG3A", "fields": ["FGA", "FG3A"]},
-                    }
-                }
-            }
+                        "team_basic_stats": {
+                            "field": "FG3M",
+                            "params": {"measure_type_detailed_defense": "Opponent"},
+                        },
+                    },
+                },
+            },
         },
     },
-    "opp_fg3m": {
+    "opp_fg3a_x10": {
         "type": "SMALLINT",
         "tables": ["team_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "counting",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_basic_stats",
-                        "field": "FG3M",
-                        "params": {"measure_type_detailed_defense": "Opponent"},
-                    }
-                }
-            }
+                        "team_basic_stats": {
+                            "field": "FG3A",
+                            "params": {"measure_type_detailed_defense": "Opponent"},
+                        },
+                    },
+                },
+            },
         },
     },
-    "opp_fg3a": {
+    "opp_ftm_x10": {
         "type": "SMALLINT",
         "tables": ["team_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "counting",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_basic_stats",
-                        "field": "FG3A",
-                        "params": {"measure_type_detailed_defense": "Opponent"},
-                    }
-                }
-            }
+                        "team_basic_stats": {
+                            "field": "FTM",
+                            "params": {"measure_type_detailed_defense": "Opponent"},
+                        },
+                    },
+                },
+            },
         },
     },
-    "opp_ftm": {
+    "opp_fta_x10": {
         "type": "SMALLINT",
         "tables": ["team_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "counting",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_basic_stats",
-                        "field": "FTM",
-                        "params": {"measure_type_detailed_defense": "Opponent"},
-                    }
-                }
-            }
+                        "team_basic_stats": {
+                            "field": "FTA",
+                            "params": {"measure_type_detailed_defense": "Opponent"},
+                        },
+                    },
+                },
+            },
         },
     },
-    "opp_fta": {
+    "opp_assists_x10": {
         "type": "SMALLINT",
         "tables": ["team_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "counting",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_basic_stats",
-                        "field": "FTA",
-                        "params": {"measure_type_detailed_defense": "Opponent"},
-                    }
-                }
-            }
+                        "team_basic_stats": {
+                            "field": "AST",
+                            "params": {"measure_type_detailed_defense": "Opponent"},
+                        },
+                    },
+                },
+            },
         },
     },
-    "opp_assists": {
+    "opp_turnovers_x10": {
         "type": "SMALLINT",
         "tables": ["team_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "counting",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_basic_stats",
-                        "field": "AST",
-                        "params": {"measure_type_detailed_defense": "Opponent"},
-                    }
-                }
-            }
+                        "team_basic_stats": {
+                            "field": "TOV",
+                            "params": {"measure_type_detailed_defense": "Opponent"},
+                        },
+                    },
+                },
+            },
         },
     },
-    "opp_turnovers": {
+    "opp_fouls_x10": {
         "type": "SMALLINT",
         "tables": ["team_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "counting",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_basic_stats",
-                        "field": "TOV",
-                        "params": {"measure_type_detailed_defense": "Opponent"},
-                    }
-                }
-            }
+                        "team_basic_stats": {
+                            "field": "PF",
+                            "params": {"measure_type_detailed_defense": "Opponent"},
+                        },
+                    },
+                },
+            },
         },
     },
-    "opp_fouls": {
+    "opp_steals_x10": {
         "type": "SMALLINT",
         "tables": ["team_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "counting",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_basic_stats",
-                        "field": "PF",
-                        "params": {"measure_type_detailed_defense": "Opponent"},
-                    }
-                }
-            }
+                        "team_basic_stats": {
+                            "field": "STL",
+                            "params": {"measure_type_detailed_defense": "Opponent"},
+                        },
+                    },
+                },
+            },
         },
     },
-    "opp_steals": {
+    "opp_blocks_x10": {
         "type": "SMALLINT",
         "tables": ["team_seasons"],
         "nullable": True,
         "default": None,
-        "comment": None,
+        "rate": "counting",
+        "scale": 10,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "team": {
-                        "dataset": "team_basic_stats",
-                        "field": "STL",
-                        "params": {"measure_type_detailed_defense": "Opponent"},
-                    }
-                }
-            }
-        },
-    },
-    "opp_blocks": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons"],
-        "nullable": True,
-        "default": None,
-        "comment": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "team": {
-                        "dataset": "team_basic_stats",
-                        "field": "BLK",
-                        "params": {"measure_type_detailed_defense": "Opponent"},
-                    }
-                }
-            }
+                        "team_basic_stats": {
+                            "field": "BLK",
+                            "params": {"measure_type_detailed_defense": "Opponent"},
+                        },
+                    },
+                },
+            },
         },
     },
 }

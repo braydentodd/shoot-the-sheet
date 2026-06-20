@@ -11,9 +11,9 @@ outside this module.
 import logging
 from typing import Any, Dict, List, Tuple
 
-from src.core.lib.postgres import get_db_connection, quote_col
-from src.core.definitions.schema import TABLES, SEQUENCES, TABLE_ENTITY
 from src.core.definitions.db_columns import DB_COLUMNS
+from src.core.definitions.schema import SEQUENCES, TABLE_ENTITY, TABLES
+from src.core.lib.postgres import get_db_connection, quote_col
 
 logger = logging.getLogger(__name__)
 
@@ -22,16 +22,17 @@ logger = logging.getLogger(__name__)
 # Column-set assembly
 # ---------------------------------------------------------------------------
 
+
 def _column_in_table(col_meta: Dict[str, Any], table_name: str) -> bool:
     """Whether a DB_COLUMNS entry contributes to *table_name*.
 
     Supports the ``'all'`` wildcard, which means the column belongs to
     every table.
     """
-    tables = col_meta.get('tables', [])
+    tables = col_meta.get("tables", [])
     if isinstance(tables, str):
         tables = [tables]
-    return table_name in tables or 'all' in tables
+    return table_name in tables or "all" in tables
 
 
 def _data_columns_for_table(table_name: str) -> List[Tuple[str, Dict[str, Any]]]:
@@ -43,7 +44,9 @@ def _data_columns_for_table(table_name: str) -> List[Tuple[str, Dict[str, Any]]]
     ]
 
 
-def _data_columns_for_tables(table_names: List[str]) -> List[Tuple[str, Dict[str, Any]]]:
+def _data_columns_for_tables(
+    table_names: List[str],
+) -> List[Tuple[str, Dict[str, Any]]]:
     """Return matching DB columns across several tables without duplicates."""
     ordered: List[Tuple[str, Dict[str, Any]]] = []
     seen = set()
@@ -60,24 +63,25 @@ def _data_columns_for_tables(table_names: List[str]) -> List[Tuple[str, Dict[str
 # Single-column DDL fragments
 # ---------------------------------------------------------------------------
 
+
 def _format_default(default: Any, pg_type: str) -> str:
     """Render a default-value clause."""
     if default is None:
-        return ''
+        return ""
     if isinstance(default, bool):
         return f"DEFAULT {'TRUE' if default else 'FALSE'}"
-    return f'DEFAULT {default}'
+    return f"DEFAULT {default}"
 
 
 def _column_ddl(name: str, meta: Dict[str, Any]) -> str:
     """Render a single ``CREATE TABLE`` column fragment."""
-    parts = [quote_col(name), meta['type']]
-    if not meta.get('nullable', True):
-        parts.append('NOT NULL')
-    default = _format_default(meta.get('default'), meta['type'])
+    parts = [quote_col(name), meta["type"]]
+    if not meta.get("nullable", True):
+        parts.append("NOT NULL")
+    default = _format_default(meta.get("default"), meta["type"])
     if default:
         parts.append(default)
-    return ' '.join(parts)
+    return " ".join(parts)
 
 
 def _foreign_key_ddl(fk: Dict[str, Any]) -> str:
@@ -94,6 +98,7 @@ def _foreign_key_ddl(fk: Dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 # Existence helpers
 # ---------------------------------------------------------------------------
+
 
 def _table_exists(cur, schema: str, table: str) -> bool:
     cur.execute(
@@ -144,19 +149,19 @@ def _insert_row(
         return
 
     columns = list(values.keys())
-    column_sql = ', '.join(quote_col(col) for col in columns)
-    values_sql = ', '.join(['%s'] * len(columns))
+    column_sql = ", ".join(quote_col(col) for col in columns)
+    values_sql = ", ".join(["%s"] * len(columns))
     params = [values[col] for col in columns]
 
     if conflict_columns:
-        conflict_sql = ', '.join(quote_col(col) for col in conflict_columns)
-        on_conflict = f'ON CONFLICT ({conflict_sql}) DO NOTHING'
+        conflict_sql = ", ".join(quote_col(col) for col in conflict_columns)
+        on_conflict = f"ON CONFLICT ({conflict_sql}) DO NOTHING"
     else:
-        on_conflict = 'ON CONFLICT DO NOTHING'
+        on_conflict = "ON CONFLICT DO NOTHING"
 
     cur.execute(
-        f'INSERT INTO {schema_name}.{table_name} ({column_sql}) '
-        f'VALUES ({values_sql}) {on_conflict}',
+        f"INSERT INTO {schema_name}.{table_name} ({column_sql}) "
+        f"VALUES ({values_sql}) {on_conflict}",
         params,
     )
 
@@ -165,10 +170,10 @@ def _insert_row(
 # Core Schema Build Engine
 # ---------------------------------------------------------------------------
 
+
 def _get_expected_columns(
     table_name: str,
     meta: Dict[str, Any],
-    source_id_columns: Dict[str, List[Tuple[str, str]]] = None,
 ) -> List[Tuple[str, Dict[str, Any]]]:
     """Return the complete ordered set of (column_name, column_meta) for a table.
 
@@ -178,12 +183,12 @@ def _get_expected_columns(
     expected: List[Tuple[str, Dict[str, Any]]] = []
     seen: set = set()
 
-    for col in meta.get('primary_key') or []:
+    for col in meta.get("primary_key") or []:
         expected.append((col, DB_COLUMNS[col]))
         seen.add(col)
 
-    for fk in meta.get('foreign_keys', []):
-        col = fk['column']
+    for fk in meta.get("foreign_keys") or []:
+        col = fk["column"]
         if col not in seen:
             expected.append((col, DB_COLUMNS[col]))
             seen.add(col)
@@ -193,14 +198,6 @@ def _get_expected_columns(
             expected.append((name, m))
             seen.add(name)
 
-    # Derive entity from table name for source-id column injection.
-    entity = TABLE_ENTITY.get(table_name)
-    if meta.get('source_ids', False) and entity:
-        for src_col, pg_type in (source_id_columns or {}).get(entity, []):
-            if src_col not in seen:
-                expected.append((src_col, {'type': pg_type}))
-                seen.add(src_col)
-
     return expected
 
 
@@ -209,36 +206,29 @@ def _create_table(
     schema_name: str,
     table_name: str,
     meta: Dict[str, Any],
-    source_id_columns: Dict[str, List[Tuple[str, str]]] = None,
 ) -> int:
     """Unified CREATE TABLE builder driven strictly by registry config."""
     fragments: List[str] = []
-    pk_cols = set(meta.get('primary_key') or [])
+    pk_cols = set(meta.get("primary_key") or [])
 
-    for col_name, col_meta in _get_expected_columns(table_name, meta, source_id_columns=source_id_columns):
+    for col_name, col_meta in _get_expected_columns(table_name, meta):
         fragments.append(_column_ddl(col_name, col_meta))
 
     # Column-level UNIQUE constraints (from DB_COLUMNS 'unique' flag)
     for name, m in _data_columns_for_table(table_name):
-        if m.get('unique') and name not in pk_cols:
+        if m.get("unique") and name not in pk_cols:
             fragments.append(f"UNIQUE ({quote_col(name)})")
-
-    # Source ID UNIQUE constraints
-    entity = TABLE_ENTITY.get(table_name)
-    if meta.get('source_ids', False) and entity:
-        for src_col, _ in (source_id_columns or {}).get(entity, []):
-            fragments.append(f"UNIQUE ({quote_col(src_col)})")
 
     # Table-level constraints: PK, FK, multi-column UNIQUE
     if pk_cols:
-        pk_str = ', '.join(quote_col(c) for c in pk_cols)
+        pk_str = ", ".join(quote_col(c) for c in pk_cols)
         fragments.append(f"PRIMARY KEY ({pk_str})")
 
-    for fk in meta.get('foreign_keys', []):
+    for fk in meta.get("foreign_keys") or []:
         fragments.append(_foreign_key_ddl(fk))
 
-    for uc in meta.get('unique_constraints') or []:
-        uc_cols = ', '.join(quote_col(c) for c in uc)
+    for uc in meta.get("unique_constraints") or []:
+        uc_cols = ", ".join(quote_col(c) for c in uc)
         fragments.append(f"UNIQUE ({uc_cols})")
 
     cur.execute(
@@ -248,9 +238,9 @@ def _create_table(
     )
 
     # Indexes — prefix with schema to avoid cross-schema name collisions
-    for idx in meta.get('indexes', []):
+    for idx in meta.get("indexes") or []:
         idx_name = f"idx_{schema_name}_{table_name}_{idx['name']}"
-        cols = ', '.join(quote_col(c) for c in idx['columns'])
+        cols = ", ".join(quote_col(c) for c in idx["columns"])
         cur.execute(
             f"CREATE INDEX IF NOT EXISTS {idx_name} "
             f"ON {schema_name}.{table_name} ({cols})"
@@ -262,6 +252,7 @@ def _create_table(
 # ---------------------------------------------------------------------------
 # Additive ALTER TABLE
 # ---------------------------------------------------------------------------
+
 
 def _ensure_updated_at_trigger(cur, schema_name: str, table_name: str) -> None:
     """Ensure the BEFORE UPDATE trigger for updated_at is present on the table."""
@@ -292,39 +283,26 @@ def _sync_table(
     table_name: str,
     meta: Dict[str, Any],
     schema_name: str,
-    source_id_columns: Dict[str, List[Tuple[str, str]]] = None,
 ) -> List[str]:
     """Sync table structure against config; purely additive."""
     actions: List[str] = []
 
     if not _table_exists(cur, schema_name, table_name):
-        n = _create_table(cur, schema_name, table_name, meta, source_id_columns=source_id_columns)
+        n = _create_table(cur, schema_name, table_name, meta)
         _ensure_updated_at_trigger(cur, schema_name, table_name)
-        actions.append(f'created ({n} columns)')
+        actions.append(f"created ({n} columns)")
         return actions
 
-    expected = _get_expected_columns(table_name, meta, source_id_columns=source_id_columns)
-
-    existing_unique_sets = _existing_unique_column_sets(cur, schema_name, table_name)
-    entity = TABLE_ENTITY.get(table_name)
-    if meta.get('source_ids', False) and entity:
-        for src_col, _ in (source_id_columns or {}).get(entity, []):
-            if (src_col,) in existing_unique_sets:
-                continue
-            cur.execute(
-                f'CREATE UNIQUE INDEX IF NOT EXISTS uq_{table_name}_{src_col} '
-                f'ON {schema_name}.{table_name} ({quote_col(src_col)})'
-            )
-            actions.append(f'added unique {src_col}')
+    expected = _get_expected_columns(table_name, meta)
 
     existing = _existing_columns(cur, schema_name, table_name)
     for col_name, col_meta in expected:
         if col_name not in existing:
             cur.execute(
-                f'ALTER TABLE {schema_name}.{table_name} '
-                f'ADD COLUMN IF NOT EXISTS {quote_col(col_name)} {col_meta["type"]}'
+                f"ALTER TABLE {schema_name}.{table_name} "
+                f"ADD COLUMN IF NOT EXISTS {quote_col(col_name)} {col_meta['type']}"
             )
-            actions.append(f'added {col_name}')
+            actions.append(f"added {col_name}")
 
     _ensure_updated_at_trigger(cur, schema_name, table_name)
     return actions
@@ -334,11 +312,13 @@ def _sync_table(
 # Orchestrators
 # ---------------------------------------------------------------------------
 
+
 def _validate_sequence_coverage() -> None:
     """Ensure every nextval() default in DB_COLUMNS has a matching SEQUENCES entry."""
     import re
+
     for col_name, col_meta in DB_COLUMNS.items():
-        default = col_meta.get('default') or ''
+        default = col_meta.get("default") or ""
         m = re.search(r"nextval\('([^']+)'\)", default)
         if not m:
             continue
@@ -353,14 +333,13 @@ def _validate_sequence_coverage() -> None:
 def _ensure_sequences(cur, schema_name: str) -> None:
     """Create sequences declared in SEQUENCES that belong to this schema."""
     for seq_name, meta in SEQUENCES.items():
-        if meta['schema'] == schema_name:
+        if meta["schema"] == schema_name:
             cur.execute(f"CREATE SEQUENCE IF NOT EXISTS {seq_name}")
 
 
 def ensure_schema(
     schema_name: str,
     conn=None,
-    source_id_columns: Dict[str, List[Tuple[str, str]]] = None,
 ) -> Dict[str, List[str]]:
     """Build and validate any schema mapped in the TABLES config."""
     own = conn is None
@@ -374,13 +353,13 @@ def ensure_schema(
             _ensure_sequences(cur, schema_name)
 
             for table_name, meta in TABLES.items():
-                if meta.get('schema') != schema_name:
+                if meta.get("schema") != schema_name:
                     continue
-                qualified = f'{schema_name}.{table_name}'
-                acts = _sync_table(cur, table_name, meta, schema_name=schema_name, source_id_columns=source_id_columns)
+                qualified = f"{schema_name}.{table_name}"
+                acts = _sync_table(cur, table_name, meta, schema_name=schema_name)
                 actions[qualified] = acts
                 if acts:
-                    logger.info('Table %s: %s', qualified, ', '.join(acts))
+                    logger.info("Table %s: %s", qualified, ", ".join(acts))
 
         conn.commit()
         return actions
@@ -409,20 +388,19 @@ def ensure_league_profile(league_key: str, conn=None) -> Dict[str, List[str]]:
             cfg = LEAGUES[league_key]
 
             vals: Dict[str, Any] = {}
-            for col, col_def in _data_columns_for_table('leagues'):
-                if col in cfg:
+            for col, col_def in _data_columns_for_table("leagues"):
+                if col == "code":
+                    vals[col] = league_key
+                elif col in cfg:
                     vals[col] = cfg[col]
-                elif col_def.get('manager') == 'execution_context':
-                    if col == 'code':
-                        vals[col] = league_key
 
             if not vals:
                 raise ValueError(f"No seedable columns found for league {league_key!r}")
 
-            constraints = TABLES['leagues'].get('unique_constraints')
-            conflict_cols = constraints[0] if constraints else ['code']
-            _insert_row(cur, 'profiles', 'leagues', vals, conflict_cols)
-            actions['profiles.leagues'] = [f"seeded ({', '.join(sorted(vals.keys()))})"]
+            constraints = TABLES["leagues"].get("unique_constraints")
+            conflict_cols = constraints[0] if constraints else ["code"]
+            _insert_row(cur, "profiles", "leagues", vals, conflict_cols)
+            actions["profiles.leagues"] = [f"seeded ({', '.join(sorted(vals.keys()))})"]
 
         conn.commit()
         return actions
@@ -445,7 +423,7 @@ def _topological_table_order() -> List[Tuple[str, Dict[str, Any]]]:
     # Build lookup from (schema, table_name) -> registry key
     key_by_location: Dict[Tuple[str, str], str] = {}
     for key, meta in TABLES.items():
-        schema = meta.get('schema')
+        schema = meta.get("schema")
         if schema:
             key_by_location[(schema, key)] = key
 
@@ -454,9 +432,9 @@ def _topological_table_order() -> List[Tuple[str, Dict[str, Any]]]:
     dependents: Dict[str, List[str]] = {key: [] for key in TABLES}
 
     for key, meta in TABLES.items():
-        for fk in meta.get('foreign_keys', []):
-            ref_schema = fk.get('ref_schema')
-            ref_table = fk.get('ref_table')
+        for fk in meta.get("foreign_keys") or []:
+            ref_schema = fk.get("ref_schema")
+            ref_table = fk.get("ref_table")
             if not ref_schema or not ref_table:
                 continue
             # Find the referenced table in our registry
@@ -480,8 +458,8 @@ def _topological_table_order() -> List[Tuple[str, Dict[str, Any]]]:
     if len(ordered) != len(TABLES):
         # Cycle detected - log which tables weren't ordered
         unresolved = set(TABLES.keys()) - {k for k, _ in ordered}
-        logger.error('Circular FK dependency detected among tables: %s', unresolved)
-        raise RuntimeError(f'Circular FK dependency in TABLES registry: {unresolved}')
+        logger.error("Circular FK dependency detected among tables: %s", unresolved)
+        raise RuntimeError(f"Circular FK dependency in TABLES registry: {unresolved}")
 
     return ordered
 
@@ -489,7 +467,6 @@ def _topological_table_order() -> List[Tuple[str, Dict[str, Any]]]:
 def bootstrap_schema(
     league_key: str,
     conn=None,
-    source_id_columns: Dict[str, List[Tuple[str, str]]] = None,
 ) -> Dict[str, List[str]]:
     """Unified bootstrap: ensure all schemas and seed the league profile row.
 
@@ -506,7 +483,7 @@ def bootstrap_schema(
         _validate_sequence_coverage()
 
         with conn.cursor() as cur:
-            schemas = sorted({m['schema'] for m in TABLES.values() if m.get('schema')})
+            schemas = sorted({m["schema"] for m in TABLES.values() if m.get("schema")})
             # 1. Create all schemas first
             for schema_name in schemas:
                 cur.execute(f"CREATE SCHEMA IF NOT EXISTS {schema_name}")
@@ -517,12 +494,12 @@ def bootstrap_schema(
 
             # 3. Create tables in FK dependency order
             for table_key, meta in _topological_table_order():
-                schema_name = meta['schema']
-                acts = _sync_table(cur, table_key, meta, schema_name=schema_name, source_id_columns=source_id_columns)
+                schema_name = meta["schema"]
+                acts = _sync_table(cur, table_key, meta, schema_name=schema_name)
                 qualified = f"{schema_name}.{table_key}"
                 actions[qualified] = acts
                 if acts:
-                    logger.info('Table %s: %s', qualified, ', '.join(acts))
+                    logger.info("Table %s: %s", qualified, ", ".join(acts))
 
         actions.update(ensure_league_profile(league_key, conn=conn))
 

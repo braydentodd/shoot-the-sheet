@@ -172,24 +172,17 @@ def prune_stats_retention(league_key: str, current_season: str) -> int:
     pruned = 0
     with db_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                f"SELECT sts_id FROM profiles.leagues WHERE code = %s",
-                (league_key,),
-            )
-            row = cur.fetchone()
-            league_id = int(row[0]) if row else None
-            if league_id is None:
-                return 0
-
             for table_name, meta in TABLES.items():
                 if meta.get("schema") != "stats":
+                    continue
+                if table_name.endswith("_staging"):
                     continue
                 entity = TABLE_ENTITY.get(table_name)
                 if not entity:
                     continue
                 cur.execute(
-                    f"DELETE FROM stats.{table_name} WHERE league_id = %s AND season < %s",
-                    (league_id, oldest),
+                    f"DELETE FROM stats.{table_name} WHERE league_code = %s AND season < %s",
+                    (league_key, oldest),
                 )
                 if cur.rowcount:
                     logger.info(
@@ -199,6 +192,7 @@ def prune_stats_retention(league_key: str, current_season: str) -> int:
                         oldest,
                     )
                     pruned += cur.rowcount
+        conn.commit()
     return pruned
 
 
@@ -217,6 +211,8 @@ def _profile_has_stats_predicate(entity: str) -> str:
     entity_id_col = f"{entity}_id"
     for table_name, meta in TABLES.items():
         if meta.get("schema") != "stats":
+            continue
+        if table_name.endswith("_staging"):
             continue
         if TABLE_ENTITY.get(table_name) != entity:
             continue

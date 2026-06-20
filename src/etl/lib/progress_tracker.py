@@ -8,21 +8,33 @@ from typing import Any, Dict, List, Tuple
 
 from src.core.lib.progress_tracker import (
     complete_run as _complete_run,
+)
+from src.core.lib.progress_tracker import (
     fail_run as _fail_run,
+)
+from src.core.lib.progress_tracker import (
     mark_task_process_completed as _mark_task_completed,
+)
+from src.core.lib.progress_tracker import (
     mark_task_process_failed as _mark_task_failed,
+)
+from src.core.lib.progress_tracker import (
     mark_task_process_started as _mark_task_started,
+)
+from src.core.lib.progress_tracker import (
     resolve_work as _resolve_work,
+)
+from src.core.lib.progress_tracker import (
     update_run_completed_tasks as _update_run_completed_tasks,
 )
 
-_PIPELINE = 'etl'
+_PIPELINE = "etl"
 
 
 def _make_task_name(entity_type: str, dataset: str, tier: str, columns: Dict) -> str:
     """Build a human-readable name for a call-group work unit."""
-    col_part = ','.join(sorted(columns.keys())) if columns else ''
-    return f'{entity_type}:{dataset}:{tier}:{col_part}'
+    col_part = ",".join(sorted(columns.keys())) if columns else ""
+    return f"{entity_type}:{dataset}:{tier}:{col_part}"
 
 
 def resolve_work(
@@ -33,7 +45,9 @@ def resolve_work(
     season_type: str,
     groups: List[Dict[str, Any]],
     auto_resume: bool,
+    *,
     league_id: int = None,
+    identity: str = "",
 ) -> Tuple[int, List[Tuple[Dict[str, Any], int]]]:
     """Determine the run_id and pending work items for an entity/season.
 
@@ -43,14 +57,24 @@ def resolve_work(
 
     Returns (run_process_id, [(group_dict, task_process_id), ...]).
     """
-    def task_name_fn(group: Dict[str, Any]) -> str:
-        return _make_task_name(entity, group['dataset'], group['tier'], group.get('columns', {}))
 
-    filters = dict(entity_type=entity, season=season, season_type=season_type)
+    def task_name_fn(group: Dict[str, Any]) -> str:
+        return _make_task_name(
+            entity, group["dataset"], group["tier"], group.get("columns", {})
+        )
+
+    filters = dict(entity=entity, season=season, season_type=season_type)
     if league_id is not None:
-        filters['league_id'] = league_id
+        filters["league_code"] = league_id
+    if identity:
+        filters["identity"] = identity
     return _resolve_work(
-        conn, db_schema, _PIPELINE, groups, task_name_fn, auto_resume,
+        conn,
+        db_schema,
+        _PIPELINE,
+        groups,
+        task_name_fn,
+        auto_resume,
         **filters,
     )
 
@@ -61,27 +85,36 @@ def mark_group_started(conn: Any, db_schema: str, task_process_id: int) -> None:
 
 
 def mark_group_completed(
-    conn: Any, db_schema: str, task_process_id: int, rows_written: int,
-    dataset: str = None, tier: str = None,
+    conn: Any,
+    db_schema: str,
+    task_process_id: int,
+    rows_written: int,
+    dataset: str = None,
+    tier: str = None,
 ) -> None:
     """Mark a task entry as completed."""
     metadata = dict(rows_written=rows_written)
     if dataset is not None:
-        metadata['dataset'] = dataset
+        metadata["dataset"] = dataset
     if tier is not None:
-        metadata['tier'] = tier
+        metadata["tier"] = tier
     _mark_task_completed(conn, db_schema, task_process_id, **metadata)
 
 
 def mark_group_failed(
-    conn: Any, db_schema: str, task_process_id: int, error_message: str,
+    conn: Any,
+    db_schema: str,
+    task_process_id: int,
+    error_message: str,
 ) -> None:
     """Mark a task entry as failed and increment retry count."""
     _mark_task_failed(conn, db_schema, task_process_id, error_message)
 
 
 def update_run_completed_groups(
-    conn: Any, db_schema: str, run_process_id: int,
+    conn: Any,
+    db_schema: str,
+    run_process_id: int,
 ) -> None:
     """Sync the completed_tasks counter on the run record."""
     _update_run_completed_tasks(conn, db_schema, run_process_id, _PIPELINE)
@@ -92,6 +125,8 @@ def complete_run(conn: Any, db_schema: str, run_process_id: int) -> None:
     _complete_run(conn, db_schema, run_process_id, _PIPELINE)
 
 
-def fail_run(conn: Any, db_schema: str, run_process_id: int, error_message: str) -> None:
+def fail_run(
+    conn: Any, db_schema: str, run_process_id: int, error_message: str
+) -> None:
     """Mark a run as failed."""
     _fail_run(conn, db_schema, run_process_id, _PIPELINE, error_message)

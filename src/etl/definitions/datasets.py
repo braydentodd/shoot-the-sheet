@@ -17,8 +17,7 @@ Shape:
 This mirrors the ``dataset_mapping`` pattern in ``db_columns.py``.
 """
 
-from os import name
-from typing import Any, Dict, List, TypedDict, Union
+from typing import Dict, List, TypedDict, Union
 
 
 class DomainDef(TypedDict, total=False):
@@ -57,7 +56,9 @@ class DatasetDef(TypedDict):
     min_season: Union[str, None]
     execution_tier: str
     source: str
+    pipeline_role: str
     stats_domain: Union[DomainDef, None]
+    coverage_mode: str
     source_mapping: SourceMappingDef
 
 
@@ -71,6 +72,8 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2003-04",
             "execution_tier": "per_team",
             "source": "nba_api",
+            "pipeline_role": "stats_maintainer",
+            "coverage_mode": "normal",
             "stats_domain": {
                 "name": "base",
                 "minutes_field": None,
@@ -87,6 +90,8 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2003-04",
             "execution_tier": "per_league",
             "source": "nba_api",
+            "pipeline_role": "stats_maintainer",
+            "coverage_mode": "normal",
             "stats_domain": {
                 "name": "base",
                 "minutes_field": None,
@@ -104,6 +109,8 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2013-14",
             "execution_tier": "per_team",
             "source": "nba_api",
+            "pipeline_role": "stats_maintainer",
+            "coverage_mode": "normal",
             "stats_domain": {
                 "name": "tracking",
                 "minutes_field": "MIN",
@@ -121,6 +128,8 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2013-14",
             "execution_tier": "per_league",
             "source": "nba_api",
+            "pipeline_role": "stats_maintainer",
+            "coverage_mode": "normal",
             "stats_domain": {
                 "name": "tracking",
                 "minutes_field": "MIN",
@@ -139,6 +148,8 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2015-16",
             "execution_tier": "per_team",
             "source": "nba_api",
+            "pipeline_role": "stats_maintainer",
+            "coverage_mode": "normal",
             "stats_domain": {
                 "name": "hustle",
                 "minutes_field": "MIN",
@@ -155,6 +166,8 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2015-16",
             "execution_tier": "per_league",
             "source": "nba_api",
+            "pipeline_role": "stats_maintainer",
+            "coverage_mode": "normal",
             "stats_domain": {
                 "name": "hustle",
                 "minutes_field": "MIN",
@@ -172,9 +185,11 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2013-14",
             "execution_tier": "per_team",
             "source": "nba_api",
+            "pipeline_role": "stats_maintainer",
+            "coverage_mode": "normal",
             "stats_domain": {
-                "name": "defense",
-                "minutes_field": "MIN",
+                "name": "tracking",
+                "minutes_field": None,
                 "possessions_field": None,
             },
             "source_mapping": {
@@ -189,9 +204,11 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2013-14",
             "execution_tier": "per_league",
             "source": "nba_api",
+            "pipeline_role": "stats_maintainer",
+            "coverage_mode": "normal",
             "stats_domain": {
-                "name": "defense",
-                "minutes_field": "MIN",
+                "name": "tracking",
+                "minutes_field": None,
                 "possessions_field": None,
             },
             "source_mapping": {
@@ -202,11 +219,26 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
                 "requires_params": ["defense_category"],
             },
         },
+        # --- Player index (all-time player registry, 1 call) ---
+        "player_index": {
+            "min_season": None,
+            "execution_tier": "per_league",
+            "source": "nba_api",
+            "pipeline_role": "profile_maintainer",
+            "coverage_mode": "normal",
+            "stats_domain": None,
+            "source_mapping": {
+                "class_name": "playerindex",
+                "result_set": "PlayerIndex",
+            },
+        },
         # --- Player roster / profiles (per-team, current season) ---
         "team_player_rosters": {
             "min_season": None,
             "execution_tier": "per_team",
             "source": "nba_api",
+            "pipeline_role": "player_discoverer",
+            "coverage_mode": "normal",
             "stats_domain": None,
             "source_mapping": {
                 "class_name": "commonteamroster",
@@ -218,6 +250,8 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": None,
             "execution_tier": "per_league",
             "source": "nba_api",
+            "pipeline_role": "team_discoverer",
+            "coverage_mode": "normal",
             "stats_domain": None,
             "source_mapping": {
                 "class_name": "commonteamyears",
@@ -229,6 +263,8 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": None,
             "execution_tier": "per_league",
             "source": "nba_api",
+            "pipeline_role": "season_detector",
+            "coverage_mode": "normal",
             "stats_domain": None,
             "source_mapping": {
                 "class_name": "leaguegamefinder",
@@ -241,6 +277,8 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2000-01",
             "execution_tier": "per_league",
             "source": "nba_api",
+            "pipeline_role": "profile_maintainer",
+            "coverage_mode": "always",
             "stats_domain": None,
             "source_mapping": {
                 "class_name": "draftcombineplayeranthro",
@@ -253,6 +291,8 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2007-08",
             "execution_tier": "per_team",
             "source": "nba_api",
+            "pipeline_role": "stats_maintainer",
+            "coverage_mode": "normal",
             "stats_domain": {
                 "name": "base",
                 "minutes_field": None,
@@ -269,10 +309,12 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2007-08",
             "execution_tier": "per_team",
             "source": "nba_api",
+            "pipeline_role": "stats_maintainer",
+            "coverage_mode": "normal",
             "stats_domain": {
-                "name": "off",
+                "name": "off_court",
                 "minutes_field": "MIN",
-                "possessions_field": None,
+                "possessions_field": "POSS",
             },
             "source_mapping": {
                 "class_name": "teamplayeronoffdetails",
@@ -286,6 +328,8 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": None,
             "execution_tier": "per_team",
             "source": "nba_api",
+            "pipeline_role": "profile_maintainer",
+            "coverage_mode": "normal",
             "stats_domain": None,
             "source_mapping": {
                 "class_name": "teaminfocommon",
@@ -297,10 +341,12 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2000-01",
             "execution_tier": "per_league",
             "source": "pbp_stats",
+            "pipeline_role": "stats_maintainer",
+            "coverage_mode": "normal",
             "stats_domain": {
                 "name": "pbp",
-                "minutes_field": "idk",
-                "possessions_field": "idk",
+                "minutes_field": "Minutes",
+                "possessions_field": "OffPoss",
             },
             "source_mapping": {
                 "result_set": "PbpTotals",
@@ -311,34 +357,17 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2000-01",
             "execution_tier": "per_team",
             "source": "pbp_stats",
+            "pipeline_role": "stats_maintainer",
+            "coverage_mode": "normal",
             "stats_domain": {
                 "name": "pbp",
-                "minutes_field": "idk",
-                "possessions_field": "idk",
+                "minutes_field": "Minutes",
+                "possessions_field": "OffPoss",
             },
             "source_mapping": {
                 "result_set": "PbpTotals",
                 "endpoint": "get-totals",
             },
-        },
-    },
-    # ========================================================================
-    # Shoot the Sheet
-    # ========================================================================
-    "sts_id": {
-        "players": {
-            "min_season": None,
-            "execution_tier": "per_league",
-            "source": "shoot_the_sheet",
-            "stats_domain": None,
-            "source_mapping": {},
-        },
-        "teams": {
-            "min_season": None,
-            "execution_tier": "per_league",
-            "source": "shoot_the_sheet",
-            "stats_domain": None,
-            "source_mapping": {},
         },
     },
 }

@@ -70,23 +70,26 @@ def _leagues_table() -> str:
     return _table_for_scope("league", "profiles")
 
 
-def _resolve_league_id(conn, league_key: str) -> int:
-    """Return the sts_id for a league, using only schema-derived identifiers."""
+def _resolve_league_id(conn, league_key: str) -> str:
+    """Return the league identifier for a league key.
+
+    Leagues are identified by their ``code`` (TEXT), so this simply validates
+    the league exists and returns the key itself.
+    """
     from src.core.definitions.db_columns import DB_COLUMNS
 
     leagues_tbl = _leagues_table()
-    pk_col = TABLES["leagues"]["primary_key"][0]
-    code_col = "code"  # single source of truth from DB_COLUMNS
+    code_col = "code"
 
     with conn.cursor() as cur:
         cur.execute(
-            f"SELECT {quote_col(pk_col)} FROM {leagues_tbl} WHERE {quote_col(code_col)} = %s",
+            f"SELECT {quote_col(code_col)} FROM {leagues_tbl} WHERE {quote_col(code_col)} = %s",
             (league_key,),
         )
         row = cur.fetchone()
         if not row:
             raise ValueError(f"League {league_key!r} not found in {leagues_tbl}")
-        return int(row[0])
+        return str(row[0])
 
 
 # ---------------------------------------------------------------------------
@@ -199,71 +202,6 @@ def bulk_copy(
         raise
 
 
-def _bulk_merge_upsert(
-    conn: Any,
-    table: str,
-    columns: List[str],
-    data: List[tuple],
-    conflict_columns: List[str],
-    update_columns: Union[List[str], None] = None,
-    skip_unchanged: bool = False,
-    batch_size: int = DEFAULT_BATCH_SIZE,
-) -> int:
-    """``INSERT ... ON CONFLICT DO UPDATE`` merge that preserves non-null values."""
-    if not data:
-        return 0
-
-    if update_columns is None:
-        conflict_set = set(conflict_columns)
-        update_columns = [c for c in columns if c not in conflict_set]
-
-    cols_sql = ", ".join(quote_col(c) for c in columns)
-    conflict_sql = ", ".join(quote_col(c) for c in conflict_columns)
-    update_sql = ", ".join(
-        f"{quote_col(c)} = COALESCE(EXCLUDED.{quote_col(c)}, {table}.{quote_col(c)})"
-        for c in update_columns
-    )
-    if skip_unchanged and update_columns:
-        conflict_clause = (
-            f"ON CONFLICT ({conflict_sql}) DO UPDATE SET {update_sql} "
-            f"WHERE (target.*) IS DISTINCT FROM (EXCLUDED.*)"
-        )
-        table_sql = f"{table} AS target"
-    else:
-        conflict_clause = (
-            f"ON CONFLICT ({conflict_sql}) DO UPDATE SET {update_sql}"
-            if update_columns
-            else f"ON CONFLICT ({conflict_sql}) DO NOTHING"
-        )
-        table_sql = table
-
-    query = f"INSERT INTO {table_sql} ({cols_sql}) VALUES %s {conflict_clause}"
-    cursor = conn.cursor()
-    written = 0
-
-    for offset in range(0, len(data), batch_size):
-        batch = data[offset : offset + batch_size]
-        try:
-            execute_values(cursor, query, batch, page_size=batch_size)
-            written += len(batch)
-        except Exception:
-            logger.error("Batch failed at offset %d in %s", offset, table)
-            conn.rollback()
-            raise
-
-    conn.commit()
-    return written
-
-
-# ---------------------------------------------------------------------------
-# ID resolution helpers
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# High-level row writers
-# ---------------------------------------------------------------------------
-
-
 def write_entity_rows(
     entity: str,
     scope: str,
@@ -293,7 +231,7 @@ def write_entity_rows(
     if source_key is None:
         source_key = get_default_external_source(league_key)
 
-    if scope == "profiles":
+    if scope == "profiles" or scope == "rosters":
         return write_staged_entity_rows(entity, rows, league_key, source_key)
 
     if scope == "stats":
@@ -313,28 +251,28 @@ def write_staged_entity_rows(
     entity: str,
     rows: Dict[Any, Dict[str, Any]],
     league_key: str,
-    source_key: str,
+    identity_key: str,
 ) -> int:
-    """Replace the staged snapshot for ``league_key``/``source_key``."""
+    """Replace the staged snapshot for ``league_key``/``identity_key``."""
     table = _table_for_scope(entity, "staging")
 
     data_cols: Set[str] = set()
     for vals in rows.values():
         data_cols.update(vals.keys())
-    data_cols.discard("league_id")
-    data_cols.discard("source")
-    data_cols.discard("source_id")
+    data_cols.discard("league_code")
+    data_cols.discard("identity")
+    data_cols.discard("identity_code")
     sorted_data_cols = sorted(data_cols)
 
     with db_connection() as conn:
-        league_id = _resolve_league_id(conn, league_key)
+        league_code_val = _resolve_league_id(conn, league_key)
 
-        columns = ["league_id", "source", "source_id"] + sorted_data_cols
+        columns = ["league_code", "identity", "identity_code"] + sorted_data_cols
         data: List[tuple] = []
         for source_id, vals in rows.items():
             if source_id is None:
                 continue
-            row_values = [league_id, source_key, str(source_id)] + [
+            row_values = [league_code_val, identity_key, str(source_id)] + [
                 vals.get(c) for c in sorted_data_cols
             ]
             data.append(tuple(row_values))
@@ -344,94 +282,10 @@ def write_staged_entity_rows(
 
         with conn.cursor() as cur:
             cur.execute(
-                f"DELETE FROM {table} WHERE league_id = %s AND source = %s",
-                (league_id, source_key),
+                f"DELETE FROM {table} WHERE league_code = %s AND identity = %s",
+                (league_code_val, identity_key),
             )
         return bulk_copy(conn, table, columns, data)
-
-
-def merge_staged_entity_rows(
-    entity: str,
-    rows: Dict[Any, Dict[str, Any]],
-    league_key: str,
-    source_key: str,
-) -> int:
-    """Merge roster or overlay fields into an existing staged snapshot."""
-    table = _table_for_scope(entity, "staging")
-
-    data_cols: Set[str] = set()
-    for vals in rows.values():
-        data_cols.update(vals.keys())
-    data_cols.discard("league_id")
-    data_cols.discard("source")
-    data_cols.discard("source_id")
-    sorted_data_cols = sorted(data_cols)
-
-    with db_connection() as conn:
-        league_id = _resolve_league_id(conn, league_key)
-
-        columns = ["league_id", "source", "source_id"] + sorted_data_cols
-        data: List[tuple] = []
-        for source_id, vals in rows.items():
-            if source_id is None:
-                continue
-            row_values = [league_id, source_key, str(source_id)] + [
-                vals.get(c) for c in sorted_data_cols
-            ]
-            data.append(tuple(row_values))
-
-        if not data:
-            return 0
-
-        return _bulk_merge_upsert(
-            conn,
-            table,
-            columns,
-            data,
-            conflict_columns=["league_id", "source", "source_id"],
-            skip_unchanged=True,
-        )
-
-
-def write_core_profile_rows(
-    entity: str,
-    rows: Dict[Any, Dict[str, Any]],
-    source_key: str,
-) -> int:
-    """Upsert ``{source_id: {col: val}}`` rows into ``profiles.{entity}s``.
-
-    Conflict key: per-source identity column (UNIQUE).  ``sts_id`` is allocated
-    automatically by the sequence.
-    """
-    table = _table_for_scope(entity, "profiles")
-    src_col = get_source_id_column(source_key)
-
-    data_cols: Set[str] = set()
-    for vals in rows.values():
-        data_cols.update(vals.keys())
-    data_cols.discard(src_col)
-    sorted_data_cols = sorted(data_cols)
-
-    columns = [src_col] + sorted_data_cols
-    data: List[tuple] = []
-    for source_id, vals in rows.items():
-        if source_id is None:
-            continue
-        row_values = [str(source_id)] + [vals.get(c) for c in sorted_data_cols]
-        data.append(tuple(row_values))
-
-    if not data:
-        return 0
-
-    with db_connection() as conn:
-        return bulk_upsert(
-            conn,
-            table,
-            columns,
-            data,
-            conflict_columns=[src_col],
-            skip_unchanged=True,
-        )
 
 
 def _write_stats_rows(
@@ -506,13 +360,13 @@ def _write_stats_rows(
         if not translated:
             return 0
 
-        # Inject league_id after FK resolution so it is not double-resolved.
+        # Inject league_code after FK resolution so it is not double-resolved.
         # Leagues are keyed by league_key, not by source_id.
-        league_id = _resolve_league_id(conn, league_key)
+        league_code_val = _resolve_league_id(conn, league_key)
 
-        if league_id is not None:
+        if league_code_val is not None:
             for row in translated.values():
-                row["league_id"] = league_id
+                row["league_code"] = league_code_val
 
         # Build the column order: PK first, then sorted data columns
         all_cols: Set[str] = set()

@@ -265,7 +265,7 @@ def make_fetcher(
             season_end_year,
             season_type_name,
             entity,
-            extra_params or {},
+            extra_params=extra_params or {},
         )
         api_call = create_api_call(
             DatasetClass, full_params, dataset_name=dataset, rate_limiter=rate_limiter

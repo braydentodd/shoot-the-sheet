@@ -42,11 +42,4 @@ SOURCES: Dict[str, SourceDef] = {
             "WNBA": {"id": "wnba", "season_param_format": "EEEE"},
         },
     },
-    "shoot_the_sheet": {
-        "leagues": {
-            "NBA": {"id": "nba", "season_param_format": "SSSS-EE"},
-            "WNBA": {"id": "wnba", "season_param_format": "EEEE"},
-            "GLG": {"id": "gleague", "season_param_format": "SSSS-EE"},
-        },
-    },
 }

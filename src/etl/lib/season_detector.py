@@ -247,20 +247,13 @@ def _check_via_pbp_stats(
 
 def detect_active_season_types(
     league_key: str,
+    dataset_refs: list,
     season: Optional[str] = None,
 ) -> List[str]:
     """Return the source season-type codes that had recent game activity.
 
-    Hits the league's ``season_detector`` dataset and filters to games
-    within the last ``GAME_LOOKBACK_DAYS`` days.
-
-    The ``season_detector`` config value is an id-prefixed reference like
-    ``"nba_id.recent_games"`` — parsed into identity key + dataset name.
-
-    Returns:
-        List of source season-type codes (e.g. ``["regular_season", "playoffs"]``)
-        that appeared in the recent game data.  An empty list means no
-        recent activity was detected.
+    ``dataset_refs`` is a list of ``"identity_key.dataset_name"`` strings
+    (e.g. ``["nba_id.recent_games"]``) from the pipeline role config.
     """
     if league_key not in LEAGUES:
         raise ValueError(f"Unknown league_key: {league_key}")
@@ -269,39 +262,29 @@ def detect_active_season_types(
 
     cfg = LEAGUES[league_key]
     all_keys = _all_canonical_keys(cfg)
-
-    detector_ref = cfg.get("season_detector")
-    if not detector_ref:
-        logger.debug(
-            "No season_detector configured for %s; assuming active", league_key
-        )
-        return all_keys
-
-    identity_key, dataset_name = _parse_dataset_ref(detector_ref)
     active_season = season or get_current_season(league_key)
 
-    ds_cfg = DATASETS.get(identity_key, {}).get(dataset_name)
-    if not ds_cfg:
-        logger.debug(
-            "Season detector dataset %r not registered for %s; assuming active",
-            detector_ref,
-            league_key,
-        )
-        return all_keys
+    for ref in dataset_refs:
+        identity_key, dataset_name = _parse_dataset_ref(ref)
+        ds_cfg = DATASETS.get(identity_key, {}).get(dataset_name)
+        if not ds_cfg:
+            continue
+        source = ds_cfg.get("source", "nba_api")
+        if source == "nba_api":
+            result = _check_via_nba_api(
+                league_key, dataset_name, active_season, identity_key
+            )
+        elif source == "pbp_stats":
+            result = _check_via_pbp_stats(
+                league_key, dataset_name, active_season, identity_key
+            )
+        else:
+            continue
+        if result:
+            return result
 
-    source = ds_cfg.get("source", "nba_api")
-
-    if source == "nba_api":
-        return _check_via_nba_api(league_key, dataset_name, active_season, identity_key)
-    elif source == "pbp_stats":
-        return _check_via_pbp_stats(
-            league_key, dataset_name, active_season, identity_key
-        )
-    else:
-        logger.debug(
-            "Unsupported source %r for season detector; assuming active", source
-        )
-        return all_keys
+    # No detector returned results — assume all types active
+    return all_keys
 
 
 def _parse_dataset_ref(ref: str) -> tuple:

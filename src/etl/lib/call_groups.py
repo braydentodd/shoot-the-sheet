@@ -55,25 +55,32 @@ def _enrich_source(source: Dict[str, Any], col_meta: Dict[str, Any]) -> Dict[str
     return enriched
 
 
-def _get_source_definition(
+def _get_source_definitions(
     col_meta: Dict[str, Any],
     entity: str,
     source_key: str,
     league_key: str,
-) -> Union[Dict[str, Any], None]:
-    """Resolve per-entity source definition for a column.
+) -> List[Dict[str, Any]]:
+    """Return source entries for a column filtered by entity.
 
-    Expected ``dataset_mapping`` shape:
-        ``sources[league_key][source_key][entity]``
+    Config format:
+        ``{league: {identity: {entity: {dataset_name: DatasetMapping}}}}``
+
+    Returns enriched dicts with ``"dataset"`` injected from the config key
+    so downstream code can resolve ``entry["dataset"]`` uniformly.
     """
     all_sources = col_meta.get("dataset_mapping") or {}
-    league_sources = all_sources.get(league_key)
-    if not isinstance(league_sources, dict):
-        return None
-    provider_sources = league_sources.get(source_key)
-    if not isinstance(provider_sources, dict):
-        return None
-    return provider_sources.get(entity)
+    league_sources = all_sources.get(league_key, {})
+    identity_sources = league_sources.get(source_key)
+    if not isinstance(identity_sources, dict):
+        return []
+    entity_sources = identity_sources.get(entity)
+    if not isinstance(entity_sources, dict):
+        return []
+    return [
+        {"dataset": dataset_name, **mapping}
+        for dataset_name, mapping in entity_sources.items()
+    ]
 
 
 # ============================================================================
@@ -94,82 +101,6 @@ def is_dataset_available(
     if min_season is None:
         return True
     return season >= min_season
-
-
-# ============================================================================
-# COLUMN QUERIES
-# ============================================================================
-
-
-def get_columns_for_dataset(
-    dataset_name: str,
-    entity: str,
-    source_key: str,
-    params: Union[Dict[str, Any], None] = None,
-    league_key: Union[str, None] = None,
-) -> Dict[str, Dict[str, Any]]:
-    """Find all columns whose source definition maps to the given dataset.
-
-    Returns ``{col_name: enriched_source_dict}`` with default transforms injected.
-    """
-    matched: Dict[str, Dict[str, Any]] = {}
-
-    for col_name, col_meta in DB_COLUMNS.items():
-        source = _get_source_definition(
-            col_meta,
-            entity,
-            source_key,
-            league_key=league_key,
-        )
-        if not source:
-            continue
-
-        ds = source.get("dataset")
-        if not ds:
-            ds = source.get("pipeline", {}).get("dataset")
-        if ds != dataset_name:
-            continue
-
-        if params:
-            source_params = source.get("params", {})
-            if not all(source_params.get(k) == v for k, v in params.items()):
-                continue
-
-        matched[col_name] = _enrich_source(source, col_meta)
-
-    return matched
-
-
-def get_all_sources_for_entity(
-    entity: str,
-    source_key: str,
-    season: Union[str, None] = None,
-    league_key: Union[str, None] = None,
-) -> Dict[str, Dict[str, Any]]:
-    """Return every column with a source definition for the given entity.
-
-    If ``season`` is provided, excludes datasets not available for that season.
-    """
-    matched: Dict[str, Dict[str, Any]] = {}
-
-    for col_name, col_meta in DB_COLUMNS.items():
-        source = _get_source_definition(
-            col_meta,
-            entity,
-            source_key,
-            league_key=league_key,
-        )
-        if not source:
-            continue
-
-        if season:
-            ds = source.get("dataset") or source.get("pipeline", {}).get("dataset", "")
-            if not is_dataset_available(ds, season, source_key):
-                continue
-
-        matched[col_name] = _enrich_source(source, col_meta)
-
-    return matched
 
 
 # ============================================================================
@@ -259,47 +190,49 @@ def build_call_groups(
             if any(t in stats_tables for t in col_tables):
                 continue
 
-        source = _get_source_definition(
+        sources = _get_source_definitions(
             col_meta,
             entity,
             source_key,
             league_key=league_key,
         )
-        if not source:
+        if not sources:
             continue
 
-        enriched = _enrich_source(source, col_meta)
+        # Process each source entry (handles multi-source columns)
+        for src_entry in sources:
+            enriched = _enrich_source(src_entry, col_meta)
 
-        ds = enriched.get("dataset")
-        if not ds:
-            ds = enriched.get("pipeline", {}).get("dataset")
-        if not ds:
-            continue
-        if not is_dataset_available(ds, season, source_key):
-            continue
+            ds = enriched.get("dataset")
+            if not ds:
+                ds = enriched.get("pipeline", {}).get("dataset")
+            if not ds:
+                continue
+            if not is_dataset_available(ds, season, source_key):
+                continue
 
-        if "pipeline" in enriched:
-            special.append(
-                {
-                    "dataset": ds,
-                    "params": enriched.get("params", {}),
-                    "tier": tier_for_source(enriched, ds, source_key),
-                    "columns": {col_name: enriched},
-                }
-            )
-        elif enriched.get("tier") == "per_team":
-            special.append(
-                {
-                    "dataset": ds,
-                    "params": enriched.get("params", {}),
-                    "tier": enriched.get("tier"),
-                    "columns": {col_name: enriched},
-                }
-            )
-        else:
-            params = enriched.get("params", {})
-            key = (ds, frozenset(sorted(params.items())))
-            simple_groups.setdefault(key, {})[col_name] = enriched
+            if "pipeline" in enriched:
+                special.append(
+                    {
+                        "dataset": ds,
+                        "params": enriched.get("params", {}),
+                        "tier": tier_for_source(enriched, ds, source_key),
+                        "columns": {col_name: enriched},
+                    }
+                )
+            elif enriched.get("tier") == "per_team":
+                special.append(
+                    {
+                        "dataset": ds,
+                        "params": enriched.get("params", {}),
+                        "tier": enriched.get("tier"),
+                        "columns": {col_name: enriched},
+                    }
+                )
+            else:
+                params = enriched.get("params", {})
+                key = (ds, frozenset(sorted(params.items())))
+                simple_groups.setdefault(key, {})[col_name] = enriched
 
     groups: List[Dict[str, Any]] = []
 

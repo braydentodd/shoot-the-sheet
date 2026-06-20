@@ -12,16 +12,15 @@ JSON response that the provider client returns.
 import logging
 from typing import Any, Dict, List, Literal, Union
 
-from src.etl.lib.transform import apply_transform
-
-
 from src.core.lib.math_evaluator import evaluate as eval_math_expr
+from src.etl.lib.transform import apply_transform
 
 logger = logging.getLogger(__name__)
 
 # ============================================================================
 # FIELD EXTRACTION
 # ============================================================================
+
 
 def extract_field(
     row: List[Any],
@@ -38,7 +37,7 @@ def extract_field(
     Returns:
         The transformed value, or None if the field is missing.
     """
-    field = source.get('field')
+    field = source.get("field")
     if not field or field not in headers:
         return None
 
@@ -48,8 +47,8 @@ def extract_field(
     if isinstance(raw_value, (dict, list)):
         return None
 
-    transform_name = source.get('transform', 'safe_int')
-    scale = source.get('scale', 1)
+    transform_name = source.get("transform", "safe_int")
+    scale = source.get("scale", 1)
 
     return apply_transform(raw_value, transform_name, scale)
 
@@ -59,16 +58,35 @@ def extract_derived_field(
     headers: List[str],
     source: Dict[str, Any],
 ) -> Any:
-    """Extract a derived field via algebraic expression interpolation."""
-    derived = source.get('derived')
+    """Extract a derived field via concat or algebraic expression."""
+    derived = source.get("derived")
     if not derived:
         return extract_field(row, headers, source)
 
-    math_expr = derived.get('math')
+    # String concatenation
+    concat_fields = derived.get("concat")
+    if concat_fields:
+        separator = derived.get("separator", " ")
+        parts = []
+        for f in concat_fields:
+            if f not in headers:
+                return None
+            raw = row[headers.index(f)]
+            if raw is None:
+                raw = ""
+            parts.append(str(raw))
+        value = separator.join(parts)
+        if not value.strip():
+            return None
+        transform_name = source.get("transform", "safe_str")
+        return apply_transform(value, transform_name)
+
+    # Numeric math
+    math_expr = derived.get("math")
     if not math_expr:
         return extract_field(row, headers, source)
 
-    fields = derived.get('fields', [])
+    fields = derived.get("fields", [])
     locals_dict = {}
     valid = True
 
@@ -94,8 +112,8 @@ def extract_derived_field(
     except Exception:
         return None
 
-    transform_name = source.get('transform', 'safe_int')
-    scale = source.get('scale', 1)
+    transform_name = source.get("transform", "safe_int")
+    scale = source.get("scale", 1)
     return apply_transform(value, transform_name, scale)
 
 
@@ -103,10 +121,11 @@ def extract_derived_field(
 # BATCH EXTRACTION
 # ============================================================================
 
+
 def extract_columns_from_result(
     api_result: Dict[str, Any],
     columns: Dict[str, Dict[str, Any]],
-    entity: Literal['player', 'team'],
+    entity: Literal["player", "team"],
     entity_id_field: str,
     result_set_name: Union[str, None] = None,
     id_aliases: Union[Dict[str, List[str]], None] = None,
@@ -126,11 +145,11 @@ def extract_columns_from_result(
     """
     all_entities: Dict[int, Dict[str, Any]] = {}
 
-    for rs in api_result.get('resultSets', []):
-        if result_set_name and rs['name'] != result_set_name:
+    for rs in api_result.get("resultSets", []):
+        if result_set_name and rs["name"] != result_set_name:
             continue
 
-        headers = rs['headers']
+        headers = rs["headers"]
 
         # Resolve entity ID field, falling back to source-provided aliases
         id_field = entity_id_field
@@ -145,7 +164,7 @@ def extract_columns_from_result(
 
         id_idx = headers.index(id_field)
 
-        for row in rs['rowSet']:
+        for row in rs["rowSet"]:
             entity_id = row[id_idx]
             if entity_id is None:
                 continue
@@ -153,10 +172,10 @@ def extract_columns_from_result(
             existing = all_entities.setdefault(entity_id, {})
             for col_name, source in columns.items():
                 # Skip columns with pipeline or multi_call sources
-                if 'pipeline' in source:
+                if "pipeline" in source:
                     continue
 
-                if source.get('derived'):
+                if source.get("derived"):
                     val = extract_derived_field(row, headers, source)
                 else:
                     val = extract_field(row, headers, source)
@@ -172,24 +191,19 @@ def extract_columns_from_result(
 # COLUMN FILTERING
 # ============================================================================
 
+
 def get_simple_columns(
     columns: Dict[str, Dict[str, Any]],
 ) -> Dict[str, Dict[str, Any]]:
     """Filter to columns with direct field extraction."""
-    return {
-        name: src for name, src in columns.items()
-        if 'pipeline' not in src
-    }
+    return {name: src for name, src in columns.items() if "pipeline" not in src}
 
 
 def get_pipeline_columns(
     columns: Dict[str, Dict[str, Any]],
 ) -> Dict[str, Dict[str, Any]]:
     """Filter to columns that require a transformation pipeline."""
-    return {
-        name: src for name, src in columns.items()
-        if 'pipeline' in src
-    }
+    return {name: src for name, src in columns.items() if "pipeline" in src}
 
 
 def extract_value_from_raw_dict(
@@ -201,10 +215,10 @@ def extract_value_from_raw_dict(
     Handles both direct 'field' and 'derived' math expressions.
     Applies transforms and scaling just like extract_field/extract_derived_field.
     """
-    derived = source.get('derived')
-    if derived and derived.get('math'):
-        math_expr = derived['math']
-        fields = derived.get('fields', [])
+    derived = source.get("derived")
+    if derived and derived.get("math"):
+        math_expr = derived["math"]
+        fields = derived.get("fields", [])
         locals_dict: Dict[str, float] = {}
         valid = True
         for field_name in fields:
@@ -223,18 +237,18 @@ def extract_value_from_raw_dict(
             value = eval_math_expr(math_expr, locals_dict)
         except Exception:
             return None
-        transform_name = source.get('transform', 'safe_int')
-        scale = source.get('scale', 1)
+        transform_name = source.get("transform", "safe_int")
+        scale = source.get("scale", 1)
         return apply_transform(value, transform_name, scale)
 
-    field = source.get('field')
+    field = source.get("field")
     if not field:
         return None
     raw_value = raw_dict.get(field)
     if isinstance(raw_value, (dict, list)):
         return None
-    transform_name = source.get('transform', 'safe_int')
-    scale = source.get('scale', 1)
+    transform_name = source.get("transform", "safe_int")
+    scale = source.get("scale", 1)
     return apply_transform(raw_value, transform_name, scale)
 
 
@@ -256,15 +270,19 @@ def extract_raw_rows(
     grouped: Dict[int, List[Dict[str, Any]]] = {}
     accepted = set(filter_values) if filter_values else None
 
-    for rs in api_result.get('resultSets', []):
-        if result_set_name and rs['name'] != result_set_name:
+    for rs in api_result.get("resultSets", []):
+        if result_set_name and rs["name"] != result_set_name:
             continue
-        headers = rs['headers']
+        headers = rs["headers"]
         if entity_id_field not in headers:
             continue
         id_idx = headers.index(entity_id_field)
-        filter_idx = headers.index(filter_field) if filter_field and filter_field in headers else None
-        for row in rs['rowSet']:
+        filter_idx = (
+            headers.index(filter_field)
+            if filter_field and filter_field in headers
+            else None
+        )
+        for row in rs["rowSet"]:
             if filter_idx is not None and accepted is not None:
                 if row[filter_idx] not in accepted:
                     continue
@@ -273,4 +291,3 @@ def extract_raw_rows(
                 grouped.setdefault(eid, []).append(dict(zip(headers, row)))
 
     return grouped
-
