@@ -110,14 +110,14 @@ def get_teams_from_db(league_key: str) -> Dict[int, Tuple[str, str]]:
     the league-team roster table for ``league_key``.
     """
     sql = f"""
-        SELECT t.{_quote_col("sts_id")}, t.abbr, t.name
+        SELECT t.{_quote_col("sts_id")}, t.code, t.name
           FROM core.teams t
           JOIN core.leagues_teams lr
             ON lr.team_id = t.{_quote_col("sts_id")}
           JOIN core.leagues lp
             ON lp.code = lr.league
          WHERE lp.code = %s
-          ORDER BY t.abbr
+          ORDER BY t.code
     """
     conn = get_db_connection()
     try:

@@ -7,9 +7,9 @@ which phase is declared by each dataset's ``role`` field in
 :data:`src.etl.definitions.datasets.DATASETS`.
 
 Clusters:
-    - ``execution_start`` — runs once at the start of a multi-league run.
-    - ``per_identity``  — runs once per identity per league.
-    - ``execution_end``  — runs once at the end of a multi-league run.
+    - ``execution_start`` — runs once per league before the main work (schema bootstrap only).
+    - ``per_identity``  — runs once per league (season detection + discover / maintain / match / upsert).
+    - ``execution_end``  — runs once per league after the main work (prune phases).
 """
 
 from typing import Dict, List
@@ -19,13 +19,13 @@ VALID_ETL_PHASES = frozenset({"execution_start", "per_identity", "execution_end"
 PIPELINE_PHASES: Dict[str, List[str]] = {
     "execution_start": [
         "build_schema",
-        "season_detector",
     ],
     "per_identity": [
+        "season_detector",
         "team_discoverer",
         "player_discoverer",
-        "profile_maintainer",
         "stats_maintainer",
+        "profile_maintainer",
         "match_entities",
         "upsert_entities",
     ],

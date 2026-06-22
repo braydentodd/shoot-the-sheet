@@ -1,19 +1,20 @@
 """
-Shoot the Sheet - Coverage Tracker
+Shoot the Sheet - Stat Coverage Tracker
 
-Tracks stats coverage completeness by persisting per-field params
-for each (entity, season, season_type, source, dataset, field)
-in ``core.coverages``.
+Tracks which (col_name, dataset) pairs have been fetched for each
+(entity, identity, league, season, season_type) tuple.  A coverage
+row simply records that the data was pulled — no params comparison
+is needed because the dataset's ``source_mapping`` is the single
+source of truth for API parameters.
 
-When params for a field change (e.g. API parameter tweak), the mismatch
-is detected and the ETL re-fetches that field automatically.
+Table: ``core.stat_coverages``
+PK:    (identity, league_code, entity, season, season_type, dataset, col_name)
 """
 
 from __future__ import annotations
 
-import json
 import logging
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 
 from src.core.definitions.db_columns import DB_COLUMNS
 from src.core.definitions.schema import TABLES
@@ -21,13 +22,18 @@ from src.core.lib.postgres import db_connection, quote_col
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+_COVERAGE_META = TABLES["stat_coverages"]
+_COVERAGE_TABLE = f"{_COVERAGE_META['schema']}.stat_coverages"
+_COVERAGE_PK_COLS = _COVERAGE_META["primary_key"]
+_COVERAGE_CONFLICT = ", ".join(quote_col(c) for c in _COVERAGE_PK_COLS)
+
 
 def _entities_for_column(col_meta: Dict[str, Any]) -> set:
-    """Return all entity keys present anywhere in the column's dataset_mapping.
-
-    Format: ``{league: {identity: {entity: [DatasetMapping, ...]}}}``
-    """
-    entities = set()
+    entities: set[str] = set()
     mapping = col_meta.get("dataset_mapping")
     if not mapping:
         return entities
@@ -41,9 +47,9 @@ def _entities_for_column(col_meta: Dict[str, Any]) -> set:
     return entities
 
 
-def _serialize_params(params: Dict[str, Any]) -> str:
-    """Serialize params dict to a canonical string for comparison."""
-    return json.dumps(params, sort_keys=True, separators=(",", ":"))
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 
 def is_group_coverage_current(
@@ -52,42 +58,35 @@ def is_group_coverage_current(
     entity: str,
     season: str,
     season_type: str,
-    source_key: str,
+    identity_key: str,
     group: Dict[str, Any],
 ) -> bool:
-    """Return True if every field in this group has current coverage."""
+    """Return True if every col_name in this group already has a coverage row."""
     dataset = group.get("dataset", "")
-    params_str = _serialize_params(group.get("params", {}))
-    fields = list((group.get("columns") or {}).keys())
+    columns = group.get("columns") or {}
+    col_names = list(columns.keys())
 
-    if not fields:
+    if not col_names:
         return False
 
-    meta = TABLES["coverages"]
-    schema = meta["schema"]
-    table = "coverages"
-
-    query = f"""
-        SELECT field, source_params
-          FROM {schema}.{table}
-         WHERE league = %s
-           AND entity = %s
-           AND season = %s
-           AND season_type = %s
-           AND identity = %s
-           AND dataset = %s
-           AND field = ANY(%s)
-    """
     with conn.cursor() as cur:
         cur.execute(
-            query,
-            (league_key, entity, season, season_type, source_key, dataset, fields),
+            f"""
+            SELECT col_name
+              FROM {_COVERAGE_TABLE}
+             WHERE identity = %s
+               AND league   = %s
+               AND entity   = %s
+               AND season   = %s
+               AND season_type = %s
+               AND dataset  = %s
+               AND col_name = ANY(%s)
+            """,
+            (identity_key, league_key, entity, season, season_type, dataset, col_names),
         )
-        stored = {row[0]: row[1] for row in cur.fetchall()}
+        covered = {row[0] for row in cur.fetchall()}
 
-    if len(stored) != len(fields):
-        return False
-    return all(stored.get(f) == params_str for f in fields)
+    return covered == set(col_names)
 
 
 def upsert_group_coverage(
@@ -96,72 +95,55 @@ def upsert_group_coverage(
     entity: str,
     season: str,
     season_type: str,
-    source_key: str,
+    identity_key: str,
     group: Dict[str, Any],
 ) -> None:
-    """Upsert coverage rows for every field produced by this call group."""
+    """Upsert coverage rows for every col_name produced by this call group."""
     dataset = group.get("dataset", "")
-    params_str = _serialize_params(group.get("params", {}))
-    fields = list((group.get("columns") or {}).keys())
+    columns = group.get("columns") or {}
+    col_names = list(columns.keys())
 
-    if not fields:
+    if not col_names:
         return
 
-    meta = TABLES["coverages"]
-    schema = meta["schema"]
-    table = "coverages"
-    pks = meta["primary_key"]
-    conflict_cols = ", ".join(quote_col(col) for col in pks)
-
-    query = f"""
-        INSERT INTO {schema}.{table} (
-            league, entity, season, season_type,
-            identity, source_params, col_name, dataset, dataset_params, field, completed_at
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
-        ON CONFLICT ({conflict_cols})
-        DO UPDATE
-           SET source_params = EXCLUDED.source_params,
-               completed_at = NOW()
-    """
     with conn.cursor() as cur:
-        for field in fields:
+        for col_name in col_names:
             cur.execute(
-                query,
+                f"""
+                INSERT INTO {_COVERAGE_TABLE} (
+                    identity, league_code, entity, season, season_type, dataset, col_name, completed_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+                ON CONFLICT ({_COVERAGE_CONFLICT})
+                DO UPDATE SET completed_at = NOW()
+                """,
                 (
+                    identity_key,
                     league_key,
                     entity,
                     season,
                     season_type,
-                    source_key,
-                    params_str,
-                    field,
                     dataset,
-                    params_str,
-                    field,
+                    col_name,
                 ),
             )
     conn.commit()
 
 
 def prune_coverages(league_key: str) -> int:
-    """Delete coverage rows for fields/entities no longer present in config.
-
-    Returns the number of rows deleted.
-    """
+    """Delete coverage rows for (entity, col_name) pairs no longer in config."""
     valid: set[tuple[str, str]] = set()
     for col_name, col_meta in DB_COLUMNS.items():
         for entity in _entities_for_column(col_meta):
             valid.add((entity, col_name))
 
+    deleted = 0
     with db_connection() as conn:
         with conn.cursor() as cur:
-            meta = TABLES["coverages"]
-            tbl = f"{meta['schema']}.coverages"
             cur.execute(
-                f"SELECT entity, field FROM {tbl} WHERE league = %s",
+                f"SELECT entity, col_name FROM {_COVERAGE_TABLE} WHERE league_code = %s",
                 (league_key,),
             )
-            to_delete: List[Tuple[str, str]] = [
+            to_delete: List[tuple[str, str]] = [
                 (row[0], row[1])
                 for row in cur.fetchall()
                 if (row[0], row[1]) not in valid
@@ -174,9 +156,9 @@ def prune_coverages(league_key: str) -> int:
             flat = [item for pair in to_delete for item in pair]
             cur.execute(
                 f"""
-                DELETE FROM {tbl}
-                WHERE league = %s
-                  AND (entity, field) IN (VALUES """
+                DELETE FROM {_COVERAGE_TABLE}
+                WHERE league_code = %s
+                  AND (entity, col_name) IN (VALUES """
                 + values
                 + """)
                 """,

@@ -339,10 +339,10 @@ def build_merged_entity_row(
         if link_type == "team_link" and context and "team_gids" in context:
             team_gids = context["team_gids"]
             if entity_type == "player":
-                abbr = primary_entity.get("team_abbr") or primary_entity.get("abbr")
+                abbr = primary_entity.get("team_code") or primary_entity.get("code")
             else:
                 # all_teams
-                abbr = primary_entity.get("abbr")
+                abbr = primary_entity.get("code")
 
             if abbr and abbr in team_gids:
                 link_cells.append(

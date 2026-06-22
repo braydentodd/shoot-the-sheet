@@ -118,12 +118,11 @@ def _fetch_null_entity_ids(
         null_checks = " OR ".join(f"{quote_col(c)} IS NULL" for c in columns)
         if ctx.scope == "profiles":
             cur.execute(
-                f"SELECT {quote_col('identity')} FROM {target_table} "
-                f"WHERE {null_checks}"
+                f"SELECT {quote_col('ext_id')} FROM {target_table} WHERE {null_checks}"
             )
         else:
             cur.execute(
-                f"SELECT {quote_col('identity')} FROM {target_table} "
+                f"SELECT {quote_col('ext_id')} FROM {target_table} "
                 f"WHERE season = %s AND season_type = %s "
                 f"AND ({null_checks})",
                 (ctx.season, ctx.season_type),
@@ -152,9 +151,15 @@ def _execute_multi_season_league_wide(
     conn=None,
 ) -> int:
     """Fetch data across multiple years and aggregate using most_recent_non_null."""
-    start_year = multi_season_config["start_year"]
+    start_year_str = ds_cfg.get("min_season") or "2000-01"
+    start_year = parse_season_end_year(start_year_str, season_format)
     season_format = LEAGUES[ctx.db_schema]["season_format"]
     current_year = parse_season_end_year(ctx.season, season_format)
+
+    # Determine the correct season parameter key from the dataset config.
+    ds_cfg = DATASETS.get(ctx.source_key, {}).get(dataset, {})
+    wire = ds_cfg.get("source_mapping", {})
+    season_param = wire.get("season_param", "season")
 
     entity_values_by_year: Dict[int, Dict[int, Any]] = {}
 
@@ -164,8 +169,11 @@ def _execute_multi_season_league_wide(
 
     for year in range(start_year, current_year + 1):
         try:
-            year_label = format_season_label(year, season_format)
-            year_params = {**params, "season": year_label}
+            if season_param == "season_year":
+                year_params = {**params, season_param: year}
+            else:
+                year_label = format_season_label(year, season_format)
+                year_params = {**params, season_param: year_label}
             result = ctx.api_fetcher(dataset, year_params)
 
             if result:
@@ -220,12 +228,14 @@ def _execute_league_wide(
     conn=None,
 ) -> int:
     """One API call returns all entities -- extract, transform, write."""
-    # Check if any column requires multi-season aggregation
-    multi_season_config = None
-    for col_meta in columns.values():
-        if "multi_season" in col_meta:
-            multi_season_config = col_meta["multi_season"]
-            break
+    # Datasets with coverage "all_years" fetch every season from
+    # min_season to current and aggregate most-recent-non-null.
+    ds_cfg = DATASETS.get(ctx.source_key, {}).get(dataset, {})
+    multi_season_config = (
+        {"aggregation": "most_recent_non_null"}
+        if ds_cfg.get("coverage") == "all_years"
+        else None
+    )
 
     if multi_season_config:
         return _execute_multi_season_league_wide(
@@ -273,10 +283,10 @@ def _single_entity_fetcher(
     extra_params: Dict[str, Any],
     tier: str,
     id_param: str,
-    sid: Any,
+    identity_value: Any,
 ) -> Any:
-    """Fetch wrapper that injects the current entity id into API params."""
-    call_params = {**extra_params, id_param: sid}
+    """Fetch wrapper that injects the current entity identity into API params."""
+    call_params = {**extra_params, id_param: identity_value}
     try:
         return ctx.api_fetcher(ds, call_params)
     except (KeyboardInterrupt, SystemExit):
@@ -295,9 +305,9 @@ def _execute_pipeline_per_entity(
     pipeline_config = source["extraction_config"]
     dataset = pipeline_config["dataset"]
 
-    source_ids = _fetch_null_entity_ids(ctx, [col_name], conn=conn)
+    identities = _fetch_null_entity_ids(ctx, [col_name], conn=conn)
 
-    if not source_ids:
+    if not identities:
         return 0
 
     all_rows: Dict[int, Dict[str, Any]] = {}
@@ -305,8 +315,13 @@ def _execute_pipeline_per_entity(
     consecutive_failures = 0
     id_param = f"{ctx.entity}_id"
 
-    for sid in source_ids:
-        fetcher = partial(_single_entity_fetcher, ctx, id_param=id_param, sid=sid)
+    for identity_value in identities:
+        fetcher = partial(
+            _single_entity_fetcher,
+            ctx,
+            id_param=id_param,
+            identity_value=identity_value,
+        )
         try:
             result = execute_pipeline(
                 pipeline_config,
@@ -430,15 +445,15 @@ def _execute_per_entity(
     per entity, and extracts simple columns.
 
     When *tier* is ``'per_team'``, passes ``team_id`` (from ``ctx.team_ids``)
-    instead of ``{entity}_id``, and iterates over team source IDs rather
-    than entity source IDs.
+    instead of ``{entity}_id``, and iterates over team identities rather
+    than entity identities.
     """
     if tier == "per_team":
-        source_ids = list(ctx.team_ids.values())
-        if not source_ids:
+        identities = list(ctx.team_ids.values())
+        if not identities:
             return 0
-    elif removed_refresh_mode == "always":
-        # "always" refresh: re-fetch every known entity from the staging table.
+    elif removed_refresh_mode == "current":
+        # "current" refresh: re-fetch every known entity from the staging table.
         # The coverage tracker does not gate these datasets.
         if ctx.scope == "profiles":
             source_table = _table_for_scope(ctx.entity, "staging")
@@ -446,20 +461,20 @@ def _execute_per_entity(
             source_table = _table_for_scope(ctx.entity, "staging_stats")
 
         def _query_all(cur):
-            cur.execute(f"SELECT DISTINCT {quote_col('identity')} FROM {source_table}")
+            cur.execute(f"SELECT DISTINCT {quote_col('code')} FROM {source_table}")
             return [row[0] for row in cur.fetchall() if row[0] is not None]
 
         if conn is not None:
             with conn.cursor() as cur:
-                source_ids = _query_all(cur)
+                identities = _query_all(cur)
         else:
             with db_connection() as fresh_conn:
                 with fresh_conn.cursor() as cur:
-                    source_ids = _query_all(cur)
+                    identities = _query_all(cur)
     else:
-        source_ids = _fetch_null_entity_ids(ctx, list(columns.keys()), conn=conn)
+        identities = _fetch_null_entity_ids(ctx, list(columns.keys()), conn=conn)
 
-    if not source_ids:
+    if not identities:
         return 0
 
     all_rows: Dict[int, Dict[str, Any]] = {}
@@ -467,9 +482,9 @@ def _execute_per_entity(
     consecutive_failures = 0
     id_param = "team_id" if tier == "per_team" else f"{ctx.entity}_id"
 
-    for idx, sid in enumerate(source_ids):
+    for idx, identity_value in enumerate(identities):
         try:
-            result = ctx.api_fetcher(dataset, {id_param: sid})
+            result = ctx.api_fetcher(dataset, {id_param: identity_value})
             consecutive_failures = 0
         except KeyError as exc:
             # Malformed response for this specific entity (e.g. missing
@@ -478,7 +493,7 @@ def _execute_per_entity(
                 "Per-entity %s: no data for %s=%s (KeyError: %s)",
                 dataset,
                 id_param,
-                sid,
+                identity_value,
                 exc,
             )
             continue
@@ -488,7 +503,7 @@ def _execute_per_entity(
                 "Per-entity %s for %s=%s failed: %s",
                 dataset,
                 id_param,
-                sid,
+                identity_value,
                 exc,
             )
             if _should_abort(
@@ -511,11 +526,11 @@ def _execute_per_entity(
         )
 
         if tier == "per_team":
-            # Per-team calls: inject the queried team_id so traded players
+            # Per-team calls: inject the queried team identity so traded players
             # get one row per stint.  The write function filters columns
             # to only those the target staging table actually has.
             for row in extracted.values():
-                row["team_identity"] = sid
+                row["ext_team_id"] = identity_value
             written_count += write_entity_rows(
                 ctx.entity,
                 ctx.scope,

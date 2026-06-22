@@ -60,85 +60,42 @@ def get_oldest_retained_season(league_key: str, current_season: str) -> str:
 # ============================================================================
 # Season type resolvers
 # ============================================================================
-#  league.season_types = { group: [canonical_key, ...], ... }
-#    e.g. { "regular_season": ["regular_season", "showcase_cup"],
-#           "postseason":     ["playoffs"] }
+#  league.season_types = { canonical_key: {is_postseason, min_season}, ... }
 
 
 def get_all_canonical_season_types(league_key: str) -> List[str]:
     """Every canonical season-type key for the league, in declaration order."""
     cfg = _league_or_raise(league_key)
-    all_keys: List[str] = []
-    for group in cfg["season_types"]:
-        all_keys.extend(cfg["season_types"][group])
-    return all_keys
-
-
-def get_canonical_season_types_for_group(league_key: str, group: str) -> List[str]:
-    """Return the canonical keys that belong to *group*.
-
-    ``group`` must be one of ``'regular_season'`` / ``'postseason'``.
-    """
-    cfg = _league_or_raise(league_key)
-    return list(cfg["season_types"].get(group, []))
+    return list(cfg["season_types"].keys())
 
 
 def get_regular_season_types(league_key: str) -> List[str]:
-    """Canonical keys for the regular-season group."""
-    return get_canonical_season_types_for_group(league_key, "regular_season")
+    """Canonical keys where is_postseason is False."""
+    cfg = _league_or_raise(league_key)
+    return [k for k, v in cfg["season_types"].items() if not v["is_postseason"]]
 
 
 def get_postseason_types(league_key: str) -> List[str]:
-    """Canonical keys for the postseason group."""
-    return get_canonical_season_types_for_group(league_key, "postseason")
-
-
-def get_consolidated_group(league_key: str, canonical_key: str) -> str:
-    """Return the consolidated group a canonical key belongs to.
-
-    Returns ``"regular_season"`` or ``"postseason"``.
-    Raises ``ValueError`` if the key is not declared for the league.
-    """
+    """Canonical keys where is_postseason is True."""
     cfg = _league_or_raise(league_key)
-    for group, keys in cfg["season_types"].items():
-        if canonical_key in keys:
-            return group
-    raise ValueError(
-        f"Canonical season type {canonical_key!r} not declared for league {league_key!r}"
-    )
+    return [k for k, v in cfg["season_types"].items() if v["is_postseason"]]
 
 
-def build_consolidation_map(league_key: str) -> Dict[str, str]:
-    """Return ``{canonical_key: consolidated_group}`` for every canonical key."""
+def get_season_type_def(league_key: str, canonical_key: str) -> dict:
+    """Return the SeasonTypeDef for *canonical_key*, or raise ValueError."""
     cfg = _league_or_raise(league_key)
-    result: Dict[str, str] = {}
-    for group, keys in cfg["season_types"].items():
-        for key in keys:
-            result[key] = group
-    return result
+    st = cfg["season_types"].get(canonical_key)
+    if st is None:
+        raise ValueError(
+            f"Season type {canonical_key!r} not declared for league {league_key!r}"
+        )
+    return st
 
 
-def get_effective_season_types(league_key: str) -> List[str]:
-    """Return the canonical keys that need individual API calls.
-
-    When ``combined_season_types`` declares that a lead key covers
-    sub-keys (e.g. G League where ``regular_season`` also returns
-    ``showcase_cup`` data), only the lead key is included.  Sub-keys
-    are still part of ``get_all_canonical_season_types`` but are
-    deduplicated here to avoid redundant API calls.
-    """
-    cfg = _league_or_raise(league_key)
-    all_keys = get_all_canonical_season_types(league_key)
-    combined = cfg.get("combined_season_types", {})
-    covered: set = set()
-    for lead, sub_keys in combined.items():
-        covered.update(k for k in sub_keys if k != lead)
-    return [k for k in all_keys if k not in covered]
-
-
-def get_combined_covers(league_key: str, canonical_key: str) -> List[str]:
-    """Return the list of canonical keys that *canonical_key* covers
-    in a single API call, or ``[canonical_key]`` if not combined."""
-    cfg = _league_or_raise(league_key)
-    combined = cfg.get("combined_season_types", {})
-    return list(combined.get(canonical_key, [canonical_key]))
+def is_season_type_valid_for(league_key: str, canonical_key: str, season: str) -> bool:
+    """Return True if *canonical_key*'s min_season is <= *season*."""
+    st = get_season_type_def(league_key, canonical_key)
+    min_s = st.get("min_season")
+    if min_s is None:
+        return True
+    return season >= min_s

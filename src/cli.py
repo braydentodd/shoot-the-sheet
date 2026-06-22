@@ -34,7 +34,6 @@ from src.core.lib.terminal import (
     make_base_parser,
     print_banner,
     print_summary,
-    style,
 )
 from src.etl.cli import add_subparser as add_etl_subparser
 from src.etl.orchestrator import run_etl
@@ -168,9 +167,6 @@ def _run_publish(args) -> int:
 def main() -> int:
     parser = _build_parser()
     args = parser.parse_args()
-
-    if args.no_color:
-        style.disable()
 
     setup_logging(verbose=args.verbose, quiet=args.quiet)
 

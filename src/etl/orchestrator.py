@@ -58,7 +58,7 @@ from src.etl.lib.coverage_tracker import (
 from src.etl.lib.executor import ExecutionContext, execute_group
 from src.etl.lib.load import _resolve_league_id, _table_for_scope
 from src.etl.lib.season_detector import detect_active_season_types
-from src.etl.lib.source_resolver import get_season_type_wire_name
+from src.etl.lib.source_resolver import get_source_season_type_code
 from src.etl.sources.registry import get_source_modules
 
 logger = logging.getLogger(__name__)
@@ -212,13 +212,13 @@ def _get_role_datasets(role: str) -> Dict[str, List[str]]:
 
 
 def _load_team_ids(league_key: str) -> Dict[str, int]:
-    """Return ``{identity: int_id}`` for teams in staging, used by per-team API calls."""
+    """Return ``{ext_id: int(ext_id)}`` for teams in staging, used by per-team API calls."""
     table = _table_for_scope("team", "staging")
     with db_connection() as conn:
         league_val = _resolve_league_id(conn, league_key)
         with conn.cursor() as cur:
             cur.execute(
-                f"SELECT identity FROM {table} WHERE league = %s",
+                f"SELECT ext_id FROM {table} WHERE league_code = %s",
                 (league_val,),
             )
             return {r[0]: int(r[0]) for r in cur.fetchall() if r[0] is not None}
@@ -279,11 +279,10 @@ def _discover_entities(
                 role, f"dataset={identity_key}.{dataset_name} source={source_key}"
             )
         )
-        # Player discovery extracts both profile columns (name, height, etc.)
-        # and roster relationships (team_id -> player_id).  Run both scopes.
-        scopes = (
-            ["profiles", "rosters"] if role == "player_discoverer" else ["profiles"]
-        )
+        # Both discoverers extract profile columns and roster relationships.
+        scopes = ["profiles"]
+        if role == "player_discoverer":
+            scopes.append("rosters")
         for scope in scopes:
             total_rows += _run_groups(
                 scope=scope,
@@ -318,12 +317,10 @@ def _maintain_stats(
     season: str,
     identity_key: str,
     source_key: str,
-    season_type: str,
-    season_type_name: str,
     failed: List[Dict[str, Any]],
     in_season: bool = True,
 ) -> int:
-    """Backfill + maintain stats datasets.
+    """Backfill + maintain stats datasets across all season types.
 
     Coverage tracking gates re-fetching for past seasons.  The current
     season is always refreshed when ``in_season`` is True (games may have
@@ -334,6 +331,10 @@ def _maintain_stats(
     sources (e.g. ``nba_api`` and ``pbp_stats`` within the same identity)
     each use their own API fetcher.
     """
+    from src.core.lib.leagues_resolver import (
+        get_all_canonical_season_types,
+        get_season_type_def,
+    )
     from src.etl.lib.coverage_tracker import (
         is_group_coverage_current,
         upsert_group_coverage,
@@ -344,120 +345,135 @@ def _maintain_stats(
     if not dataset_names:
         return 0
 
-    # Load team IDs for per-team player stats calls.
     team_ids = _load_team_ids(league_key)
-
     is_current = season
+    all_season_types = get_all_canonical_season_types(league_key)
 
     for season_label in season_range:
-        for entity in ["team", "team_opp", "player", "player_opp", "player_on"]:
-            groups = build_call_groups(
-                entity,
-                season_label,
-                identity_key,
-                scope="stats",
-                league_key=league_key,
-                in_season=in_season,
-            )
-            if not groups:
+        for st_key in all_season_types:
+            from src.core.lib.leagues_resolver import is_season_type_valid_for
+
+            if not is_season_type_valid_for(league_key, st_key, season_label):
                 continue
 
-            # Filter out already-covered groups.  Always refresh the
-            # current season when in-season (new game data may exist).
-            season_is_current = season_label == is_current
-            if season_is_current and in_season:
-                filtered_groups = groups
-            else:
-                with db_connection() as conn:
-                    filtered_groups = [
-                        g
-                        for g in groups
-                        if not is_group_coverage_current(
-                            conn,
-                            league_key,
-                            entity,
-                            season_label,
-                            season_type,
-                            identity_key,
-                            g,
-                        )
-                    ]
+            st_def = get_season_type_def(league_key, st_key)
+            season_type_name = get_source_season_type_code(
+                source_key, league_key, st_key
+            )
 
-            if not filtered_groups:
-                logger.info(
-                    "stats_maintainer: %s/%s/%s — all groups covered, skipping",
+            for entity in ["team", "team_opp", "player", "player_opp", "player_on"]:
+                groups = build_call_groups(
                     entity,
                     season_label,
                     identity_key,
-                )
-                continue
-
-            # Partition call groups by their dataset's source so that
-            # each source uses its own fetcher (e.g. nba_api vs pbp_stats).
-            groups_by_source: Dict[str, List[Dict[str, Any]]] = {}
-            for g in filtered_groups:
-                ds_cfg = DATASETS.get(identity_key, {}).get(g["dataset"], {})
-                src = ds_cfg.get("source", source_key)
-                groups_by_source.setdefault(src, []).append(g)
-
-            logger.info(
-                phase_marker(
-                    "stats_maintainer",
-                    f"entity={entity} season={season_label} "
-                    f"sources={sorted(groups_by_source.keys())} "
-                    f"groups={len(filtered_groups)}",
-                )
-            )
-
-            for src_key, src_groups in groups_by_source.items():
-                config_mod, client_mod = _load_source(src_key)
-
-                # Coverage upsert callback: mark each succeeded group as covered.
-                def _on_coverage(
-                    entity,
-                    season_label,
-                    succeeded_groups,
-                    _rows,
-                    _had_failures,
-                    conn,
-                    _league_key=league_key,
-                    _season_type=season_type,
-                    _source_key=identity_key,
-                ):
-                    for g in succeeded_groups:
-                        upsert_group_coverage(
-                            conn,
-                            _league_key,
-                            entity,
-                            season_label,
-                            _season_type,
-                            _source_key,
-                            g,
-                        )
-
-                total_rows += _run_groups(
                     scope="stats",
-                    entities=[entity],
-                    seasons=[season_label],
-                    season_type=season_type,
-                    season_type_name=season_type_name,
-                    team_ids=team_ids
-                    if entity in ("player", "player_opp", "player_on")
-                    else {},
-                    failed=failed,
                     league_key=league_key,
-                    source_key=identity_key,
-                    api_field_names=config_mod.API_FIELD_NAMES
-                    if hasattr(config_mod, "API_FIELD_NAMES")
-                    else {},
-                    api_config=config_mod.API_CONFIG
-                    if hasattr(config_mod, "API_CONFIG")
-                    else {},
-                    make_fetcher=client_mod.make_fetcher,
                     in_season=in_season,
-                    groups_override={(entity, season_label): src_groups},
-                    on_entity_finished=_on_coverage,
                 )
+                if not groups:
+                    continue
+
+                # Filter out already-covered groups — skip for backfill/always.
+                season_is_current = season_label == is_current
+                skip_coverage = any(
+                    DATASETS.get(identity_key, {}).get(g["dataset"], {}).get("coverage")
+                    in ("all_years", "current")
+                    for g in groups
+                )
+                if season_is_current and in_season or skip_coverage:
+                    filtered_groups = groups
+                else:
+                    with db_connection() as conn:
+                        filtered_groups = [
+                            g
+                            for g in groups
+                            if not is_group_coverage_current(
+                                conn,
+                                league_key,
+                                entity,
+                                season_label,
+                                st_key,
+                                identity_key,
+                                g,
+                            )
+                        ]
+
+                if not filtered_groups:
+                    logger.info(
+                        "stats_maintainer: %s/%s/%s — all groups covered, skipping",
+                        entity,
+                        season_label,
+                        identity_key,
+                    )
+                    continue
+
+                # Partition call groups by their dataset's source so that
+                # each source uses its own fetcher (e.g. nba_api vs pbp_stats).
+                groups_by_source: Dict[str, List[Dict[str, Any]]] = {}
+                for g in filtered_groups:
+                    ds_cfg = DATASETS.get(identity_key, {}).get(g["dataset"], {})
+                    src = ds_cfg.get("source", source_key)
+                    groups_by_source.setdefault(src, []).append(g)
+
+                logger.info(
+                    phase_marker(
+                        "stats_maintainer",
+                        f"entity={entity} season={season_label} "
+                        f"season_type={st_key} "
+                        f"sources={sorted(groups_by_source.keys())} "
+                        f"groups={len(filtered_groups)}",
+                    )
+                )
+
+                for src_key, src_groups in groups_by_source.items():
+                    config_mod, client_mod = _load_source(src_key)
+
+                    # Coverage upsert callback: mark each succeeded group as covered.
+                    def _on_coverage(
+                        entity,
+                        season_label,
+                        succeeded_groups,
+                        _rows,
+                        _had_failures,
+                        conn,
+                        _league_key=league_key,
+                        _season_type=st_key,
+                        _source_key=identity_key,
+                    ):
+                        for g in succeeded_groups:
+                            upsert_group_coverage(
+                                conn,
+                                _league_key,
+                                entity,
+                                season_label,
+                                _season_type,
+                                _source_key,
+                                g,
+                            )
+
+                    total_rows += _run_groups(
+                        scope="stats",
+                        entities=[entity],
+                        seasons=[season_label],
+                        season_type=st_key,
+                        season_type_name=season_type_name,
+                        team_ids=team_ids
+                        if entity in ("player", "player_opp", "player_on")
+                        else {},
+                        failed=failed,
+                        league_key=league_key,
+                        source_key=identity_key,
+                        api_field_names=config_mod.API_FIELD_NAMES
+                        if hasattr(config_mod, "API_FIELD_NAMES")
+                        else {},
+                        api_config=config_mod.API_CONFIG
+                        if hasattr(config_mod, "API_CONFIG")
+                        else {},
+                        make_fetcher=client_mod.make_fetcher,
+                        in_season=in_season,
+                        groups_override={(entity, season_label): src_groups},
+                        on_entity_finished=_on_coverage,
+                    )
 
     return total_rows
 
@@ -557,7 +573,7 @@ def _match_entities(
                     UPDATE {staging_table} s
                        SET matched_sts_id = ie.entity_id
                       FROM {identities_table} ie
-                     WHERE s.identity = ie.code
+                     WHERE s.identity = ie.identity AND s.ext_id = ie.ext_id
                        AND ie.entity = %s
                        AND s.matched_sts_id IS NULL
                 """
@@ -606,7 +622,7 @@ def _upsert_entities(
                     SELECT *
                       FROM {staging_table}
                      WHERE (matched_sts_id IS NOT NULL OR reviewed = True)
-                       AND league = %s
+                       AND league_code = %s
                     """,
                     (league_key,),
                 )
@@ -646,7 +662,7 @@ def _upsert_entities(
                             """,
                             (
                                 row_data["identity"],
-                                row_data["identity"],
+                                row_data["ext_id"],
                                 entity,
                                 new_id,
                             ),
@@ -700,8 +716,8 @@ def _upsert_entities(
                         sts_id = row_data.get("matched_sts_id")
                         if sts_id not in promoted_ids:
                             continue
-                        team_identity = row_data.get("team_identity")
-                        if team_identity:
+                        ext_team_id = row_data.get("ext_team_id")
+                        if ext_team_id:
                             cur.execute(
                                 f"""
                                 SELECT entity_id
@@ -709,35 +725,43 @@ def _upsert_entities(
                                  WHERE code = %s
                                    AND entity = 'team'
                                 """,
-                                (team_identity,),
+                                (ext_team_id,),
                             )
                             team_row = cur.fetchone()
                             if team_row:
                                 cur.execute(
                                     f"""
                                     INSERT INTO {teams_players_table}
-                                        (league, team_id, player_id)
+                                        (league_code, team_id, player_id)
                                     VALUES (%s, %s, %s)
-                                    ON CONFLICT (league, team_id, player_id)
+                                    ON CONFLICT (league_code, team_id, player_id)
                                     DO NOTHING
                                     """,
                                     (league_key, team_row[0], sts_id),
                                 )
-                        # Country resolution: country_code was resolved via
-                        # match_country transform during extraction.
-                        # Write to countries_players if present.
-                        country = row_data.get("country")
-                        if country:
-                            cur.execute(
-                                f"""
-                                INSERT INTO {countries_players_table}
-                                    (country, player_id)
-                                VALUES (%s, %s)
-                                ON CONFLICT (country, player_id)
-                                DO NOTHING
-                                """,
-                                (country, sts_id),
-                            )
+                        # Country resolution: read from countries_players_staging
+                        # where country_code was written during player discovery.
+                        cp_staging = _table_for_scope("country", "rosters_staging")
+                        cur.execute(
+                            f"""
+                            SELECT country_code
+                              FROM {cp_staging}
+                             WHERE ext_player_id = %s
+                            """,
+                            (row_data["ext_id"],),
+                        )
+                        for (country_code,) in cur.fetchall():
+                            if country_code:
+                                cur.execute(
+                                    f"""
+                                    INSERT INTO {countries_players_table}
+                                        (country_code, player_id)
+                                    VALUES (%s, %s)
+                                    ON CONFLICT (country_code, player_id)
+                                    DO NOTHING
+                                    """,
+                                    (country_code, sts_id),
+                                )
 
             # League-team relationships for teams
             if entity == "team" and promoted_ids:
@@ -842,8 +866,6 @@ def _run_league_phases(
     season = get_current_season(league_key)
     if season_range is None:
         season_range = get_retained_seasons(league_key, season)
-    regular_canonical = get_regular_season_types(league_key)[0]
-    regular_wire = get_season_type_wire_name("nba_api", regular_canonical)
 
     logger.info(
         "ETL starting: league=%s phase=%s season=%s",
@@ -892,14 +914,16 @@ def _run_league_phases(
                     source_key,
                     role_datasets,
                 )
+                reg_st = get_regular_season_types(league_key)[0]
+                reg_code = get_source_season_type_code(source_key, league_key, reg_st)
                 total_rows += _discover_entities(
                     league_key,
                     season,
                     handler,
                     identity_key,
                     source_key,
-                    regular_canonical,
-                    regular_wire,
+                    reg_st,
+                    reg_code,
                     failed,
                     team_ids=team_ids,
                 )
@@ -920,8 +944,6 @@ def _run_league_phases(
                     season,
                     identity_key,
                     source_key,
-                    regular_canonical,
-                    regular_wire,
                     failed,
                     in_season=in_season,
                 )
@@ -937,13 +959,15 @@ def _run_league_phases(
                 if league_key not in SOURCES[source_key].get("leagues", {}):
                     continue
                 team_ids = _load_team_ids(league_key)
+                reg_st = get_regular_season_types(league_key)[0]
+                reg_code = get_source_season_type_code(source_key, league_key, reg_st)
                 total_rows += _maintain_profiles(
                     league_key,
                     season,
                     identity_key,
                     source_key,
-                    regular_canonical,
-                    regular_wire,
+                    reg_st,
+                    reg_code,
                     failed,
                     team_ids=team_ids,
                 )

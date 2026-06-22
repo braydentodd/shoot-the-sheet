@@ -71,7 +71,7 @@ class SyncContext:
     team_stat_fields: Set[str] = field(default_factory=set)
 
     # League-specific settings
-    team_abbr_col: str = "abbr"
+    team_abbr_col: str = "code"
     team_abbr_field: str = "team_abbr"
     primary_minutes_col: str = "mins_x10"
     season_format_fn: Callable = str
@@ -327,7 +327,7 @@ def sync_team_sheet(
         teams_db = get_teams_from_db(ctx.db_schema)
         lookup_tables = {
             "teams": {
-                tid: {"abbr": abbr, "name": name}
+                tid: {"code": abbr, "name": name}
                 for tid, (abbr, name) in teams_db.items()
             }
         }
@@ -607,7 +607,7 @@ def sync_teams_sheet(
         abbrs = [abbr for _, (abbr, name) in teams_db.items()]
         lookup_tables = {
             "teams": {
-                tid: {"abbr": abbr, "name": name}
+                tid: {"code": abbr, "name": name}
                 for tid, (abbr, name) in teams_db.items()
             }
         }
@@ -830,7 +830,7 @@ def sync_players_sheet(
         teams_db = get_teams_from_db(ctx.db_schema)
         lookup_tables = {
             "teams": {
-                tid: {"abbr": abbr, "name": name}
+                tid: {"code": abbr, "name": name}
                 for tid, (abbr, name) in teams_db.items()
             }
         }

@@ -49,10 +49,6 @@ def _enrich_source(source: Dict[str, Any], col_meta: Dict[str, Any]) -> Dict[str
     if "transform" not in enriched and "pipeline" not in enriched:
         base_type = col_meta.get("type", "").split("(")[0]
         enriched["transform"] = DEFAULT_TYPE_TRANSFORMS.get(base_type, "safe_int")
-    if "removed_refresh_mode" not in enriched:
-        enriched["removed_refresh_mode"] = col_meta.get(
-            "removed_refresh_mode", "null_only"
-        )
     return enriched
 
 
@@ -230,9 +226,10 @@ def build_call_groups(
     groups: List[Dict[str, Any]] = []
 
     for (ds, frozen_params), cols in simple_groups.items():
+        ds_cfg = DATASETS.get(source_key, {}).get(ds, {})
         removed_refresh_mode = (
             "always"
-            if any(src.get("removed_refresh_mode") == "always" for src in cols.values())
+            if ds_cfg.get("coverage") in ("all_years", "current")
             else "null_only"
         )
         groups.append(
@@ -269,13 +266,18 @@ def build_call_groups(
     for tier, merged in special_merged.items():
         for bucket in merged.values():
             ds = bucket["dataset"]
+            ds_cfg2 = DATASETS.get(source_key, {}).get(ds, {})
             groups.append(
                 {
                     "dataset": ds,
                     "params": bucket["params"],
                     "tier": tier,
                     "columns": bucket["columns"],
-                    "removed_refresh_mode": "null_only",
+                    "removed_refresh_mode": (
+                        "always"
+                        if ds_cfg2.get("coverage") in ("all_years", "current")
+                        else "null_only"
+                    ),
                 }
             )
 

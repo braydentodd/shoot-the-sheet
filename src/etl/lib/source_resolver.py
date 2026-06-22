@@ -85,16 +85,14 @@ def get_default_external_source(league_key: str) -> str:
 # ============================================================================
 
 
-def get_season_type_wire_name(source_key: str, canonical_key: str) -> str:
-    """Return the API wire name for a canonical season type key.
+def get_source_season_type_code(
+    source_key: str, league_key: str, canonical_key: str
+) -> str:
+    """Return the source-specific parameter value for a canonical season type.
 
-    Looks up the source's ``SEASON_TYPES[canonical_key]["wire_name"]``.
-    Falls back to the canonical key if the source doesn't define it.
+    Looks up ``SOURCES[source_key]["leagues"][league_key]["season_types"]``.
+    Falls back to the canonical key if not defined.
     """
-    from src.etl.sources.registry import get_source_modules
-
-    config_mod, _ = get_source_modules(source_key)
-    if not config_mod or not hasattr(config_mod, "SEASON_TYPES"):
-        return canonical_key
-    st = config_mod.SEASON_TYPES.get(canonical_key, {})
-    return st.get("wire_name", canonical_key)
+    entry = _get_league_entry(source_key, league_key)
+    season_types = entry.get("season_types", {})
+    return season_types.get(canonical_key, canonical_key)

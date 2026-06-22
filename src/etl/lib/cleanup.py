@@ -50,12 +50,12 @@ def prune_stats_retention(league_key: str, current_season: str) -> int:
                     continue
                 if table_name.endswith("_staging"):
                     continue
-                entity = TABLE_ENTITY.get(table_name)
-                if not entity:
+                # Only prune stats tables (they have both league and season columns).
+                if not table_name.endswith("_seasons") and table_name != "stat_coverages":
                     continue
                 schema_name = meta["schema"]
                 cur.execute(
-                    f"DELETE FROM {schema_name}.{table_name} WHERE league = %s AND season < %s",
+                    f"DELETE FROM {schema_name}.{table_name} WHERE league_code = %s AND season < %s",
                     (league_key, oldest),
                 )
                 if cur.rowcount:

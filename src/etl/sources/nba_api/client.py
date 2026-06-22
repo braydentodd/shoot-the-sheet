@@ -255,6 +255,13 @@ def build_dataset_params(
     if extra_params:
         params.update(extra_params)
 
+    # Bridge per-entity ID params to their _nullable counterparts (like we do
+    # for league_id).  The create_api_call signature filter keeps whichever
+    # variant the endpoint actually accepts.
+    for base in ("team_id", "player_id"):
+        if base in params and f"{base}_nullable" not in params:
+            params[f"{base}_nullable"] = params[base]
+
     return params
 
 

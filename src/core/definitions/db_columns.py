@@ -18,18 +18,12 @@ columns (e.g. ``nba_id_id``) are emitted directly by the DDL generator
 from typing import Any, Dict, List, TypedDict, Union
 
 
-class MultiSeasonConfig(TypedDict, total=False):
-    start_year: int
-    aggregation: str
-
-
 class DatasetMapping(TypedDict, total=False):
     field: Union[str, None]
     transform: Union[str, None]
     scale: Union[int, None]
     params: Union[Dict[str, Any], None]
     derived: Union[Dict[str, Any], None]
-    multi_season: Union[MultiSeasonConfig, None]
 
 
 class ColumnDef(TypedDict, total=True):
@@ -56,7 +50,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     "entity": {
         "type": "TEXT",
-        "tables": ["coverages", "identities_entities"],
+        "tables": ["stat_coverages", "identities_entities"],
         "nullable": False,
         "default": None,
         "dataset_mapping": None,
@@ -80,7 +74,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": [
             "team_seasons",
             "player_seasons",
-            "coverages",
+            "stat_coverages",
             "player_seasons_staging",
             "team_seasons_staging",
         ],
@@ -93,7 +87,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "tables": [
             "team_seasons",
             "player_seasons",
-            "coverages",
+            "stat_coverages",
             "player_seasons_staging",
             "team_seasons_staging",
         ],
@@ -108,11 +102,27 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "default": None,
         "dataset_mapping": None,
     },
+    "ext_id": {
+        "type": "TEXT",
+        "tables": [
+            "identities_entities",
+            "teams_staging",
+            "players_staging",
+            "player_seasons_staging",
+            "team_seasons_staging",
+            "leagues_teams_staging",
+            "teams_players_staging",
+            "countries_players_staging",
+        ],
+        "nullable": False,
+        "default": None,
+        "dataset_mapping": None,
+    },
     "identity": {
         "type": "TEXT",
         "tables": [
             "identities_entities",
-            "coverages",
+            "stat_coverages",
             "teams_staging",
             "players_staging",
             "player_seasons_staging",
@@ -244,10 +254,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         "combine_measurements": {
                             "field": "WINGSPAN",
                             "transform": "parse_height",
-                            "multi_season": {
-                                "start_year": 2003,
-                                "aggregation": "most_recent_non_null",
-                            },
                         },
                     },
                 },
@@ -281,14 +287,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     "code": {
         "type": "TEXT",
-        "tables": ["leagues", "countries"],
-        "nullable": False,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "abbr": {
-        "type": "TEXT",
-        "tables": ["teams", "teams_staging"],
+        "tables": ["leagues", "countries", "teams", "teams_staging"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -347,11 +346,10 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "default": None,
         "dataset_mapping": None,
     },
-    "country": {
+    "country_code": {
         "type": "TEXT",
         "tables": [
             "teams",
-            "teams_staging",
             "countries_players",
             "countries_players_staging",
         ],
@@ -1175,52 +1173,638 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             },
         },
     },
-    # ------------------------------------------------------------------
-    # COVERAGES COLUMNS
-    # ------------------------------------------------------------------
-    "completed_at": {
-        "type": "TIMESTAMP",
-        "tables": ["coverages"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
     "dataset": {
         "type": "TEXT",
-        "tables": ["coverages"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "field": {
-        "type": "TEXT",
-        "tables": ["coverages"],
-        "nullable": False,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "source_params": {
-        "type": "TEXT",
-        "tables": ["coverages"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "dataset_params": {
-        "type": "TEXT",
-        "tables": ["coverages"],
+        "tables": ["stat_coverages"],
         "nullable": True,
         "default": None,
         "dataset_mapping": None,
     },
     "col_name": {
         "type": "TEXT",
-        "tables": ["coverages"],
+        "tables": ["stat_coverages"],
         "nullable": False,
         "default": None,
         "dataset_mapping": None,
     },
+    "completed_at": {
+        "type": "TIMESTAMP",
+        "tables": ["stat_coverages"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
     # ------------------------------------------------------------------
+    "opp_fg3m": {
+        "type": "SMALLINT",
+        "tables": [
+            "team_seasons",
+            "player_seasons",
+            "player_seasons_staging",
+            "team_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_opp": {
+                        "player_opp_stats": {"field": "FG3M"},
+                    },
+                    "team_opp": {
+                        "team_opp_stats": {"field": "FG3M"},
+                    },
+                },
+            },
+        },
+    },
+    "opp_fg3a": {
+        "type": "INTEGER",
+        "tables": [
+            "team_seasons",
+            "player_seasons",
+            "player_seasons_staging",
+            "team_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_opp": {
+                        "player_opp_stats": {"field": "FG3A"},
+                    },
+                    "team_opp": {
+                        "team_opp_stats": {"field": "FG3A"},
+                    },
+                },
+            },
+        },
+    },
+    "opp_ftm": {
+        "type": "INTEGER",
+        "tables": [
+            "team_seasons",
+            "player_seasons",
+            "player_seasons_staging",
+            "team_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_opp": {
+                        "player_opp_stats": {"field": "FTM"},
+                    },
+                    "team_opp": {
+                        "team_opp_stats": {"field": "FTM"},
+                    },
+                },
+            },
+        },
+    },
+    "opp_fta": {
+        "type": "INTEGER",
+        "tables": [
+            "team_seasons",
+            "player_seasons",
+            "player_seasons_staging",
+            "team_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_opp": {
+                        "player_opp_stats": {"field": "FTA"},
+                    },
+                    "team_opp": {
+                        "team_opp_stats": {"field": "FTA"},
+                    },
+                },
+            },
+        },
+    },
+    "opp_o_rebs": {
+        "type": "INTEGER",
+        "tables": [
+            "team_seasons",
+            "player_seasons",
+            "player_seasons_staging",
+            "team_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_opp": {
+                        "player_opp_stats": {"field": "OREB"},
+                    },
+                    "team_opp": {
+                        "team_opp_stats": {"field": "OREB"},
+                    },
+                },
+            },
+        },
+    },
+    "opp_d_rebs": {
+        "type": "INTEGER",
+        "tables": [
+            "team_seasons",
+            "player_seasons",
+            "player_seasons_staging",
+            "team_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_opp": {
+                        "player_opp_stats": {"field": "DREB"},
+                    },
+                    "team_opp": {
+                        "team_opp_stats": {"field": "DREB"},
+                    },
+                },
+            },
+        },
+    },
+    "opp_turnovers": {
+        "type": "INTEGER",
+        "tables": [
+            "team_seasons",
+            "player_seasons",
+            "player_seasons_staging",
+            "team_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_opp": {
+                        "player_opp_stats": {"field": "TOV"},
+                    },
+                    "team_opp": {
+                        "team_opp_stats": {"field": "TOV"},
+                    },
+                },
+            },
+        },
+    },
+    "opp_steals": {
+        "type": "SMALLINT",
+        "tables": [
+            "team_seasons",
+            "player_seasons",
+            "player_seasons_staging",
+            "team_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_opp": {
+                        "player_opp_stats": {"field": "STL"},
+                    },
+                    "team_opp": {
+                        "team_opp_stats": {"field": "STL"},
+                    },
+                },
+            },
+        },
+    },
+    "opp_blocks": {
+        "type": "SMALLINT",
+        "tables": [
+            "team_seasons",
+            "player_seasons",
+            "player_seasons_staging",
+            "team_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_opp": {
+                        "player_opp_stats": {"field": "BLK"},
+                    },
+                    "team_opp": {
+                        "team_opp_stats": {"field": "BLK"},
+                    },
+                },
+            },
+        },
+    },
+    "opp_fouls": {
+        "type": "SMALLINT",
+        "tables": [
+            "team_seasons",
+            "player_seasons",
+            "player_seasons_staging",
+            "team_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_opp": {
+                        "player_opp_stats": {"field": "PF"},
+                    },
+                    "team_opp": {
+                        "team_opp_stats": {"field": "PF"},
+                    },
+                },
+            },
+        },
+    },
+    "opp_fg2m": {
+        "type": "INTEGER",
+        "tables": [
+            "team_seasons",
+            "player_seasons",
+            "player_seasons_staging",
+            "team_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_opp": {
+                        "player_opp_stats": {
+                            "derived": {
+                                "math": "FGM - FG3M",
+                                "fields": ["FGM", "FG3M"],
+                            },
+                        },
+                    },
+                    "team_opp": {
+                        "team_opp_stats": {
+                            "derived": {
+                                "math": "FGM - FG3M",
+                                "fields": ["FGM", "FG3M"],
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    },
+    "opp_fg2a": {
+        "type": "INTEGER",
+        "tables": [
+            "team_seasons",
+            "player_seasons",
+            "player_seasons_staging",
+            "team_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_opp": {
+                        "player_opp_stats": {
+                            "derived": {
+                                "math": "FGA - FG3A",
+                                "fields": ["FGA", "FG3A"],
+                            },
+                        },
+                    },
+                    "team_opp": {
+                        "team_opp_stats": {
+                            "derived": {
+                                "math": "FGA - FG3A",
+                                "fields": ["FGA", "FG3A"],
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    },
+    "opp_o_fouls_drawn": {
+        "type": "SMALLINT",
+        "tables": [
+            "team_seasons",
+            "player_seasons",
+            "player_seasons_staging",
+            "team_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "opp_poss_ending_ft_trips": {
+        "type": "SMALLINT",
+        "tables": [
+            "team_seasons",
+            "player_seasons",
+            "player_seasons_staging",
+            "team_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "opp_o_poss_secs": {
+        "type": "SMALLINT",
+        "tables": [
+            "team_seasons",
+            "player_seasons",
+            "player_seasons_staging",
+            "team_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "opp_d_poss_secs": {
+        "type": "SMALLINT",
+        "tables": [
+            "team_seasons",
+            "player_seasons",
+            "player_seasons_staging",
+            "team_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "on_fg3m": {
+        "type": "SMALLINT",
+        "tables": [
+            "player_seasons",
+            "player_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_on": {
+                        "player_on_stats": {"field": "FG3M"},
+                    },
+                },
+            },
+        },
+    },
+    "on_fg3a": {
+        "type": "INTEGER",
+        "tables": [
+            "player_seasons",
+            "player_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_on": {
+                        "player_on_stats": {"field": "FG3A"},
+                    },
+                },
+            },
+        },
+    },
+    "on_ftm": {
+        "type": "INTEGER",
+        "tables": [
+            "player_seasons",
+            "player_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_on": {
+                        "player_on_stats": {"field": "FTM"},
+                    },
+                },
+            },
+        },
+    },
+    "on_fta": {
+        "type": "INTEGER",
+        "tables": [
+            "player_seasons",
+            "player_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_on": {
+                        "player_on_stats": {"field": "FTA"},
+                    },
+                },
+            },
+        },
+    },
+    "on_o_rebs": {
+        "type": "INTEGER",
+        "tables": [
+            "player_seasons",
+            "player_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_on": {
+                        "player_on_stats": {"field": "OREB"},
+                    },
+                },
+            },
+        },
+    },
+    "on_d_rebs": {
+        "type": "INTEGER",
+        "tables": [
+            "player_seasons",
+            "player_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_on": {
+                        "player_on_stats": {"field": "DREB"},
+                    },
+                },
+            },
+        },
+    },
+    "on_turnovers": {
+        "type": "INTEGER",
+        "tables": [
+            "player_seasons",
+            "player_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_on": {
+                        "player_on_stats": {"field": "TOV"},
+                    },
+                },
+            },
+        },
+    },
+    "on_steals": {
+        "type": "SMALLINT",
+        "tables": [
+            "player_seasons",
+            "player_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_on": {
+                        "player_on_stats": {"field": "STL"},
+                    },
+                },
+            },
+        },
+    },
+    "on_blocks": {
+        "type": "SMALLINT",
+        "tables": [
+            "player_seasons",
+            "player_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_on": {
+                        "player_on_stats": {"field": "BLK"},
+                    },
+                },
+            },
+        },
+    },
+    "on_fouls": {
+        "type": "SMALLINT",
+        "tables": [
+            "player_seasons",
+            "player_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_on": {
+                        "player_on_stats": {"field": "PF"},
+                    },
+                },
+            },
+        },
+    },
+    "on_fg2m": {
+        "type": "INTEGER",
+        "tables": [
+            "player_seasons",
+            "player_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_on": {
+                        "player_on_stats": {
+                            "derived": {
+                                "math": "FGM - FG3M",
+                                "fields": ["FGM", "FG3M"],
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    },
+    "on_fg2a": {
+        "type": "INTEGER",
+        "tables": [
+            "player_seasons",
+            "player_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_on": {
+                        "player_on_stats": {
+                            "derived": {
+                                "math": "FGA - FG3A",
+                                "fields": ["FGA", "FG3A"],
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    },
+    "on_o_fouls_drawn": {
+        "type": "SMALLINT",
+        "tables": [
+            "player_seasons",
+            "player_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "on_poss_ending_ft_trips": {
+        "type": "SMALLINT",
+        "tables": [
+            "player_seasons",
+            "player_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "on_o_poss_secs": {
+        "type": "SMALLINT",
+        "tables": [
+            "player_seasons",
+            "player_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "on_d_poss_secs": {
+        "type": "SMALLINT",
+        "tables": [
+            "player_seasons",
+            "player_seasons_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
     # REFERENCE ID COLUMNS
     # ------------------------------------------------------------------
     "player_id": {
@@ -1246,15 +1830,14 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "default": None,
         "dataset_mapping": None,
     },
-    "league": {
+    "league_code": {
         "type": "TEXT",
         "tables": [
             "leagues_teams",
             "teams_players",
             "team_seasons",
             "player_seasons",
-            "tasks",
-            "coverages",
+            "stat_coverages",
             "teams_staging",
             "players_staging",
             "player_seasons_staging",
@@ -1267,9 +1850,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "dataset_mapping": None,
     },
     # ------------------------------------------------------------------
-    # STAGING IDENTITY COLUMNS  (TEXT — source IDs, not internal sts_id FKs)
+    # STAGING IDENTITY COLUMNS  (TEXT — identity/namespace, code, and FK codes)
     # ------------------------------------------------------------------
-    "team_identity": {
+    "ext_team_id": {
         "type": "TEXT",
         "tables": [
             "team_seasons_staging",
@@ -1281,7 +1864,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "default": None,
         "dataset_mapping": None,
     },
-    "player_identity": {
+    "ext_player_id": {
         "type": "TEXT",
         "tables": [
             "player_seasons_staging",

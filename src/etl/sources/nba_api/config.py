@@ -27,11 +27,6 @@ class ApiConfigDef(TypedDict):
     period: str
 
 
-class SeasonTypeDef(TypedDict):
-    wire_name: str
-    min_season: Union[str, None]
-
-
 # ============================================================================
 # RATE LIMITS
 # ============================================================================
@@ -43,30 +38,6 @@ RATE_LIMITS: Dict[str, Union[float, int]] = {
     "timeout_default": 30,
     "timeout_bulk": 120,
     "max_consecutive_failures": 5,
-}
-
-
-# ============================================================================
-# SEASON TYPES
-# ============================================================================
-
-SEASON_TYPES: Dict[str, SeasonTypeDef] = {
-    "regular_season": {
-        "wire_name": "Regular Season",
-        "min_season": None,
-    },
-    "playoffs": {
-        "wire_name": "Playoffs",
-        "min_season": None,
-    },
-    "play_in": {
-        "wire_name": "PlayIn",
-        "min_season": "2020-21",
-    },
-    "showcase_cup": {
-        "wire_name": "Showcase Cup",
-        "min_season": "2022-23",
-    },
 }
 
 
@@ -123,13 +94,5 @@ API_FIELD_NAMES: Dict[str, Dict[str, Any]] = {
         "player_on": "PLAYER_ID",
         "team_opp": "TEAM_ID",
     },
-    "entity_name": {
-        "player": "PLAYER_NAME",
-        "team": "TEAM_NAME",
-        "player_opp": "PLAYER_NAME",
-        "player_on": "PLAYER_NAME",
-        "team_opp": "TEAM_NAME",
-    },
-    "special_ids": {"person": "PERSON_ID"},
     "id_aliases": {"PLAYER_ID": ["PERSON_ID", "VS_PLAYER_ID"]},
 }

@@ -3,20 +3,10 @@ Shoot the Sheet - League Definitions
 
 Per-league operational settings: calendar window, retention, season grammar.
 
-Season types are declared as ``consolidated_group -> [canonical_keys]``.
-The canonical keys (e.g. ``"regular_season"``, ``"playoffs"``, ``"play_in"``,
-``"showcase_cup"``) are defined in each source's config module.  The
-consolidated groups (``"regular_season"`` / ``"postseason"``) are what
-core stats tables store.
-
-Example::
-
-    "NBA": {
-        "season_types": {
-            "regular_season": ["regular_season"],
-            "postseason":     ["playoffs", "play_in"],
-        }
-    }
+Season types are declared as ``{canonical_key: {is_postseason, min_season}}``.
+The ``is_postseason`` boolean groups types for core stats table purposes.
+``min_season`` gates whether a season type is valid for a given season
+(e.g. Play-In started in 2020-21).
 
 Dataset-level role assignments and source wiring live in
 :data:`src.etl.definitions.datasets.DATASETS` and
@@ -25,7 +15,7 @@ Dataset-level role assignments and source wiring live in
 Pure declarative data; helpers live in :mod:`src.core.lib.leagues_resolver`.
 """
 
-from typing import Dict, List, TypedDict
+from typing import Dict, List, TypedDict, Union
 
 # ============================================================================
 # VALIDATION CONSTANTS
@@ -33,7 +23,7 @@ from typing import Dict, List, TypedDict
 
 VALID_LEAGUE_SEASON_FORMATS = frozenset({"same_year", "split_year"})
 VALID_LEAGUE_GENDERS = frozenset({"M", "W"})
-VALID_SEASON_TYPE_GROUPS = frozenset({"regular_season", "postseason"})
+VALID_SEASON_TYPE_GROUPS = frozenset({"regular", "postseason"})
 VALID_CANONICAL_SEASON_TYPES = frozenset(
     {
         "regular_season",
@@ -43,41 +33,26 @@ VALID_CANONICAL_SEASON_TYPES = frozenset(
     }
 )
 
+
 # ============================================================================
 # SCHEMA
 # ============================================================================
 
 
-class LeagueDef(TypedDict):
-    """Per-league operational configuration.
+class SeasonTypeDef(TypedDict):
+    """Per-season-type configuration within a league."""
 
-    Attributes:
-        name: Full display name (e.g. "National Basketball Association").
-        gender: "M" or "W" -- used for schema-level categorization.
-        season_format: "split_year" (NBA-style, "2025-26") or
-            "same_year" (single calendar year, "2025").
-        season_types: Mapping of consolidated groups to canonical
-            season-type keys.  Keys are "regular_season" / "postseason";
-            values are lists of canonical type identifiers
-            (e.g. ``["regular_season", "showcase_cup"]``).
-        combined_season_types: Mapping of a "lead" canonical key to the
-            full list of canonical keys it covers in a single API call.
-            e.g. ``{"regular_season": ["regular_season", "showcase_cup"]}``
-            means one call with wire_name "Regular Season" also returns
-            Showcase Cup data, saving an API call for the latter.
-            Leagues without combinations use an empty dict.
-        calendar_flip: "MM/DD" string -- the approximate month/day when
-            the off-season turns into the next season year.
-        stat_rates: Which rate modes to compute (e.g. ["per_poss", "per_min"]).
-        season_retention_start: Earliest season to retain (e.g. "2000-01").
-            Stats older than this are pruned.
-    """
+    is_postseason: bool
+    min_season: Union[str, None]
+
+
+class LeagueDef(TypedDict):
+    """Per-league operational configuration."""
 
     name: str
     gender: str
     season_format: str
-    season_types: Dict[str, List[str]]
-    combined_season_types: Dict[str, List[str]]
+    season_types: Dict[str, SeasonTypeDef]
     calendar_flip: str
     stat_rates: List[str]
     season_retention_start: str
@@ -93,11 +68,20 @@ LEAGUES: Dict[str, LeagueDef] = {
         "gender": "M",
         "season_format": "split_year",
         "season_types": {
-            "regular_season": ["regular_season"],
-            "postseason": ["playoffs", "play_in"],
+            "regular_season": {
+                "is_postseason": False,
+                "min_season": None,
+            },
+            "playoffs": {
+                "is_postseason": True,
+                "min_season": None,
+            },
+            "play_in": {
+                "is_postseason": True,
+                "min_season": "2020-21",
+            },
         },
-        "combined_season_types": {},
-        "calendar_flip": "08/01",
+        "calendar_flip": "07/01",
         "stat_rates": ["per_poss", "per_min"],
         "season_retention_start": "2000-01",
     },
@@ -106,10 +90,15 @@ LEAGUES: Dict[str, LeagueDef] = {
         "gender": "W",
         "season_format": "same_year",
         "season_types": {
-            "regular_season": ["regular_season"],
-            "postseason": ["playoffs"],
+            "regular_season": {
+                "is_postseason": False,
+                "min_season": None,
+            },
+            "playoffs": {
+                "is_postseason": True,
+                "min_season": None,
+            },
         },
-        "combined_season_types": {},
         "calendar_flip": "12/31",
         "stat_rates": ["per_poss", "per_min"],
         "season_retention_start": "2000",
@@ -119,11 +108,18 @@ LEAGUES: Dict[str, LeagueDef] = {
         "gender": "M",
         "season_format": "split_year",
         "season_types": {
-            "regular_season": ["regular_season", "showcase_cup"],
-            "postseason": ["playoffs"],
-        },
-        "combined_season_types": {
-            "regular_season": ["regular_season", "showcase_cup"],
+            "regular_season": {
+                "is_postseason": False,
+                "min_season": None,
+            },
+            "showcase_cup": {
+                "is_postseason": False,
+                "min_season": "2022-23",
+            },
+            "playoffs": {
+                "is_postseason": True,
+                "min_season": None,
+            },
         },
         "calendar_flip": "08/01",
         "stat_rates": ["per_poss", "per_min"],

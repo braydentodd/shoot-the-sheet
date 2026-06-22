@@ -32,7 +32,7 @@ def load_fk_mapping(
     entity = ref_table.rstrip("s") if ref_table.endswith("s") else ref_table
 
     sql = (
-        f"SELECT ie.code, ie.entity_id "
+        f"SELECT ie.ext_id, ie.entity_id "
         f"FROM {ie_table} ie "
         f"WHERE ie.identity = %s AND ie.entity = %s"
     )
@@ -45,7 +45,7 @@ def load_fk_mapping(
             if not ids_list:
                 return {}
             cur.execute(
-                sql + f" AND ie.code = ANY(%s)",
+                sql + f" AND ie.ext_id = ANY(%s)",
                 (source_key, entity, ids_list),
             )
         return {str(row[0]): int(row[1]) for row in cur.fetchall()}

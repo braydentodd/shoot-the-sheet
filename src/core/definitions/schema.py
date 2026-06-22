@@ -137,7 +137,7 @@ TABLES: Dict[str, TableDef] = {
         "primary_key": ["sts_id"],
         "foreign_keys": [
             {
-                "column": "country",
+                "column": "country_code",
                 "ref_schema": "core",
                 "ref_table": "countries",
                 "ref_column": "code",
@@ -163,7 +163,7 @@ TABLES: Dict[str, TableDef] = {
     "teams_staging": {
         "entity": "team",
         "schema": "staging",
-        "primary_key": ["identity"],
+        "primary_key": ["identity", "ext_id"],
         "foreign_keys": None,
         "unique_constraints": None,
         "indexes": None,
@@ -171,7 +171,7 @@ TABLES: Dict[str, TableDef] = {
     "players_staging": {
         "entity": "player",
         "schema": "staging",
-        "primary_key": ["identity"],
+        "primary_key": ["identity", "ext_id"],
         "foreign_keys": None,
         "unique_constraints": None,
         "indexes": None,
@@ -182,16 +182,45 @@ TABLES: Dict[str, TableDef] = {
     "player_seasons_staging": {
         "entity": "player",
         "schema": "staging",
-        "primary_key": ["identity", "season", "season_type"],
-        "foreign_keys": None,
+        "primary_key": ["identity", "ext_id", "season", "season_type"],
+        "foreign_keys": [
+            {
+                "column": "ext_player_id",
+                "ref_schema": "staging",
+                "ref_table": "players_staging",
+                "ref_column": "code",
+                "strategy": "direct",
+                "on_update": "CASCADE",
+                "on_delete": "CASCADE",
+            },
+            {
+                "column": "ext_team_id",
+                "ref_schema": "staging",
+                "ref_table": "teams_staging",
+                "ref_column": "code",
+                "strategy": "direct",
+                "on_update": "CASCADE",
+                "on_delete": "CASCADE",
+            },
+        ],
         "unique_constraints": None,
         "indexes": None,
     },
     "team_seasons_staging": {
         "entity": "team",
         "schema": "staging",
-        "primary_key": ["identity", "season", "season_type"],
-        "foreign_keys": None,
+        "primary_key": ["identity", "ext_id", "season", "season_type"],
+        "foreign_keys": [
+            {
+                "column": "code",
+                "ref_schema": "staging",
+                "ref_table": "teams_staging",
+                "ref_column": "code",
+                "strategy": "direct",
+                "on_update": "CASCADE",
+                "on_delete": "CASCADE",
+            },
+        ],
         "unique_constraints": None,
         "indexes": None,
     },
@@ -201,24 +230,69 @@ TABLES: Dict[str, TableDef] = {
     "leagues_teams_staging": {
         "entity": "league",
         "schema": "staging",
-        "primary_key": ["league", "identity", "team_identity"],
-        "foreign_keys": None,
+        "primary_key": ["league_code", "identity", "ext_id", "ext_team_id"],
+        "foreign_keys": [
+            {
+                "column": "ext_team_id",
+                "ref_schema": "staging",
+                "ref_table": "teams_staging",
+                "ref_column": "code",
+                "strategy": "direct",
+                "on_update": "CASCADE",
+                "on_delete": "CASCADE",
+            },
+        ],
         "unique_constraints": None,
         "indexes": None,
     },
     "teams_players_staging": {
         "entity": "team",
         "schema": "staging",
-        "primary_key": ["league", "identity", "team_identity", "player_identity"],
-        "foreign_keys": None,
+        "primary_key": [
+            "league_code",
+            "identity",
+            "ext_id",
+            "ext_team_id",
+            "ext_player_id",
+        ],
+        "foreign_keys": [
+            {
+                "column": "ext_team_id",
+                "ref_schema": "staging",
+                "ref_table": "teams_staging",
+                "ref_column": "code",
+                "strategy": "direct",
+                "on_update": "CASCADE",
+                "on_delete": "CASCADE",
+            },
+            {
+                "column": "ext_player_id",
+                "ref_schema": "staging",
+                "ref_table": "players_staging",
+                "ref_column": "code",
+                "strategy": "direct",
+                "on_update": "CASCADE",
+                "on_delete": "CASCADE",
+            },
+        ],
         "unique_constraints": None,
         "indexes": None,
     },
     "countries_players_staging": {
         "entity": "country",
         "schema": "staging",
-        "primary_key": ["identity", "country", "player_identity"],
-        "foreign_keys": None,
+        "primary_key": ["identity", "ext_id", "country_code", "ext_player_id"],
+        "foreign_keys": [
+            {
+                "column": "ext_player_id",
+                "ref_schema": "staging",
+                "ref_table": "players_staging",
+                "ref_column": "code",
+                "strategy": "direct",
+                "on_update": "CASCADE",
+                "on_delete": "CASCADE",
+            },
+        ],
         "unique_constraints": None,
         "indexes": None,
     },
@@ -228,10 +302,10 @@ TABLES: Dict[str, TableDef] = {
     "leagues_teams": {
         "entity": "league",
         "schema": "core",
-        "primary_key": ["league", "team_id"],
+        "primary_key": ["league_code", "team_id"],
         "foreign_keys": [
             {
-                "column": "league",
+                "column": "league_code",
                 "ref_schema": "core",
                 "ref_table": "leagues",
                 "ref_column": "code",
@@ -255,10 +329,10 @@ TABLES: Dict[str, TableDef] = {
     "teams_players": {
         "entity": "team",
         "schema": "core",
-        "primary_key": ["league", "team_id", "player_id"],
+        "primary_key": ["league_code", "team_id", "player_id"],
         "foreign_keys": [
             {
-                "column": "league",
+                "column": "league_code",
                 "ref_schema": "core",
                 "ref_table": "leagues",
                 "ref_column": "code",
@@ -291,7 +365,7 @@ TABLES: Dict[str, TableDef] = {
     "countries_players": {
         "entity": "country",
         "schema": "core",
-        "primary_key": ["country", "player_id"],
+        "primary_key": ["country_code", "player_id"],
         "foreign_keys": [
             {
                 "column": "player_id",
@@ -303,7 +377,7 @@ TABLES: Dict[str, TableDef] = {
                 "on_delete": "CASCADE",
             },
             {
-                "column": "country",
+                "column": "country_code",
                 "ref_schema": "core",
                 "ref_table": "countries",
                 "ref_column": "code",
@@ -318,7 +392,7 @@ TABLES: Dict[str, TableDef] = {
     "identities_entities": {
         "entity": "identity",
         "schema": "core",
-        "primary_key": ["identity", "code", "entity"],
+        "primary_key": ["identity", "ext_id", "entity"],
         "foreign_keys": None,
         "unique_constraints": None,
         "indexes": None,
@@ -329,7 +403,7 @@ TABLES: Dict[str, TableDef] = {
     "player_seasons": {
         "entity": "player",
         "schema": "core",
-        "primary_key": ["league", "player_id", "team_id", "season", "season_type"],
+        "primary_key": ["league_code", "player_id", "team_id", "season", "season_type"],
         "foreign_keys": [
             {
                 "column": "player_id",
@@ -350,7 +424,7 @@ TABLES: Dict[str, TableDef] = {
                 "on_delete": "CASCADE",
             },
             {
-                "column": "league",
+                "column": "league_code",
                 "ref_schema": "core",
                 "ref_table": "leagues",
                 "ref_column": "code",
@@ -367,7 +441,7 @@ TABLES: Dict[str, TableDef] = {
     "team_seasons": {
         "entity": "team",
         "schema": "core",
-        "primary_key": ["league", "team_id", "season", "season_type"],
+        "primary_key": ["league_code", "team_id", "season", "season_type"],
         "foreign_keys": [
             {
                 "column": "team_id",
@@ -379,7 +453,7 @@ TABLES: Dict[str, TableDef] = {
                 "on_delete": "CASCADE",
             },
             {
-                "column": "league",
+                "column": "league_code",
                 "ref_schema": "core",
                 "ref_table": "leagues",
                 "ref_column": "code",
@@ -396,24 +470,21 @@ TABLES: Dict[str, TableDef] = {
     # ------------------------------------------------------------------
     # CORE — operational tables
     # ------------------------------------------------------------------
-    "coverages": {
-        "entity": "coverage",
+    "stat_coverages": {
+        "entity": "stat_coverage",
         "schema": "core",
         "primary_key": [
-            "league",
+            "identity",
+            "league_code",
             "entity",
             "season",
             "season_type",
-            "identity",
-            "source_params",
-            "col_name",
             "dataset",
-            "dataset_params",
-            "field",
+            "col_name",
         ],
         "foreign_keys": [
             {
-                "column": "league",
+                "column": "league_code",
                 "ref_schema": "core",
                 "ref_table": "leagues",
                 "ref_column": "code",

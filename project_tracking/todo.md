@@ -1,6 +1,8 @@
 Short term:
-- [ ] review updated pipeline format
-- [ ] remove phase support in etl cli
+- [ ] map LA to Los Angeles carefully... review name normalization
+- [ ] review nba_api rate limiting
+- [ ] review automatic restart
+- [ ] order db columns
 - [ ] implement shoot_the_sheet data source (with option of sheets or word source)
 - [ ] set up github actions
 - [ ] add draft eligibility columns?

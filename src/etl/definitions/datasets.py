@@ -25,7 +25,7 @@ Keys in ``source_mapping`` fall into two categories:
 This mirrors the ``dataset_mapping`` pattern in ``db_columns.py``.
 """
 
-from typing import Dict, List, TypedDict, Union
+from typing import Any, Dict, List, TypedDict, Union
 
 
 class SourceMappingDef(TypedDict, total=False):
@@ -44,13 +44,20 @@ class SourceMappingDef(TypedDict, total=False):
 
 
 class DatasetDef(TypedDict):
-    """Generic dataset metadata, uniform across every identity."""
+    """Generic dataset metadata, uniform across every identity.
+
+    ``coverage`` drives refresh behaviour:
+        ``"normal"``   — use stat_coverages to gate re-fetching (default).
+        ``"all_years"`` — fetch every season from min_season to current,
+                        aggregate most-recent-non-null per entity.
+        ``"current"``   — skip coverage, always fetch the current season.
+    """
 
     min_season: Union[str, None]
     execution_tier: str
     source: str
     role: str
-    coverage_mode: str
+    coverage: str
     source_mapping: SourceMappingDef
 
 
@@ -65,7 +72,7 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "execution_tier": "per_team",
             "source": "nba_api",
             "role": "stats_maintainer",
-            "coverage_mode": "normal",
+            "coverage": "normal",
             "source_mapping": {
                 "class_name": "leaguedashplayerstats",
                 "result_set": "LeagueDashPlayerStats",
@@ -78,7 +85,7 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "execution_tier": "per_league",
             "source": "nba_api",
             "role": "stats_maintainer",
-            "coverage_mode": "normal",
+            "coverage": "normal",
             "source_mapping": {
                 "class_name": "leaguedashteamstats",
                 "result_set": "LeagueDashTeamStats",
@@ -92,7 +99,7 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "execution_tier": "per_team",
             "source": "nba_api",
             "role": "stats_maintainer",
-            "coverage_mode": "normal",
+            "coverage": "normal",
             "source_mapping": {
                 "class_name": "leaguedashplayerstats",
                 "result_set": "LeagueDashPlayerStats",
@@ -106,7 +113,7 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "execution_tier": "per_league",
             "source": "nba_api",
             "role": "stats_maintainer",
-            "coverage_mode": "normal",
+            "coverage": "normal",
             "source_mapping": {
                 "class_name": "leaguedashteamstats",
                 "result_set": "LeagueDashTeamStats",
@@ -121,7 +128,7 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "execution_tier": "per_team",
             "source": "nba_api",
             "role": "stats_maintainer",
-            "coverage_mode": "normal",
+            "coverage": "normal",
             "source_mapping": {
                 "class_name": "leaguedashptstats",
                 "result_set": "LeagueDashPtStats",
@@ -135,7 +142,7 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "execution_tier": "per_league",
             "source": "nba_api",
             "role": "stats_maintainer",
-            "coverage_mode": "normal",
+            "coverage": "normal",
             "source_mapping": {
                 "class_name": "leaguedashptstats",
                 "result_set": "LeagueDashPtStats",
@@ -150,7 +157,7 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "execution_tier": "per_team",
             "source": "nba_api",
             "role": "stats_maintainer",
-            "coverage_mode": "normal",
+            "coverage": "normal",
             "source_mapping": {
                 "class_name": "leaguedashptstats",
                 "result_set": "LeagueDashPtStats",
@@ -164,7 +171,7 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "execution_tier": "per_league",
             "source": "nba_api",
             "role": "stats_maintainer",
-            "coverage_mode": "normal",
+            "coverage": "normal",
             "source_mapping": {
                 "class_name": "leaguedashptstats",
                 "result_set": "LeagueDashPtStats",
@@ -179,7 +186,7 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "execution_tier": "per_team",
             "source": "nba_api",
             "role": "stats_maintainer",
-            "coverage_mode": "normal",
+            "coverage": "normal",
             "source_mapping": {
                 "class_name": "leaguehustlestatsplayer",
                 "result_set": "HustleStatsPlayer",
@@ -192,7 +199,7 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "execution_tier": "per_league",
             "source": "nba_api",
             "role": "stats_maintainer",
-            "coverage_mode": "normal",
+            "coverage": "normal",
             "source_mapping": {
                 "class_name": "leaguehustlestatsteam",
                 "result_set": "HustleStatsTeam",
@@ -206,7 +213,7 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "execution_tier": "per_team",
             "source": "nba_api",
             "role": "stats_maintainer",
-            "coverage_mode": "normal",
+            "coverage": "normal",
             "source_mapping": {
                 "class_name": "leaguedashptdefend",
                 "result_set": "LeagueDashPtDefend",
@@ -219,7 +226,7 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "execution_tier": "per_league",
             "source": "nba_api",
             "role": "stats_maintainer",
-            "coverage_mode": "normal",
+            "coverage": "normal",
             "source_mapping": {
                 "class_name": "leaguedashptteamdefend",
                 "result_set": "LeagueDashPtTeamDefend",
@@ -229,11 +236,11 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
         },
         # --- Player index (all-time player registry, 1 call) ---
         "player_profiles": {
+            "coverage": "current",
             "min_season": None,
             "execution_tier": "per_league",
             "source": "nba_api",
             "role": "profile_maintainer",
-            "coverage_mode": "normal",
             "source_mapping": {
                 "class_name": "playerindex",
                 "result_set": "PlayerIndex",
@@ -241,11 +248,11 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
         },
         # --- Player roster / profiles (per-team, current season) ---
         "team_player_rosters": {
+            "coverage": "current",
             "min_season": None,
             "execution_tier": "per_team",
             "source": "nba_api",
             "role": "player_discoverer",
-            "coverage_mode": "normal",
             "source_mapping": {
                 "class_name": "commonteamroster",
                 "result_set": "CommonTeamRoster",
@@ -253,11 +260,11 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
         },
         # --- Team discovery (all active teams, 1 call) ---
         "league_team_rosters": {
+            "coverage": "current",
             "min_season": None,
             "execution_tier": "per_league",
             "source": "nba_api",
             "role": "team_discoverer",
-            "coverage_mode": "normal",
             "source_mapping": {
                 "class_name": "commonteamyears",
                 "result_set": "TeamYears",
@@ -265,11 +272,11 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
         },
         # --- Season activity detector ---
         "recent_games": {
+            "coverage": "current",
             "min_season": None,
             "execution_tier": "per_league",
             "source": "nba_api",
             "role": "season_detector",
-            "coverage_mode": "normal",
             "source_mapping": {
                 "class_name": "leaguegamefinder",
                 "result_set": "LeagueGameFinderResults",
@@ -282,7 +289,7 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "execution_tier": "per_league",
             "source": "nba_api",
             "role": "profile_maintainer",
-            "coverage_mode": "always",
+            "coverage": "all_years",
             "source_mapping": {
                 "class_name": "draftcombineplayeranthro",
                 "result_set": "DraftCombinePlayerAnthro",
@@ -295,7 +302,7 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "execution_tier": "per_team",
             "source": "nba_api",
             "role": "stats_maintainer",
-            "coverage_mode": "normal",
+            "coverage": "normal",
             "source_mapping": {
                 "class_name": "teamplayeronoffdetails",
                 "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
@@ -309,7 +316,7 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "execution_tier": "per_team",
             "source": "nba_api",
             "role": "stats_maintainer",
-            "coverage_mode": "normal",
+            "coverage": "normal",
             "source_mapping": {
                 "class_name": "leaguedashplayerstats",
                 "result_set": "LeagueDashPlayerStats",
@@ -323,7 +330,7 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "execution_tier": "per_league",
             "source": "nba_api",
             "role": "stats_maintainer",
-            "coverage_mode": "normal",
+            "coverage": "normal",
             "source_mapping": {
                 "class_name": "leaguedashteamstats",
                 "result_set": "LeagueDashTeamStats",
@@ -334,11 +341,11 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
         },
         # --- Team info (all time) ---
         "team_profiles": {
+            "coverage": "current",
             "min_season": None,
             "execution_tier": "per_team",
             "source": "nba_api",
             "role": "profile_maintainer",
-            "coverage_mode": "normal",
             "source_mapping": {
                 "class_name": "teaminfocommon",
                 "result_set": "TeamInfoCommon",
