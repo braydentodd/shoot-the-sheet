@@ -43,12 +43,13 @@ def get_current_season(league_key: str, now: datetime = None) -> str:
 
 
 def get_retained_seasons(league_key: str, current_season: str) -> List[str]:
-    """Retained seasons (oldest -> newest) under league's ``retention_seasons``."""
+    """Retained seasons (oldest -> newest) from ``season_retention_start``."""
     cfg = _league_or_raise(league_key)
-    count = cfg["retention_seasons"]
+    start = cfg["season_retention_start"]
     fmt = cfg["season_format"]
     end_year = parse_season_end_year(current_season, fmt)
-    return [format_season_label(end_year - count + i + 1, fmt) for i in range(count)]
+    start_year = parse_season_end_year(start, fmt)
+    return [format_season_label(y, fmt) for y in range(start_year, end_year + 1)]
 
 
 def get_oldest_retained_season(league_key: str, current_season: str) -> str:

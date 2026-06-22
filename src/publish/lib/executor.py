@@ -17,9 +17,9 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Callable, Set
 
-from src.core.definitions.stats import STAT_RATES
 from src.core.lib.postgres import get_db_connection
 from src.publish.definitions.layout import SHEETS_CONFIG
+from src.publish.definitions.stats import STAT_RATES
 from src.publish.destinations.google_sheets.client import (
     get_or_create_worksheet,
     move_sheet_to_position,

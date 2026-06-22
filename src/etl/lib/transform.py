@@ -70,7 +70,7 @@ def parse_height(height_str: Any) -> Union[int, None]:
 
 def parse_birthdate(date_str: Any) -> Union[date, None]:
     """Parse birthdate string to date object. Tries multiple formats."""
-    if not date_str or date_str == "" or str(date_str).lower() == "nan":
+    if not date_str or date_str == "" or str(date_str).lower() in ("nan", "n", "none"):
         return None
     raw = str(date_str).split(".")[0]  # strip fractional seconds
     for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d", "%m/%d/%Y"):

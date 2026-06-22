@@ -4,7 +4,7 @@ Value formatting utilities for display.
 
 from typing import Any, Callable, Union
 
-from src.core.definitions.stats import STAT_RATES
+from src.publish.definitions.stats import STAT_RATES
 
 
 def format_stat_value(value: Any, fmt: str, decimals: int, nullable: bool) -> Any:

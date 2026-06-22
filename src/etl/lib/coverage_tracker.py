@@ -3,7 +3,7 @@ Shoot the Sheet - Coverage Tracker
 
 Tracks stats coverage completeness by persisting per-field params
 for each (entity, season, season_type, source, dataset, field)
-in ``ops.coverages``.
+in ``core.coverages``.
 
 When params for a field change (e.g. API parameter tweak), the mismatch
 is detected and the ETL re-fetches that field automatically.
@@ -70,7 +70,7 @@ def is_group_coverage_current(
     query = f"""
         SELECT field, source_params
           FROM {schema}.{table}
-         WHERE league_code = %s
+         WHERE league = %s
            AND entity = %s
            AND season = %s
            AND season_type = %s
@@ -115,7 +115,7 @@ def upsert_group_coverage(
 
     query = f"""
         INSERT INTO {schema}.{table} (
-            league_code, entity, season, season_type,
+            league, entity, season, season_type,
             identity, source_params, col_name, dataset, dataset_params, field, completed_at
         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
         ON CONFLICT ({conflict_cols})
@@ -155,8 +155,10 @@ def prune_coverages(league_key: str) -> int:
 
     with db_connection() as conn:
         with conn.cursor() as cur:
+            meta = TABLES["coverages"]
+            tbl = f"{meta['schema']}.coverages"
             cur.execute(
-                "SELECT entity, field FROM ops.coverages WHERE league_code = %s",
+                f"SELECT entity, field FROM {tbl} WHERE league = %s",
                 (league_key,),
             )
             to_delete: List[Tuple[str, str]] = [
@@ -171,9 +173,9 @@ def prune_coverages(league_key: str) -> int:
             values = ",".join("(%s, %s)" for _ in to_delete)
             flat = [item for pair in to_delete for item in pair]
             cur.execute(
-                """
-                DELETE FROM ops.coverages
-                WHERE league_code = %s
+                f"""
+                DELETE FROM {tbl}
+                WHERE league = %s
                   AND (entity, field) IN (VALUES """
                 + values
                 + """)

@@ -8,8 +8,8 @@ and formats values. 100% config-driven.
 
 from typing import Any, List, Tuple, Union
 
-from src.core.definitions.stats import STAT_RATES
 from src.publish.definitions.layout import SECTIONS_CONFIG, SUMMARY_THRESHOLDS
+from src.publish.definitions.stats import STAT_RATES
 from src.publish.definitions.view_columns import VIEW_COLUMNS
 from src.publish.lib.calculations import (
     calculate_entity_stats,

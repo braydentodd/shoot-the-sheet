@@ -69,7 +69,8 @@ class LeagueDef(TypedDict):
         calendar_flip: "MM/DD" string -- the approximate month/day when
             the off-season turns into the next season year.
         stat_rates: Which rate modes to compute (e.g. ["per_poss", "per_min"]).
-        retention_seasons: Number of past seasons to keep in stats tables.
+        season_retention_start: Earliest season to retain (e.g. "2000-01").
+            Stats older than this are pruned.
     """
 
     name: str
@@ -79,7 +80,7 @@ class LeagueDef(TypedDict):
     combined_season_types: Dict[str, List[str]]
     calendar_flip: str
     stat_rates: List[str]
-    retention_seasons: int
+    season_retention_start: str
 
 
 # ============================================================================
@@ -98,7 +99,7 @@ LEAGUES: Dict[str, LeagueDef] = {
         "combined_season_types": {},
         "calendar_flip": "08/01",
         "stat_rates": ["per_poss", "per_min"],
-        "retention_seasons": 6,
+        "season_retention_start": "2000-01",
     },
     "WNBA": {
         "name": "Women's National Basketball Association",
@@ -111,7 +112,7 @@ LEAGUES: Dict[str, LeagueDef] = {
         "combined_season_types": {},
         "calendar_flip": "12/31",
         "stat_rates": ["per_poss", "per_min"],
-        "retention_seasons": 6,
+        "season_retention_start": "2000",
     },
     "GLG": {
         "name": "NBA G League",
@@ -126,6 +127,6 @@ LEAGUES: Dict[str, LeagueDef] = {
         },
         "calendar_flip": "08/01",
         "stat_rates": ["per_poss", "per_min"],
-        "retention_seasons": 6,
+        "season_retention_start": "2001-02",
     },
 }

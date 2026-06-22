@@ -4,10 +4,10 @@ Shoot the Sheet - Shared Data Access Layer (DAL)
 Read-only SQL helpers used by the publish pipeline.
 
 ID model:
-    Profile tables  -> profiles.{entity}s  (PK: sts_id)
-    Stats tables    -> stats.{entity}_seasons
-                       PK includes league_id, {entity}_id (and team_id for players)
-    Membership      -> rosters.leagues_teams (league/team), rosters.teams_players (team/player)
+    Profile tables  -> core.{entity}s  (PK: sts_id)
+    Stats tables    -> core.{entity}_seasons
+                       PK includes league, {entity}_id (and team_id for players)
+    Membership      -> core.leagues_teams (league/team), core.teams_players (team/player)
 
 The "team for a player" is derived from each stats row's ``team_id``
 column, NOT from a column on the profile -- a player can play for several
@@ -111,11 +111,11 @@ def get_teams_from_db(league_key: str) -> Dict[int, Tuple[str, str]]:
     """
     sql = f"""
         SELECT t.{_quote_col("sts_id")}, t.abbr, t.name
-          FROM profiles.teams t
-          JOIN rosters.leagues_teams lr
+          FROM core.teams t
+          JOIN core.leagues_teams lr
             ON lr.team_id = t.{_quote_col("sts_id")}
-          JOIN profiles.leagues lp
-            ON lp.{_quote_col("sts_id")} = lr.league_id
+          JOIN core.leagues lp
+            ON lp.code = lr.league
          WHERE lp.code = %s
           ORDER BY t.abbr
     """
@@ -169,7 +169,7 @@ def fetch_players_for_team(
         query = f"""
             SELECT {", ".join(all_fields)}
               FROM {players_tbl} p
-              JOIN rosters.teams_players tr
+              JOIN core.teams_players tr
                                 ON tr.player_id = p.{sts_id}
               JOIN {teams_tbl} t
                 ON t.{sts_id} = tr.team_id
@@ -250,7 +250,7 @@ def fetch_all_players(
               FROM {stats_tbl} s
               JOIN {players_tbl} p ON p.{sts_id} = s.{sts_id}
               JOIN {teams_tbl}   t ON t.{sts_id} = s.team_id
-                            LEFT JOIN rosters.teams_players tr
+                            LEFT JOIN core.teams_players tr
                                 ON tr.player_id = s.{sts_id}
                              AND tr.team_id = s.team_id
              WHERE s.{season_col_name} = %s AND s.season_type = %s

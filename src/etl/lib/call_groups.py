@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Tuple, Union
 from src.core.definitions.db_columns import DB_COLUMNS
 from src.core.definitions.schema import DEFAULT_TYPE_TRANSFORMS
 from src.etl.definitions.datasets import DATASETS
+from src.etl.lib.load import ENTITY_SCOPE_TABLE
 
 logger = logging.getLogger(__name__)
 
@@ -160,16 +161,8 @@ def build_call_groups(
     simple_groups: Dict[tuple, Dict[str, Dict[str, Any]]] = {}
     special: List[Dict[str, Any]] = []
 
-    _ENTITY_SCOPE_TABLE = {
-        ("player", "profiles"): "players",
-        ("team", "profiles"): "teams",
-        ("player", "stats"): "player_seasons",
-        ("team", "stats"): "team_seasons",
-        ("player", "rosters"): "teams_players",
-        ("team", "rosters"): "leagues_teams",
-    }
     if scope:
-        table_name = _ENTITY_SCOPE_TABLE[(entity, scope)]
+        table_name = ENTITY_SCOPE_TABLE[(entity, scope)]
         matched_cols = _columns_for_table(table_name)
     else:
         matched_cols = list(DB_COLUMNS.items())

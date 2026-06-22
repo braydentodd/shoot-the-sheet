@@ -2,8 +2,8 @@ import logging
 from typing import Any, Dict, List, Union
 
 from src.core.definitions.db_columns import DB_COLUMNS
-from src.core.definitions.stats import STAT_RATES
 from src.publish.definitions.layout import SECTIONS_CONFIG, VALUES_KEY_ENTITY
+from src.publish.definitions.stats import STAT_RATES
 from src.publish.definitions.view_columns import VIEW_COLUMNS
 
 logger = logging.getLogger(__name__)

@@ -36,7 +36,6 @@ from src.core.lib.leagues_resolver import (
 )
 from src.core.lib.logging import phase_marker
 from src.core.lib.postgres import get_db_connection
-from src.core.lib.terminal import progress
 from src.publish.definitions.destinations import DESTINATIONS
 from src.publish.definitions.layout import AGGREGATE_SHEETS, SECTIONS_CONFIG
 
@@ -54,15 +53,6 @@ from src.publish.lib.executor import (
     sync_team_sheet,
     sync_teams_sheet,
 )
-from src.publish.lib.progress_tracker import (
-    complete_run,
-    fail_run,
-    mark_sheet_completed,
-    mark_sheet_failed,
-    mark_sheet_started,
-    resolve_work,
-    update_run_completed_sheets,
-)
 from src.publish.lib.queries import (
     fetch_all_players,
     fetch_all_teams,
@@ -70,8 +60,6 @@ from src.publish.lib.queries import (
 )
 
 logger = logging.getLogger(__name__)
-
-_AUTO_RESUME = True
 
 
 def _push_apps_script_config(league: str, destination: str) -> None:
@@ -233,86 +221,58 @@ def _sync_all_sheets(
     ctx,
     client,
     spreadsheet,
-    conn,
-    run_id: int,
     *,
     team_sheets,
     aggregate_sheets,
-    pending_lookup: dict,
     team_names: dict,
     precomputed: dict,
     delay: float,
     sync_kwargs: dict,
 ) -> list:
-    """Iterate team sheets then aggregate sheets, tracking progress per sheet.
+    """Iterate team sheets then aggregate sheets.
 
     Returns a list of sheet names that failed.
     """
-    db_schema = ctx.db_schema
-    total_pending = sum(
-        1 for t in list(team_sheets) + list(aggregate_sheets) if t in pending_lookup
-    )
     failed_sheets = []
 
-    with progress(
-        total=total_pending, desc="publish", unit="sheet", leave=False
-    ) as bar:
-        for sheet in team_sheets:
-            if sheet not in pending_lookup:
-                continue
-            pid = pending_lookup[sheet]
-            bar.set_postfix_str(sheet, refresh=False)
-            mark_sheet_started(conn, db_schema, pid)
-            try:
-                sync_team_sheet(
+    for sheet in team_sheets:
+        try:
+            sync_team_sheet(
+                ctx,
+                client,
+                spreadsheet,
+                sheet,
+                team_name=team_names.get(sheet, sheet),
+                precomputed=precomputed,
+                **sync_kwargs,
+            )
+        except Exception as exc:
+            logger.error("%s sheet failed: %s", sheet, exc, exc_info=True)
+            failed_sheets.append(sheet)
+        time.sleep(delay)
+
+    for sheet in aggregate_sheets:
+        try:
+            if sheet == "all_players":
+                sync_players_sheet(
                     ctx,
                     client,
                     spreadsheet,
-                    sheet,
-                    team_name=team_names.get(sheet, sheet),
                     precomputed=precomputed,
                     **sync_kwargs,
                 )
-                mark_sheet_completed(conn, db_schema, pid)
-                update_run_completed_sheets(conn, db_schema, run_id)
-            except Exception as exc:
-                logger.error("%s sheet failed: %s", sheet, exc, exc_info=True)
-                failed_sheets.append(sheet)
-                mark_sheet_failed(conn, db_schema, pid, str(exc))
-            bar.update(1)
-            time.sleep(delay)
-
-        for sheet in aggregate_sheets:
-            if sheet not in pending_lookup:
-                continue
-            pid = pending_lookup[sheet]
-            bar.set_postfix_str(sheet, refresh=False)
-            mark_sheet_started(conn, db_schema, pid)
-            try:
-                if sheet == "all_players":
-                    sync_players_sheet(
-                        ctx,
-                        client,
-                        spreadsheet,
-                        precomputed=precomputed,
-                        **sync_kwargs,
-                    )
-                else:
-                    sync_teams_sheet(
-                        ctx,
-                        client,
-                        spreadsheet,
-                        precomputed=precomputed,
-                        **sync_kwargs,
-                    )
-                mark_sheet_completed(conn, db_schema, pid)
-                update_run_completed_sheets(conn, db_schema, run_id)
-            except Exception as exc:
-                logger.error("%s sheet failed: %s", sheet, exc, exc_info=True)
-                failed_sheets.append(sheet)
-                mark_sheet_failed(conn, db_schema, pid, str(exc))
-            bar.update(1)
-            time.sleep(delay)
+            else:
+                sync_teams_sheet(
+                    ctx,
+                    client,
+                    spreadsheet,
+                    precomputed=precomputed,
+                    **sync_kwargs,
+                )
+        except Exception as exc:
+            logger.error("%s sheet failed: %s", sheet, exc, exc_info=True)
+            failed_sheets.append(sheet)
+        time.sleep(delay)
 
     return failed_sheets
 
@@ -366,10 +326,10 @@ def run_publish(
         sheet_formatting=SHEETS_FORMATTING,
         league_config=league_config,
         db_schema=db_schema,
-        player_entity_table="profiles.players",
-        team_entity_table="profiles.teams",
-        player_stats_table="stats.player_seasons",
-        team_stats_table="stats.team_seasons",
+        player_entity_table="core.players",
+        team_entity_table="core.teams",
+        player_stats_table="core.player_seasons",
+        team_stats_table="core.team_seasons",
         player_entity_fields=db_fields["player_entity_fields"],
         team_entity_fields=db_fields["team_entity_fields"],
         stat_fields=db_fields["stat_fields"],
@@ -417,28 +377,6 @@ def run_publish(
 
     all_sheets = abbrs + aggregate_order
 
-    # Auto-resume: resolve pending work (may be subset if resuming)
-    conn = get_db_connection()
-    try:
-        run_process_id, pending_items = resolve_work(
-            conn,
-            db_schema,
-            league,
-            all_sheets,
-            auto_resume=_AUTO_RESUME,
-        )
-    except Exception:
-        conn.close()
-        raise
-
-    pending_lookup = {sheet: pid for sheet, pid in pending_items}
-    total_pending = len(pending_items)
-    logger.info(
-        phase_marker(
-            "publish_sheets", f"{total_pending} pending of {len(all_sheets)} total"
-        ),
-    )
-
     # Build team_gids for aggregate sheets (needed for hyperlink resolution)
     team_gids = {ws.title: ws.id for ws in spreadsheet.worksheets()}
     sync_kwargs["team_gids"] = team_gids
@@ -447,11 +385,8 @@ def run_publish(
         ctx,
         client,
         spreadsheet,
-        conn,
-        run_process_id,
         team_sheets=abbrs,
         aggregate_sheets=aggregate_order,
-        pending_lookup=pending_lookup,
         team_names=team_names,
         precomputed=precomputed,
         delay=delay,
@@ -461,15 +396,9 @@ def run_publish(
     if failed_sheets:
         failed_list = ", ".join(failed_sheets)
         logger.error("Sync finished with failures: %s", failed_list)
-        fail_run(
-            conn, db_schema, run_process_id, f"Sync failed for sheet(s): {failed_list}"
-        )
-        conn.close()
         raise RuntimeError(f"Sync failed for sheet(s): {failed_list}")
 
     logger.info("Sync complete")
-    complete_run(conn, db_schema, run_process_id)
-    conn.close()
 
     # Apps Script config export is driven by destination config
     if config_export and DESTINATIONS.get(destination, {}).get("apps_script", {}).get(

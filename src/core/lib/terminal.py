@@ -33,8 +33,10 @@ from tqdm.contrib.logging import logging_redirect_tqdm
 # Argparse formatter
 # ---------------------------------------------------------------------------
 
-class HelpFormatter(argparse.RawDescriptionHelpFormatter,
-                    argparse.ArgumentDefaultsHelpFormatter):
+
+class HelpFormatter(
+    argparse.RawDescriptionHelpFormatter, argparse.ArgumentDefaultsHelpFormatter
+):
     """Wider argparse formatter that preserves description newlines and
     appends defaults to help strings.
 
@@ -54,6 +56,7 @@ class HelpFormatter(argparse.RawDescriptionHelpFormatter,
 # ---------------------------------------------------------------------------
 # Base parser  (shared flags)
 # ---------------------------------------------------------------------------
+
 
 def make_base_parser(
     prog: str,
@@ -76,16 +79,21 @@ def make_base_parser(
         formatter_class=HelpFormatter,
     )
     parser.add_argument(
-        '-v', '--verbose', action='store_true',
-        help='Enable DEBUG-level logging.',
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Enable DEBUG-level logging.",
     )
     parser.add_argument(
-        '-q', '--quiet', action='store_true',
-        help='Suppress everything below WARNING.',
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Suppress everything below WARNING.",
     )
     parser.add_argument(
-        '--no-color', action='store_true',
-        help='Disable ANSI styling on stdout (auto-disabled if not a TTY).',
+        "--no-color",
+        action="store_true",
+        help="Disable ANSI styling on stdout (auto-disabled if not a TTY).",
     )
     return parser
 
@@ -94,13 +102,14 @@ def make_base_parser(
 # ANSI styling
 # ---------------------------------------------------------------------------
 
+
 class _Style:
     """Tiny ANSI helper.  Acts as a no-op when stdout is not a TTY or when
     NO_COLOR is set in the environment.
     """
 
     def __init__(self) -> None:
-        self._enabled = sys.stdout.isatty() and 'NO_COLOR' not in os.environ
+        self._enabled = sys.stdout.isatty() and "NO_COLOR" not in os.environ
 
     def disable(self) -> None:
         self._enabled = False
@@ -108,16 +117,29 @@ class _Style:
     def _wrap(self, code: str, text: str) -> str:
         if not self._enabled:
             return text
-        return f'\033[{code}m{text}\033[0m'
+        return f"\033[{code}m{text}\033[0m"
 
     # Foreground colors
-    def dim(self, text: str) -> str:    return self._wrap('2', text)
-    def bold(self, text: str) -> str:   return self._wrap('1', text)
-    def red(self, text: str) -> str:    return self._wrap('31', text)
-    def green(self, text: str) -> str:  return self._wrap('32', text)
-    def yellow(self, text: str) -> str: return self._wrap('33', text)
-    def blue(self, text: str) -> str:   return self._wrap('34', text)
-    def cyan(self, text: str) -> str:   return self._wrap('36', text)
+    def dim(self, text: str) -> str:
+        return self._wrap("2", text)
+
+    def bold(self, text: str) -> str:
+        return self._wrap("1", text)
+
+    def red(self, text: str) -> str:
+        return self._wrap("31", text)
+
+    def green(self, text: str) -> str:
+        return self._wrap("32", text)
+
+    def yellow(self, text: str) -> str:
+        return self._wrap("33", text)
+
+    def blue(self, text: str) -> str:
+        return self._wrap("34", text)
+
+    def cyan(self, text: str) -> str:
+        return self._wrap("36", text)
 
 
 style = _Style()
@@ -127,13 +149,13 @@ style = _Style()
 # Stdout helpers  (kept separate from logging so banners survive --quiet)
 # ---------------------------------------------------------------------------
 
-_BAR = '=' * 78
-_RULE = '-' * 78
+_BAR = "=" * 78
+_RULE = "-" * 78
 
 
 def print_banner(title: str, subtitle: Union[str, None] = None) -> None:
     """Print a top-of-run banner with timestamp."""
-    ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(_BAR)
     print(f"  {style.bold(title)}")
     if subtitle:
@@ -152,7 +174,7 @@ def print_phase_separator(name: str, detail: Union[str, None] = None) -> None:
     print(_RULE)
 
 
-def print_summary(items: Mapping[str, object], title: str = 'Summary') -> None:
+def print_summary(items: Mapping[str, object], title: str = "Summary") -> None:
     """Print a key/value summary block with aligned columns."""
     if not items:
         return
@@ -172,9 +194,9 @@ def print_table(rows: Iterable[Tuple[str, ...]], headers: Tuple[str, ...]) -> No
     for row in rows:
         for i in range(cols):
             widths[i] = max(widths[i], len(str(row[i])))
-    fmt = '  '.join('{:<' + str(w) + '}' for w in widths)
+    fmt = "  ".join("{:<" + str(w) + "}" for w in widths)
     print(style.bold(fmt.format(*headers)))
-    print(style.dim('  '.join('-' * w for w in widths)))
+    print(style.dim("  ".join("-" * w for w in widths)))
     for row in rows:
         print(fmt.format(*(str(c) for c in row)))
 
@@ -184,17 +206,17 @@ def print_table(rows: Iterable[Tuple[str, ...]], headers: Tuple[str, ...]) -> No
 # ---------------------------------------------------------------------------
 
 _PROGRESS_BAR_FORMAT = (
-    '{desc:<24} {percentage:5.1f}%|{bar}| {n_fmt}/{total_fmt} '
-    '[{elapsed}<{remaining}, {rate_fmt}]'
+    "{desc:<24} {percentage:5.1f}%|{bar}| {n_fmt}/{total_fmt} "
+    "[{elapsed}<{remaining}, {rate_fmt}]"
 )
 
 
 @contextlib.contextmanager
 def progress(
-    total: int,
+    total: Union[int, None] = None,
     *,
-    desc: str = 'progress',
-    unit: str = 'it',
+    desc: str = "progress",
+    unit: str = "it",
     leave: bool = True,
 ) -> Iterator[tqdm]:
     """Context-managed tqdm progress bar with logging interop.
@@ -221,7 +243,7 @@ def progress(
     root_level = logging.getLogger().level
 
     bar = tqdm(
-        total=total or None,
+        total=total,
         desc=desc,
         unit=unit,
         leave=leave,

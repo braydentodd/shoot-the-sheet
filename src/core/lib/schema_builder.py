@@ -27,7 +27,8 @@ def _column_in_table(col_meta: Dict[str, Any], table_name: str) -> bool:
     """Whether a DB_COLUMNS entry contributes to *table_name*.
 
     Supports the ``'all'`` wildcard, which means the column belongs to
-    every table.
+    every table.  Staging tables must be declared explicitly in each
+    column's ``tables`` list.
     """
     tables = col_meta.get("tables", [])
     if isinstance(tables, str):
@@ -377,6 +378,9 @@ def ensure_league_profile(league_key: str, conn=None) -> Dict[str, List[str]]:
     if own:
         conn = get_db_connection()
 
+    leagues_meta = TABLES["leagues"]
+    leagues_schema = leagues_meta["schema"]
+
     actions: Dict[str, List[str]] = {}
     try:
         with conn.cursor() as cur:
@@ -397,10 +401,11 @@ def ensure_league_profile(league_key: str, conn=None) -> Dict[str, List[str]]:
             if not vals:
                 raise ValueError(f"No seedable columns found for league {league_key!r}")
 
-            constraints = TABLES["leagues"].get("unique_constraints")
+            constraints = leagues_meta.get("unique_constraints")
             conflict_cols = constraints[0] if constraints else ["code"]
-            _insert_row(cur, "profiles", "leagues", vals, conflict_cols)
-            actions["profiles.leagues"] = [f"seeded ({', '.join(sorted(vals.keys()))})"]
+            _insert_row(cur, leagues_schema, "leagues", vals, conflict_cols)
+            qualified = f"{leagues_schema}.leagues"
+            actions[qualified] = [f"seeded ({', '.join(sorted(vals.keys()))})"]
 
         conn.commit()
         return actions
@@ -464,6 +469,90 @@ def _topological_table_order() -> List[Tuple[str, Dict[str, Any]]]:
     return ordered
 
 
+def ensure_countries(conn=None) -> Dict[str, int]:
+    """Seed ``profiles.countries`` from the COUNTRIES registry.
+
+    Inserts new country codes, updates existing ones, and deletes rows
+    whose codes are no longer in the registry (config-driven pruning).
+
+    Returns ``{'inserted': n, 'updated': n, 'deleted': n}``.
+    """
+    from src.core.definitions.countries import COUNTRIES
+
+    countries_meta = TABLES["countries"]
+    countries_schema = countries_meta["schema"]
+    countries_table = f"{countries_schema}.countries"
+
+    own = conn is None
+    if own:
+        conn = get_db_connection()
+
+    result = {"inserted": 0, "updated": 0, "deleted": 0}
+    try:
+        with conn.cursor() as cur:
+            # Delete countries no longer in the registry
+            cur.execute(f"SELECT code FROM {countries_table}")
+            existing = {row[0] for row in cur.fetchall()}
+            to_delete = existing - set(COUNTRIES.keys())
+            if to_delete:
+                cur.execute(
+                    f"DELETE FROM {countries_table} WHERE code = ANY(%s)",
+                    (list(to_delete),),
+                )
+                result["deleted"] = cur.rowcount
+                logger.info(
+                    "Pruned %d countries no longer in registry: %s",
+                    result["deleted"],
+                    sorted(to_delete),
+                )
+
+            # Upsert current country definitions in two passes to handle
+            # self-referencing FK (sovereign_country references countries.code).
+            # Pass 1: insert all countries without sovereign codes.
+            for code, cfg in COUNTRIES.items():
+                cur.execute(
+                    f"""
+                    INSERT INTO {countries_table} (code, name)
+                    VALUES (%s, %s)
+                    ON CONFLICT (code) DO UPDATE
+                       SET name = EXCLUDED.name,
+                           updated_at = NOW()
+                    """,
+                    (code, cfg.get("name", "")),
+                )
+                if cur.rowcount:
+                    result["inserted" if code not in existing else "updated"] += 1
+
+            # Pass 2: set sovereign_country references now that all rows exist.
+            for code, cfg in COUNTRIES.items():
+                sovereign = cfg.get("sovereign")
+                if sovereign:
+                    cur.execute(
+                        f"UPDATE {countries_table} SET sovereign_country = %s, updated_at = NOW() WHERE code = %s",
+                        (sovereign, code),
+                    )
+                else:
+                    cur.execute(
+                        f"UPDATE {countries_table} SET sovereign_country = NULL, updated_at = NOW() WHERE code = %s",
+                        (code,),
+                    )
+
+        conn.commit()
+        logger.info(
+            "Countries: %d inserted, %d updated, %d deleted",
+            result["inserted"],
+            result["updated"],
+            result["deleted"],
+        )
+        return result
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        if own:
+            conn.close()
+
+
 def bootstrap_schema(
     league_key: str,
     conn=None,
@@ -502,6 +591,11 @@ def bootstrap_schema(
                     logger.info("Table %s: %s", qualified, ", ".join(acts))
 
         actions.update(ensure_league_profile(league_key, conn=conn))
+        country_result = ensure_countries(conn=conn)
+        countries_meta = TABLES["countries"]
+        actions[f"{countries_meta['schema']}.countries"] = [
+            f"seeded ({country_result['inserted']} new, {country_result['updated']} updated, {country_result['deleted']} deleted)"
+        ]
 
         if own:
             conn.commit()

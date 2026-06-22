@@ -22,11 +22,13 @@ Subcommand phases (etl):
 """
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 import logging
 import sys
 
+from src.core.lib.logging import setup_logging
 from src.core.lib.terminal import (
     HelpFormatter,
     make_base_parser,
@@ -34,7 +36,6 @@ from src.core.lib.terminal import (
     print_summary,
     style,
 )
-from src.core.lib.logging import setup_logging
 from src.etl.cli import add_subparser as add_etl_subparser
 from src.etl.orchestrator import run_etl
 from src.publish.cli import add_subparser as add_publish_subparser
@@ -47,13 +48,14 @@ logger = logging.getLogger(__name__)
 # Top-level parser
 # ---------------------------------------------------------------------------
 
+
 def _build_parser():
     root = make_base_parser(
-        prog='python -m src.cli',
-        description='Shoot the Sheet -- data pipeline CLI.',
+        prog="python -m src.cli",
+        description="Shoot the Sheet -- data pipeline CLI.",
     )
     root.formatter_class = HelpFormatter
-    subparsers = root.add_subparsers(dest='pipeline', metavar='PIPELINE')
+    subparsers = root.add_subparsers(dest="pipeline", metavar="PIPELINE")
     subparsers.required = True
     add_etl_subparser(subparsers)
     add_publish_subparser(subparsers)
@@ -64,77 +66,78 @@ def _build_parser():
 # Dispatch handlers
 # ---------------------------------------------------------------------------
 
+
 def _run_etl(args) -> int:
     from src.etl.lib.config_validation import validate_all
 
-    print_banner('Shoot the Sheet -- ETL', f'phase={args.phase}  league={args.league or "all"}')
+    print_banner("Shoot the Sheet -- ETL", f"league={args.league or 'all'}")
     print_summary(
         {
-            'phase':       args.phase,
-            'league':      args.league or 'all',
+            "league": args.league or "all",
         },
-        title='Run parameters',
+        title="Run parameters",
     )
 
     try:
         validate_all()
     except RuntimeError as exc:
-        logger.error('Config validation failed: %s', exc)
+        logger.error("Config validation failed: %s", exc)
         return 2
 
     try:
         run_etl(
             league_key=args.league,
-            phase=args.phase,
         )
         return 0
     except KeyboardInterrupt:
-        logger.warning('Interrupted by user.')
+        logger.warning("Interrupted by user.")
         return 130
     except Exception:
-        logger.exception('ETL run failed.')
+        logger.exception("ETL run failed.")
         return 1
 
 
 def _run_publish(args) -> int:
-    from src.publish.lib.config_validation import validate_all
     from src.publish.destinations.google_sheets.config_exporter import export_config
+    from src.publish.lib.config_validation import validate_all
 
     league = args.league.lower()
-    historical_config = {'mode': 'seasons', 'value': args.historical_timeframe}
+    historical_config = {"mode": "seasons", "value": args.historical_timeframe}
     destination = args.destination
 
     print_banner(
-        'Shoot the Sheet -- Publish',
-        f'league={league}  stat_rate={args.stat_rate}  data_only={args.data_only}  destination={destination}',
+        "Shoot the Sheet -- Publish",
+        f"league={league}  stat_rate={args.stat_rate}  data_only={args.data_only}  destination={destination}",
     )
     print_summary(
         {
-            'league':             league,
-            'stat_rate':          args.stat_rate,
-            'priority_sheet':       args.sheet or '(none)',
-            'historical_seasons': args.historical_timeframe,
-            'data_only':          args.data_only,
-            'show_advanced':      args.show_advanced,
-            'export_config_only': args.export_config,
-            'destination':        destination,
+            "league": league,
+            "stat_rate": args.stat_rate,
+            "priority_sheet": args.sheet or "(none)",
+            "historical_seasons": args.historical_timeframe,
+            "data_only": args.data_only,
+            "show_advanced": args.show_advanced,
+            "export_config_only": args.export_config,
+            "destination": destination,
         },
-        title='Run parameters',
+        title="Run parameters",
     )
 
     try:
         validate_all()
     except RuntimeError as exc:
-        logger.error('Config validation failed: %s', exc)
+        logger.error("Config validation failed: %s", exc)
         return 2
 
     # Apps Script config export is Google Sheets-specific
     if args.export_config and not args.skip_config_export:
-        if destination != 'google_sheets':
-            logger.error('--export-config is only supported for google_sheets destination')
+        if destination != "google_sheets":
+            logger.error(
+                "--export-config is only supported for google_sheets destination"
+            )
             return 2
         path = export_config(league)
-        logger.info('Config exported to %s', path)
+        logger.info("Config exported to %s", path)
         return 0
 
     try:
@@ -149,10 +152,10 @@ def _run_publish(args) -> int:
             destination=destination,
         )
     except KeyboardInterrupt:
-        logger.warning('Interrupted by user.')
+        logger.warning("Interrupted by user.")
         return 130
     except Exception:
-        logger.exception('Publish run failed.')
+        logger.exception("Publish run failed.")
         return 1
     return 0
 
@@ -160,6 +163,7 @@ def _run_publish(args) -> int:
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 
 def main() -> int:
     parser = _build_parser()
@@ -170,10 +174,10 @@ def main() -> int:
 
     setup_logging(verbose=args.verbose, quiet=args.quiet)
 
-    if args.pipeline == 'etl':
+    if args.pipeline == "etl":
         return _run_etl(args)
     return _run_publish(args)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())

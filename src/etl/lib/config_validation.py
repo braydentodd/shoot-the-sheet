@@ -7,10 +7,9 @@ and source structure checks.  Uses the generic validation engine from
 
 Schemas are co-located with their declarative data:
 
-  -   schema constants     -> src/core/definitions/
-  -                                      -> src/core/definitions/columns.py
-  - OPERATIONAL_TABLES_SCHEMA                             -> src/core/definitions/tables.py
-  - DATASETS_SCHEMA, SEASON_TYPES_SCHEMA, API_CONFIG_SCHEMA -> src/etl/sources/<source>/config.py
+  -   schema constants     -> src/core/definitions/schema.py
+  -   column definitions   -> src/core/definitions/db_columns.py
+  -   source config        -> src/etl/sources/<source>/config.py
 
 Add a new config?  Define a schema dict next to the data, then register it
 in :func:`validate_config`.
@@ -30,9 +29,12 @@ logger = logging.getLogger(__name__)
 VALID_TRANSFORMS = {
     "safe_int",
     "safe_str",
+    "null_if_zero",
     "parse_height",
     "parse_birthdate",
     "format_season",
+    "normalize_name",
+    "match_country",
 }
 
 

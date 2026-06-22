@@ -30,7 +30,9 @@ from typing import Any, Callable, Dict, List, Tuple, Union
 from psycopg2.extras import RealDictCursor
 
 from src.core.definitions.leagues import LEAGUES
+from src.core.definitions.schema import SEQUENCES, TABLES
 from src.core.lib.leagues_resolver import (
+    _league_or_raise,
     get_all_canonical_season_types,
     get_current_season,
     get_regular_season_types,
@@ -40,10 +42,9 @@ from src.core.lib.logging import phase_marker
 from src.core.lib.postgres import db_connection, quote_col
 from src.core.lib.schema_builder import bootstrap_schema
 from src.core.lib.season_resolver import parse_season_end_year
-from src.core.lib.terminal import progress
+from src.etl.definitions.datasets import DATASETS
 from src.etl.definitions.pipeline import (
     PIPELINE_PHASES,
-    VALID_ETL_PHASES,
 )
 from src.etl.definitions.sources import SOURCES
 from src.etl.lib.call_groups import build_call_groups
@@ -55,26 +56,12 @@ from src.etl.lib.coverage_tracker import (
     prune_coverages,
 )
 from src.etl.lib.executor import ExecutionContext, execute_group
-from src.etl.lib.load import _resolve_league_id
-from src.etl.lib.progress_tracker import (
-    complete_run,
-    fail_run,
-    mark_group_completed,
-    mark_group_failed,
-    mark_group_started,
-    resolve_work,
-    update_run_completed_groups,
-)
+from src.etl.lib.load import _resolve_league_id, _table_for_scope
 from src.etl.lib.season_detector import detect_active_season_types
+from src.etl.lib.source_resolver import get_season_type_wire_name
 from src.etl.sources.registry import get_source_modules
 
 logger = logging.getLogger(__name__)
-
-
-VALID_PHASES = set(VALID_ETL_PHASES)
-
-
-OPS_SCHEMA = "ops"
 
 
 # ============================================================================
@@ -161,85 +148,50 @@ def _run_groups(
                 db_schema=league_key,
                 source_key=source_key,
                 api_fetcher=make_fetcher(
-                    league_key, season_end_year, season_type_name, entity
+                    league_key,
+                    season_end_year,
+                    season_type_name,
+                    entity,
+                    identity_key=source_key,
                 ),
                 team_ids=team_ids,
                 max_consecutive_failures=api_config.get("max_consecutive_failures", 5),
                 id_aliases=api_field_names.get("id_aliases", {}),
             )
 
-            with db_connection() as conn:
-                league_id = _resolve_league_id(conn, league_key)
-                run_process_id, work_items = resolve_work(
-                    conn,
-                    OPS_SCHEMA,
-                    entity,
-                    season,
-                    season_type,
-                    groups,
-                    True,
-                    league_id=league_id,
-                    identity=source_key,
-                )
+            entity_rows = 0
+            failed_before = len(failed)
+            succeeded_groups: List[Dict[str, Any]] = []
 
-                entity_rows = 0
-                failed_before = len(failed)
-                succeeded_groups: List[Dict[str, Any]] = []
-                bar_desc = f"{scope}/{entity}/{season}"
+            for group in groups:
                 try:
-                    with progress(
-                        total=len(work_items),
-                        desc=bar_desc,
-                        unit="group",
-                        leave=False,
-                    ) as bar:
-                        for group, progress_id in work_items:
-                            bar.set_postfix_str(group["dataset"], refresh=False)
-                            mark_group_started(conn, OPS_SCHEMA, progress_id)
-                            try:
-                                rows = execute_group(group, ctx, failed, conn=conn)
-                                entity_rows += rows
-                                mark_group_completed(
-                                    conn,
-                                    OPS_SCHEMA,
-                                    progress_id,
-                                    rows,
-                                    dataset=group.get("dataset"),
-                                    tier=group.get("tier"),
-                                )
-                                succeeded_groups.append(group)
-                            except Exception as exc:
-                                logger.exception(
-                                    "Group %s failed: %s",
-                                    group["dataset"],
-                                    exc,
-                                )
-                                mark_group_failed(
-                                    conn, OPS_SCHEMA, progress_id, str(exc)
-                                )
-                                failed.append(
-                                    {
-                                        "dataset": group["dataset"],
-                                        "error": str(exc),
-                                    }
-                                )
-                            bar.update(1)
-
-                    total_rows += entity_rows
-                    update_run_completed_groups(conn, OPS_SCHEMA, run_process_id)
-                    complete_run(conn, OPS_SCHEMA, run_process_id)
-                    if on_entity_finished is not None:
-                        on_entity_finished(
-                            entity,
-                            season,
-                            succeeded_groups,
-                            entity_rows,
-                            len(failed) > failed_before,
-                            conn,
-                        )
+                    rows = execute_group(group, ctx, failed)
+                    entity_rows += rows
+                    succeeded_groups.append(group)
                 except Exception as exc:
-                    fail_run(conn, OPS_SCHEMA, run_process_id, str(exc))
-                    raise
+                    logger.exception(
+                        "Group %s failed: %s",
+                        group["dataset"],
+                        exc,
+                    )
+                    failed.append(
+                        {
+                            "dataset": group["dataset"],
+                            "error": str(exc),
+                        }
+                    )
+
+            total_rows += entity_rows
+            if on_entity_finished is not None:
+                with db_connection() as conn:
+                    on_entity_finished(
+                        entity,
+                        season,
+                        succeeded_groups,
+                        entity_rows,
+                        len(failed) > failed_before,
+                        conn,
+                    )
 
     return total_rows
 
@@ -251,19 +203,25 @@ def _run_groups(
 
 def _get_role_datasets(role: str) -> Dict[str, List[str]]:
     """Return ``{identity_key: [dataset_name, ...]}`` for a pipeline role."""
-    from src.etl.definitions.datasets import DATASETS
-
     result: Dict[str, List[str]] = {}
     for identity_key, datasets in DATASETS.items():
         for ds_name, ds_def in datasets.items():
-            if ds_def.get("pipeline_role") == role:
+            if ds_def.get("role") == role:
                 result.setdefault(identity_key, []).append(ds_name)
     return result
 
 
-def _get_external_sources(league_key: str) -> List[str]:
-    """Return all source keys for a league from SOURCES."""
-    return [sk for sk, meta in SOURCES.items() if league_key in meta.get("leagues", {})]
+def _load_team_ids(league_key: str) -> Dict[str, int]:
+    """Return ``{identity: int_id}`` for teams in staging, used by per-team API calls."""
+    table = _table_for_scope("team", "staging")
+    with db_connection() as conn:
+        league_val = _resolve_league_id(conn, league_key)
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT identity FROM {table} WHERE league = %s",
+                (league_val,),
+            )
+            return {r[0]: int(r[0]) for r in cur.fetchall() if r[0] is not None}
 
 
 # ---------------------------------------------------------------------------
@@ -302,8 +260,11 @@ def _discover_entities(
     season_type: str,
     season_type_name: str,
     failed: List[Dict[str, Any]],
+    team_ids: Dict[str, int] = None,
 ) -> int:
     """Generic entity discovery handler. Calls datasets assigned to *role*."""
+    if team_ids is None:
+        team_ids = {}
     total_rows = 0
     dataset_names = _get_role_datasets(role).get(identity_key, [])
     if not dataset_names:
@@ -318,25 +279,31 @@ def _discover_entities(
                 role, f"dataset={identity_key}.{dataset_name} source={source_key}"
             )
         )
-        total_rows += _run_groups(
-            scope="rosters" if role == "player_discoverer" else "profiles",
-            entities=entities,
-            seasons=[season],
-            season_type=season_type,
-            season_type_name=season_type_name,
-            team_ids={},
-            failed=failed,
-            league_key=league_key,
-            source_key=identity_key,
-            api_field_names=config_mod.API_FIELD_NAMES
-            if hasattr(config_mod, "API_FIELD_NAMES")
-            else {},
-            api_config=config_mod.API_CONFIG
-            if hasattr(config_mod, "API_CONFIG")
-            else {},
-            make_fetcher=client_mod.make_fetcher,
-            in_season=True,
+        # Player discovery extracts both profile columns (name, height, etc.)
+        # and roster relationships (team_id -> player_id).  Run both scopes.
+        scopes = (
+            ["profiles", "rosters"] if role == "player_discoverer" else ["profiles"]
         )
+        for scope in scopes:
+            total_rows += _run_groups(
+                scope=scope,
+                entities=entities,
+                seasons=[season],
+                season_type=season_type,
+                season_type_name=season_type_name,
+                team_ids=team_ids,
+                failed=failed,
+                league_key=league_key,
+                source_key=identity_key,
+                api_field_names=config_mod.API_FIELD_NAMES
+                if hasattr(config_mod, "API_FIELD_NAMES")
+                else {},
+                api_config=config_mod.API_CONFIG
+                if hasattr(config_mod, "API_CONFIG")
+                else {},
+                make_fetcher=client_mod.make_fetcher,
+                in_season=True,
+            )
     return total_rows
 
 
@@ -367,7 +334,6 @@ def _maintain_stats(
     sources (e.g. ``nba_api`` and ``pbp_stats`` within the same identity)
     each use their own API fetcher.
     """
-    from src.etl.definitions.datasets import DATASETS
     from src.etl.lib.coverage_tracker import (
         is_group_coverage_current,
         upsert_group_coverage,
@@ -378,10 +344,13 @@ def _maintain_stats(
     if not dataset_names:
         return 0
 
+    # Load team IDs for per-team player stats calls.
+    team_ids = _load_team_ids(league_key)
+
     is_current = season
 
     for season_label in season_range:
-        for entity in ["team", "player"]:
+        for entity in ["team", "team_opp", "player", "player_opp", "player_on"]:
             groups = build_call_groups(
                 entity,
                 season_label,
@@ -472,7 +441,9 @@ def _maintain_stats(
                     seasons=[season_label],
                     season_type=season_type,
                     season_type_name=season_type_name,
-                    team_ids={},
+                    team_ids=team_ids
+                    if entity in ("player", "player_opp", "player_on")
+                    else {},
                     failed=failed,
                     league_key=league_key,
                     source_key=identity_key,
@@ -504,8 +475,11 @@ def _maintain_profiles(
     season_type: str,
     season_type_name: str,
     failed: List[Dict[str, Any]],
+    team_ids: Dict[str, int] = None,
 ) -> int:
     """Update profile fields for entities already in staging."""
+    if team_ids is None:
+        team_ids = {}
     total_rows = 0
     dataset_names = _get_role_datasets("profile_maintainer").get(identity_key, [])
     if not dataset_names:
@@ -527,7 +501,7 @@ def _maintain_profiles(
                 seasons=[season],
                 season_type=season_type,
                 season_type_name=season_type_name,
-                team_ids={},
+                team_ids=team_ids,
                 failed=failed,
                 league_key=league_key,
                 source_key=identity_key,
@@ -544,6 +518,8 @@ def _maintain_profiles(
     return total_rows
 
 
+# ============================================================================
+# ENTITY MATCHING & UPSERT
 # ---------------------------------------------------------------------------
 # match_entities / upsert_entities (stubs — user handles matching logic)
 # ---------------------------------------------------------------------------
@@ -555,7 +531,7 @@ def _match_entities(
 ) -> int:
     """Resolve staged identities to existing sts_ids.
 
-    For each staging row, look up (identity, identity_code, entity) in
+    For each staging row, look up (identity, entity) in
     ``identities_entities``.  If found, set ``matched_sts_id``.  If not
     found, leave NULL for manual review.
 
@@ -565,9 +541,13 @@ def _match_entities(
     logger.info(phase_marker("match_entities"))
     total_matched = 0
 
+    # Derive the identities_entities table from the schema registry.
+    ie_meta = TABLES["identities_entities"]
+    identities_table = f"{ie_meta['schema']}.identities_entities"
+
     staging_entities = [
-        ("player", "profiles.players_staging"),
-        ("team", "profiles.teams_staging"),
+        ("player", _table_for_scope("player", "staging")),
+        ("team", _table_for_scope("team", "staging")),
     ]
 
     with db_connection() as conn:
@@ -576,9 +556,8 @@ def _match_entities(
                 sql = f"""
                     UPDATE {staging_table} s
                        SET matched_sts_id = ie.entity_id
-                      FROM rosters.identities_entities ie
-                     WHERE s.identity = ie.identity
-                       AND s.identity_code = ie.code
+                      FROM {identities_table} ie
+                     WHERE s.identity = ie.code
                        AND ie.entity = %s
                        AND s.matched_sts_id IS NULL
                 """
@@ -598,37 +577,36 @@ def _upsert_entities(
     league_key: str,
     failed: List[Dict[str, Any]],
 ) -> int:
-    """Promote matched/reviewed staging rows to core tables.
+    """Promote staged rows to core tables.
 
-    Only rows with ``matched_sts_id IS NOT NULL`` or ``reviewed = True``
-    are promoted.  Promoted rows are deleted from staging.  Unmatched /
-    unreviewed rows remain for manual review.
+    On cold start (no ``identities_entities`` entries for this league),
+    all staged entities with a ``name`` are auto-promoted.  On subsequent
+    runs, only rows with ``matched_sts_id IS NOT NULL`` or ``reviewed = True``
+    are promoted.  Unmatched / unreviewed rows remain for manual review.
     """
     logger.info(phase_marker("upsert_entities"))
     total_promoted = 0
 
-    staging_tables = {
-        "player": "profiles.players_staging",
-        "team": "profiles.teams_staging",
-    }
-    core_tables = {
-        "player": "profiles.players",
-        "team": "profiles.teams",
-    }
+    # Derive the identities_entities table reference from the schema registry.
+    ie_meta = TABLES["identities_entities"]
+    identities_table = f"{ie_meta['schema']}.identities_entities"
+    # Core roster tables used during promotion.
+    teams_players_table = _table_for_scope("player", "rosters")
+    countries_players_table = _table_for_scope("country", "rosters")
+    leagues_teams_table = _table_for_scope("team", "rosters")
 
     with db_connection() as conn:
         for entity in ["team", "player"]:
-            staging_table = staging_tables[entity]
-            core_table = core_tables[entity]
+            staging_table = _table_for_scope(entity, "staging")
+            core_table = _table_for_scope(entity, "profiles")
 
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                # Read promotable rows
                 cur.execute(
                     f"""
                     SELECT *
                       FROM {staging_table}
                      WHERE (matched_sts_id IS NOT NULL OR reviewed = True)
-                       AND league_code = %s
+                       AND league = %s
                     """,
                     (league_key,),
                 )
@@ -638,26 +616,29 @@ def _upsert_entities(
                 continue
 
             # Separate: rows with matched_sts_id (existing entity) vs
-            # reviewed=True but no sts_id (new entity)
+            # new entities (cold start or reviewed)
             existing = []
             new_entities = []
             for row_data in promotable:
                 if row_data.get("matched_sts_id"):
                     existing.append(row_data)
-                elif row_data.get("reviewed"):
+                else:
                     new_entities.append(row_data)
 
-            # Create new sts_ids for reviewed-but-unmatched entities
+            # Create new sts_ids for new entities
             if new_entities:
                 with conn.cursor() as cur:
+                    sts_seq = next(
+                        k for k, v in SEQUENCES.items() if v["schema"] == "profiles"
+                    )
                     for row_data in new_entities:
-                        cur.execute("SELECT nextval('profiles.sts_id_seq')")
+                        cur.execute(f"SELECT nextval('{sts_seq}')")
                         new_id = cur.fetchone()[0]
                         row_data["matched_sts_id"] = new_id
                         # Register identity mapping
                         cur.execute(
-                            """
-                            INSERT INTO rosters.identities_entities
+                            f"""
+                            INSERT INTO {identities_table}
                                 (identity, code, entity, entity_id)
                             VALUES (%s, %s, %s, %s)
                             ON CONFLICT (identity, code, entity) DO UPDATE
@@ -665,7 +646,7 @@ def _upsert_entities(
                             """,
                             (
                                 row_data["identity"],
-                                row_data["identity_code"],
+                                row_data["identity"],
                                 entity,
                                 new_id,
                             ),
@@ -719,26 +700,25 @@ def _upsert_entities(
                         sts_id = row_data.get("matched_sts_id")
                         if sts_id not in promoted_ids:
                             continue
-                        team_identity = row_data.get("team_identity_code")
+                        team_identity = row_data.get("team_identity")
                         if team_identity:
                             cur.execute(
-                                """
+                                f"""
                                 SELECT entity_id
-                                  FROM rosters.identities_entities
-                                 WHERE identity = %s
-                                   AND code = %s
+                                  FROM {identities_table}
+                                 WHERE code = %s
                                    AND entity = 'team'
                                 """,
-                                (row_data["identity"], team_identity),
+                                (team_identity,),
                             )
                             team_row = cur.fetchone()
                             if team_row:
                                 cur.execute(
-                                    """
-                                    INSERT INTO rosters.teams_players
-                                        (league_code, team_id, player_id)
+                                    f"""
+                                    INSERT INTO {teams_players_table}
+                                        (league, team_id, player_id)
                                     VALUES (%s, %s, %s)
-                                    ON CONFLICT (league_code, team_id, player_id)
+                                    ON CONFLICT (league, team_id, player_id)
                                     DO NOTHING
                                     """,
                                     (league_key, team_row[0], sts_id),
@@ -746,17 +726,17 @@ def _upsert_entities(
                         # Country resolution: country_code was resolved via
                         # match_country transform during extraction.
                         # Write to countries_players if present.
-                        country = row_data.get("country_code")
+                        country = row_data.get("country")
                         if country:
                             cur.execute(
-                                """
-                                INSERT INTO rosters.countries_players
-                                    (player_id, country_code)
+                                f"""
+                                INSERT INTO {countries_players_table}
+                                    (country, player_id)
                                 VALUES (%s, %s)
-                                ON CONFLICT (player_id, country_code)
+                                ON CONFLICT (country, player_id)
                                 DO NOTHING
                                 """,
-                                (sts_id, country),
+                                (country, sts_id),
                             )
 
             # League-team relationships for teams
@@ -764,11 +744,11 @@ def _upsert_entities(
                 with conn.cursor() as cur:
                     for sts_id in promoted_ids:
                         cur.execute(
-                            """
-                            INSERT INTO rosters.leagues_teams
-                                (league_code, team_id)
+                            f"""
+                            INSERT INTO {leagues_teams_table}
+                                (league, team_id)
                             VALUES (%s, %s)
-                            ON CONFLICT (league_code, team_id) DO NOTHING
+                            ON CONFLICT (league, team_id) DO NOTHING
                             """,
                             (league_key, sts_id),
                         )
@@ -801,67 +781,69 @@ def _upsert_entities(
 
 def run_etl(
     league_key: Union[str, None] = None,
-    phase: str = "full",
 ) -> None:
-    """Run one or more ETL phases for a league or all leagues.
+    """Run all ETL phase clusters for a league or all leagues.
 
     Args:
-        league_key:      Registered league key (e.g. ``'nba'``). If None,
-                         runs all leagues in sorted order.
-        phase:           Execution phase (see VALID_PHASES).
+        league_key:  Registered league key (e.g. ``'nba'``). If None,
+                     runs all leagues in sorted order.
 
     Caller (the CLI) is expected to have already configured logging and run
     config validation; this function never touches stdout directly.
     """
-    if phase not in VALID_PHASES:
-        raise ValueError(
-            f"Invalid phase {phase!r}. Must be one of {sorted(VALID_PHASES)}"
-        )
+    clusters = ["execution_start", "per_identity", "execution_end"]
 
     # Multi-league execution
     if not league_key:
-        leagues_to_run = sorted(LEAGUES)
-        success_count = 0
-        fail_count = 0
-        failures = []
+        leagues_to_run = list(LEAGUES)
 
-        for lkey in leagues_to_run:
-            logger.info("=" * 80)
-            logger.info("Executing ETL for league: %s", lkey)
-            logger.info("=" * 80)
-            try:
-                run_etl(league_key=lkey, phase=phase)
-                success_count += 1
-            except KeyboardInterrupt:
-                logger.warning("Interrupted by user.")
-                raise
-            except Exception as exc:
-                logger.exception("ETL run failed for league %s.", lkey)
-                fail_count += 1
-                failures.append((lkey, str(exc)))
+        for cluster in clusters:
+            handlers = PIPELINE_PHASES.get(cluster, [])
+            if not handlers:
+                continue
 
-        if len(leagues_to_run) > 1:
             logger.info("=" * 80)
-            logger.info("Multi-League Run Summary:")
-            logger.info("  Total leagues: %d", len(leagues_to_run))
-            logger.info("  Successes:     %d", success_count)
-            logger.info("  Failures:      %d", fail_count)
-            if failures:
-                for league_key_failed, err in failures:
-                    logger.error("    - %s: %s", league_key_failed, err)
+            logger.info("Phase cluster: %s", cluster)
             logger.info("=" * 80)
-            if fail_count > 0:
-                raise RuntimeError(f"{fail_count} league(s) failed")
+
+            for lkey in leagues_to_run:
+                try:
+                    _run_league_phases(lkey, handlers, cluster, season_range=None)
+                except KeyboardInterrupt:
+                    logger.warning("Interrupted by user.")
+                    raise
+                except Exception as exc:
+                    logger.exception(
+                        "ETL run failed for league %s in cluster %s.", lkey, cluster
+                    )
         return
+
     if league_key not in LEAGUES:
         raise ValueError(
             f"Unknown league {league_key!r}. Registered: {sorted(LEAGUES)}"
         )
 
-    league_cfg = LEAGUES[league_key]
+    # Single-league path
+    for cluster in clusters:
+        handlers = PIPELINE_PHASES.get(cluster, [])
+        if not handlers:
+            continue
+        _run_league_phases(league_key, handlers, cluster)
+
+
+def _run_league_phases(
+    league_key: str,
+    handlers: List[str],
+    phase: str,
+    season_range: Union[List[str], None] = None,
+) -> int:
+    """Run per-league handlers for a single league. Returns total rows written."""
+    _league_or_raise(league_key)
     season = get_current_season(league_key)
-    season_range = get_retained_seasons(league_key, season)
+    if season_range is None:
+        season_range = get_retained_seasons(league_key, season)
     regular_canonical = get_regular_season_types(league_key)[0]
+    regular_wire = get_season_type_wire_name("nba_api", regular_canonical)
 
     logger.info(
         "ETL starting: league=%s phase=%s season=%s",
@@ -875,9 +857,7 @@ def run_etl(
     in_season = False
     active_types: List[str] = []
 
-    configured_handlers = PIPELINE_PHASES.get(phase, [])
-
-    for handler in configured_handlers:
+    for handler in handlers:
         if handler == "build_schema":
             logger.info(phase_marker("build_schema"))
             with db_connection() as conn:
@@ -895,14 +875,14 @@ def run_etl(
 
         elif handler in ("team_discoverer", "player_discoverer"):
             logger.info(phase_marker(handler))
-            # Run per identity per league
-            from src.etl.definitions.datasets import DATASETS
+            team_ids = (
+                _load_team_ids(league_key) if handler == "player_discoverer" else {}
+            )
 
             for identity_key in DATASETS:
                 role_datasets = _get_role_datasets(handler).get(identity_key, [])
                 if not role_datasets:
                     continue
-                # Determine source from the first dataset
                 source_key = DATASETS[identity_key][role_datasets[0]]["source"]
                 if league_key not in SOURCES[source_key].get("leagues", {}):
                     continue
@@ -919,13 +899,13 @@ def run_etl(
                     identity_key,
                     source_key,
                     regular_canonical,
-                    regular_canonical,
+                    regular_wire,
                     failed,
+                    team_ids=team_ids,
                 )
 
         elif handler == "stats_maintainer":
             logger.info(phase_marker("stats_maintainer", f"in_season={in_season}"))
-            from src.etl.definitions.datasets import DATASETS
 
             for identity_key in DATASETS:
                 role_datasets = _get_role_datasets(handler).get(identity_key, [])
@@ -941,14 +921,13 @@ def run_etl(
                     identity_key,
                     source_key,
                     regular_canonical,
-                    regular_canonical,
+                    regular_wire,
                     failed,
                     in_season=in_season,
                 )
 
         elif handler == "profile_maintainer":
             logger.info(phase_marker("profile_maintainer"))
-            from src.etl.definitions.datasets import DATASETS
 
             for identity_key in DATASETS:
                 role_datasets = _get_role_datasets(handler).get(identity_key, [])
@@ -957,14 +936,16 @@ def run_etl(
                 source_key = DATASETS[identity_key][role_datasets[0]]["source"]
                 if league_key not in SOURCES[source_key].get("leagues", {}):
                     continue
+                team_ids = _load_team_ids(league_key)
                 total_rows += _maintain_profiles(
                     league_key,
                     season,
                     identity_key,
                     source_key,
                     regular_canonical,
-                    regular_canonical,
+                    regular_wire,
                     failed,
+                    team_ids=team_ids,
                 )
 
         elif handler == "match_entities":

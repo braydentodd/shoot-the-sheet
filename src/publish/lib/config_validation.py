@@ -179,7 +179,7 @@ def _validate_field_prefixes(sheets_columns: dict) -> List[str]:
 
 
 def validate_config(league_key: str = None) -> List[str]:
-    from src.core.definitions.stats import STAT_RATES
+    from src.publish.definitions.stats import STAT_RATES
     from src.publish.definitions.view_columns import VIEW_COLUMNS
 
     errors: List[str] = []

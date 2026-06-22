@@ -63,7 +63,7 @@ SEASON_TYPES: Dict[str, SeasonTypeDef] = {
         "wire_name": "PlayIn",
         "min_season": "2020-21",
     },
-    "showcase": {
+    "showcase_cup": {
         "wire_name": "Showcase Cup",
         "min_season": "2022-23",
     },
@@ -116,8 +116,20 @@ API_CONFIG: ApiConfigDef = {
 # ============================================================================
 
 API_FIELD_NAMES: Dict[str, Dict[str, Any]] = {
-    "entity_id": {"player": "PLAYER_ID", "team": "TEAM_ID"},
-    "entity_name": {"player": "PLAYER_NAME", "team": "TEAM_NAME"},
+    "entity_id": {
+        "player": "PLAYER_ID",
+        "team": "TEAM_ID",
+        "player_opp": "PLAYER_ID",
+        "player_on": "PLAYER_ID",
+        "team_opp": "TEAM_ID",
+    },
+    "entity_name": {
+        "player": "PLAYER_NAME",
+        "team": "TEAM_NAME",
+        "player_opp": "PLAYER_NAME",
+        "player_on": "PLAYER_NAME",
+        "team_opp": "TEAM_NAME",
+    },
     "special_ids": {"person": "PERSON_ID"},
     "id_aliases": {"PLAYER_ID": ["PERSON_ID", "VS_PLAYER_ID"]},
 }

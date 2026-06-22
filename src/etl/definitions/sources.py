@@ -35,11 +35,5 @@ SOURCES: Dict[str, SourceDef] = {
             "WNBA": {"id": "10", "season_param_format": "EEEE"},
             "GLG": {"id": "20", "season_param_format": "SSSS-EE"},
         },
-    },
-    "pbp_stats": {
-        "leagues": {
-            "NBA": {"id": "nba", "season_param_format": "SSSS-EE"},
-            "WNBA": {"id": "wnba", "season_param_format": "EEEE"},
-        },
-    },
+    }
 }

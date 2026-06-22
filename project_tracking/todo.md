@@ -1,7 +1,9 @@
 Short term:
-- [ ] do since 2000 for stats?
+- [ ] review updated pipeline format
+- [ ] remove phase support in etl cli
 - [ ] implement shoot_the_sheet data source (with option of sheets or word source)
 - [ ] set up github actions
+- [ ] add draft eligibility columns?
 
 Long term:
 - [ ] redesign sheet layout for better visibility and new use-cases (more number context, more condensed, multi-team stats)

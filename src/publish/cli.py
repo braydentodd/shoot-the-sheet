@@ -7,9 +7,9 @@ modifying the main src/cli.py.
 """
 
 from src.core.definitions.leagues import LEAGUES
-from src.core.definitions.stats import STAT_RATES
 from src.core.lib.terminal import HelpFormatter
 from src.publish.definitions.destinations import DESTINATIONS
+from src.publish.definitions.stats import STAT_RATES
 
 
 def add_subparser(subparsers) -> None:

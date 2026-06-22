@@ -1,7 +1,7 @@
 """
 Shoot the Sheet - FK Resolver Helpers
 
-Shared helpers for resolving source IDs to internal database keys using the 
+Shared helpers for resolving source IDs to internal database keys using the
 table registry metadata.
 """
 
@@ -9,7 +9,6 @@ from typing import Any, Dict, Iterable, Tuple
 
 from src.core.definitions.schema import TABLES
 from src.core.lib.postgres import quote_col
-from src.etl.lib.source_resolver import get_source_id_column
 
 
 def load_fk_mapping(
@@ -20,24 +19,34 @@ def load_fk_mapping(
     source_key: str,
     source_ids: Iterable[Any] = None,
 ) -> Dict[str, int]:
-    """Return ``{str(source_id): target_id}`` dynamically for a referenced table."""
-    src_col = get_source_id_column(source_key)
+    """Return ``{str(source_id): target_id}`` via ``identities_entities``.
 
-    sql_base = (
-        f"SELECT {quote_col(src_col)}, {quote_col(ref_column)} "
-        f"FROM {ref_schema}.{ref_table}"
+    In the identity-based system, entity resolution goes through the
+    identities_entities table which maps ``(identity, code, entity)``
+    to ``entity_id`` (the internal ``sts_id``).
+    """
+    ie_meta = TABLES["identities_entities"]
+    ie_table = f"{ie_meta['schema']}.identities_entities"
+
+    # Derive entity from table name (e.g. "players" -> "player")
+    entity = ref_table.rstrip("s") if ref_table.endswith("s") else ref_table
+
+    sql = (
+        f"SELECT ie.code, ie.entity_id "
+        f"FROM {ie_table} ie "
+        f"WHERE ie.identity = %s AND ie.entity = %s"
     )
 
     with conn.cursor() as cur:
         if source_ids is None:
-            cur.execute(sql_base)
+            cur.execute(sql, (source_key, entity))
         else:
-            ids_list = [v for v in source_ids if v is not None]
+            ids_list = [str(v) for v in source_ids if v is not None]
             if not ids_list:
                 return {}
             cur.execute(
-                sql_base + f" WHERE {quote_col(src_col)} = ANY(%s)",
-                (ids_list,),
+                sql + f" AND ie.code = ANY(%s)",
+                (source_key, entity, ids_list),
             )
         return {str(row[0]): int(row[1]) for row in cur.fetchall()}
 
@@ -57,8 +66,7 @@ def resolve_fk_value_columns(
     meta = TABLES.get(table_name, {})
 
     fks_to_resolve = [
-        fk for fk in meta.get('foreign_keys', [])
-        if fk['strategy'] == 'profile_lookup'
+        fk for fk in meta.get("foreign_keys", []) if fk["strategy"] == "profile_lookup"
     ]
 
     if not fks_to_resolve:
@@ -66,16 +74,18 @@ def resolve_fk_value_columns(
 
     fk_maps: Dict[str, Dict[str, int]] = {}
     for fk in fks_to_resolve:
-        col = fk['column']
-        raw_values = [row.get(col) for row in rows.values() if row.get(col) is not None]
-        
+        col = fk["column"]
+        raw_values = [
+            str(row.get(col)) for row in rows.values() if row.get(col) is not None
+        ]
+
         fk_maps[col] = load_fk_mapping(
-            conn, 
-            ref_schema=fk['ref_schema'],
-            ref_table=fk['ref_table'], 
-            ref_column=fk['ref_column'],
-            source_key=source_key, 
-            source_ids=raw_values
+            conn,
+            ref_schema=fk["ref_schema"],
+            ref_table=fk["ref_table"],
+            ref_column=fk["ref_column"],
+            source_key=source_key,
+            source_ids=raw_values,
         )
 
     dropped = 0
@@ -84,7 +94,7 @@ def resolve_fk_value_columns(
         new_row = dict(row)
         ok = True
         for fk in fks_to_resolve:
-            col = fk['column']
+            col = fk["column"]
             raw = new_row.get(col)
             if raw is None:
                 continue

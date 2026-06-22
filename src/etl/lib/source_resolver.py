@@ -27,11 +27,6 @@ def get_identity_entities(identity_key: str) -> set:
     return entities
 
 
-def get_source_id_column(source_key: str) -> str:
-    """Return the source identity column name."""
-    return "source_id"
-
-
 def get_external_sources_for_league(league_key: str) -> list[str]:
     """Return sorted external source module keys available for a league."""
     from src.etl.definitions.datasets import DATASETS

@@ -4,8 +4,8 @@ import re
 import time
 from pathlib import Path
 
-from src.core.definitions.stats import STAT_RATES
 from src.publish.definitions.layout import SECTIONS_CONFIG
+from src.publish.definitions.stats import STAT_RATES
 from src.publish.definitions.view_columns import VIEW_COLUMNS
 from src.publish.destinations.google_sheets.config import GOOGLE_SHEETS_CONFIG
 from src.publish.lib.column_structure import build_sheet_columns, get_column_index

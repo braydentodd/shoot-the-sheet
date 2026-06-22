@@ -2,9 +2,9 @@ from dataclasses import dataclass
 from typing import Any, List, Tuple, Union
 
 from src.core.definitions.leagues import LEAGUES
-from src.core.definitions.stats import STAT_RATES
 from src.publish.definitions.layout import SECTIONS_CONFIG, SUBSECTIONS
 from src.publish.definitions.presentation import PRESENTATION_DEFAULTS
+from src.publish.definitions.stats import STAT_RATES
 from src.publish.definitions.view_columns import VIEW_COLUMNS
 
 
