@@ -14,7 +14,7 @@ Dataset metadata lives in the unified registry
 how to talk to the source itself.
 """
 
-from typing import Any, Dict, TypedDict, Union
+from typing import Any, Dict, TypedDict
 
 
 class ApiConfigDef(TypedDict):
@@ -28,21 +28,7 @@ class ApiConfigDef(TypedDict):
 
 
 # ============================================================================
-# RATE LIMITS
-# ============================================================================
-
-RATE_LIMITS: Dict[str, Union[float, int]] = {
-    "requests_per_second": 0.8,
-    "max_retries": 3,
-    "backoff_base": 30,
-    "timeout_default": 30,
-    "timeout_bulk": 120,
-    "max_consecutive_failures": 5,
-}
-
-
-# ============================================================================
-# API OPERATIONAL SETTINGS
+# API CONFIGURATION
 # ============================================================================
 
 REQUEST_HEADERS: Dict[str, str] = {
@@ -90,9 +76,6 @@ API_FIELD_NAMES: Dict[str, Dict[str, Any]] = {
     "entity_id": {
         "player": "PLAYER_ID",
         "team": "TEAM_ID",
-        "player_opp": "PLAYER_ID",
-        "player_on": "PLAYER_ID",
-        "team_opp": "TEAM_ID",
     },
     "id_aliases": {"PLAYER_ID": ["PERSON_ID", "VS_PLAYER_ID"]},
 }

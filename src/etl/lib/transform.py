@@ -7,10 +7,19 @@ The pipeline engine executes multi-step transformations defined in config.
 """
 
 import logging
+import re as _re
+import unicodedata
 from datetime import date, datetime
-from typing import Any, Callable, Dict, Literal, Union
+from typing import Any, Callable, Dict, Union
 
 from src.core.lib.math_evaluator import evaluate
+from src.etl.definitions.normalization import (
+    DIACRITICS,
+    STRIP_CHARACTERS,
+    UNICODE_DASHES,
+    UNICODE_QUOTES,
+    WORD_REPLACEMENTS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,11 +78,22 @@ def parse_height(height_str: Any) -> Union[int, None]:
 
 
 def parse_birthdate(date_str: Any) -> Union[date, None]:
-    """Parse birthdate string to date object. Tries multiple formats."""
+    """Parse birthdate string to date object. Tries common API formats."""
     if not date_str or date_str == "" or str(date_str).lower() in ("nan", "n", "none"):
         return None
-    raw = str(date_str).split(".")[0]  # strip fractional seconds
-    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d", "%m/%d/%Y"):
+    raw = str(date_str)
+    for fmt in (
+        "%Y-%m-%d",  # ISO date      "1998-03-14"
+        "%m/%d/%Y",  # US slash      "03/14/1998"
+        "%d/%m/%Y",  # UK slash      "14/03/1998"
+        "%b %d, %Y",  # Abbr month    "Mar 14, 1998"
+        "%B %d, %Y",  # Full month    "March 14, 1998"
+        "%b %d %Y",  # Abbr no-comma "Mar 14 1998"
+        "%B %d %Y",  # Full no-comma "March 14 1998"
+        "%d-%b-%Y",  # Day-abbr-year "14-Mar-1998"
+        "%d-%B-%Y",  # Day-full-year "14-March-1998"
+        "%d.%m.%Y",  # Dot format    "14.03.1998"
+    ):
         try:
             return datetime.strptime(raw, fmt).date()
         except ValueError:
@@ -96,96 +116,51 @@ def format_season(from_year: Any) -> Union[str, None]:
 # NAME NORMALIZATION
 # ============================================================================
 
-import re as _re
-import unicodedata
-
-_DIACRITIC_MAP = {
-    "ß": "ss",
-    "æ": "ae",
-    "œ": "oe",
-    "á": "a",
-    "à": "a",
-    "â": "a",
-    "ä": "a",
-    "ã": "a",
-    "å": "a",
-    "ā": "a",
-    "ç": "c",
-    "ć": "c",
-    "č": "c",
-    "é": "e",
-    "è": "e",
-    "ê": "e",
-    "ë": "e",
-    "ē": "e",
-    "í": "i",
-    "ì": "i",
-    "î": "i",
-    "ï": "i",
-    "ī": "i",
-    "ñ": "n",
-    "ń": "n",
-    "ň": "n",
-    "ó": "o",
-    "ò": "o",
-    "ô": "o",
-    "ö": "o",
-    "õ": "o",
-    "ø": "o",
-    "ō": "o",
-    "ú": "u",
-    "ù": "u",
-    "û": "u",
-    "ü": "u",
-    "ū": "u",
-    "ý": "y",
-    "ÿ": "y",
-    "š": "s",
-    "ś": "s",
-    "ž": "z",
-    "ź": "z",
-    "ż": "z",
-    "đ": "d",
-    "ð": "d",
-    "ł": "l",
-    "ř": "r",
-    "ț": "t",
-    "ţ": "t",
-}
-
-_WORD_REPLACE = {"Saint": "St", "Sainte": "Ste", "Mount": "Mt"}
-
 
 def _normalize_name(value: Any) -> Union[str, None]:
-    """Normalize an entity name according to matching rules."""
+    """Normalize an entity name according to matching rules.
+
+    Pipeline order (per ``project_tracking/matching.md``):
+        1. Unicode NFC normalization
+        2. Diacritic → ASCII
+        3. Unicode quotes → ASCII, Unicode dashes → ASCII hyphen
+        4. Standalone word replacements  (surrounded by whitespace or
+           start/end of string — per spec §5)
+        5. Strip specified characters
+        6. Trim / collapse whitespace
+    """
     if not value:
         return None
     text = str(value)
+
     # 1. Unicode NFC
     text = unicodedata.normalize("NFC", text)
-    # 2. Convert diacritics
-    result = []
-    for ch in text:
-        result.append(_DIACRITIC_MAP.get(ch, ch))
-    text = "".join(result)
-    # 3. Normalize apostrophes and hyphens
-    text = (
-        text.replace("\u2018", "'")
-        .replace("\u2019", "'")
-        .replace("\u201c", '"')
-        .replace("\u201d", '"')
-    )
-    text = text.replace("\u2013", "-").replace("\u2014", "-")
-    # 4. Standalone word replacements
-    text = _re.sub(
-        r"\b(Saint|Sainte|Mount)\b",
-        lambda m: _WORD_REPLACE.get(m.group(1), m.group(1)),
-        text,
-    )
-    # 5. Remove periods and commas
-    text = text.replace(".", "").replace(",", "")
-    # 6. Trim whitespace, collapse internal whitespace
+
+    # 2. Diacritic → ASCII
+    text = "".join(DIACRITICS.get(ch, ch) for ch in text)
+
+    # 3. Unicode quotes → ASCII, Unicode dashes → ASCII hyphen
+    for old, new in UNICODE_QUOTES.items():
+        text = text.replace(old, new)
+    for old, new in UNICODE_DASHES.items():
+        text = text.replace(old, new)
+
+    # 4. Standalone word replacements — "standalone" means surrounded by
+    #    whitespace or start/end of string on each side (spec §5).
+    #    Using (?<!\S) / (?!\S) instead of \b avoids matching inside
+    #    hyphenated or punctuated compounds like "Saint-Louis".
+    if WORD_REPLACEMENTS:
+        words = "|".join(_re.escape(w) for w in WORD_REPLACEMENTS)
+        pattern = rf"(?<!\S)({words})(?!\S)"
+        text = _re.sub(pattern, lambda m: WORD_REPLACEMENTS[m.group(1)], text)
+
+    # 5. Strip specified characters
+    for ch in STRIP_CHARACTERS:
+        text = text.replace(ch, "")
+
+    # 6. Trim / collapse whitespace
     text = _re.sub(r"\s+", " ", text).strip()
+
     return text or None
 
 
@@ -254,7 +229,7 @@ def apply_transform(value: Any, transform_name: str, scale: int = 1) -> Any:
 def execute_pipeline(
     pipeline_config: Dict[str, Any],
     api_fetcher: Callable,
-    entity: Literal["player", "team"],
+    entity: str,
     season: str,
     season_type_name: str,
     entity_id_field: str,
@@ -314,7 +289,7 @@ def execute_pipeline(
 
 
 def _op_extract(
-    api_result: Dict[str, Any],
+    api_result: Union[Dict[str, Any], None],
     op: Dict[str, Any],
     entity_id_field: str,
     default_entity_id: Any = None,
@@ -324,6 +299,9 @@ def _op_extract(
     Supports optional ``filter_field`` / ``filter_values`` to keep only
     matching rows, and ``fields`` (dict) for multi-field extraction.
     """
+    if api_result is None:
+        return {}
+
     target_rs = op.get("result_set")
     id_field = entity_id_field
 
@@ -354,7 +332,9 @@ def _op_extract(
                     ):
                         continue
                 eid = row[id_idx] if id_idx is not None else default_entity_id
-                entry = result.setdefault(eid, {alias: [] for alias in field_map})
+                if eid is None:
+                    continue
+                entry = result.setdefault(eid, {alias: [] for alias in field_map})  # type: ignore[arg-type]
                 for alias, api_field in field_map.items():
                     if api_field in headers:
                         entry[alias].append(row[headers.index(api_field)])
@@ -375,6 +355,8 @@ def _op_extract(
                 ):
                     continue
             eid = row[id_idx] if id_idx is not None else default_entity_id
+            if eid is None:
+                continue
             val = row[field_idx]
             if eid in result:
                 # Multiple matching rows — accumulate in a list for later aggregation
@@ -382,9 +364,9 @@ def _op_extract(
                 if isinstance(existing, list):
                     existing.append(val)
                 else:
-                    result[eid] = [existing, val]
+                    result[eid] = [existing, val]  # type: ignore[list-item]
             else:
-                result[eid] = val
+                result[eid] = val  # type: ignore[index]
         return result
 
     return {}
@@ -470,7 +452,7 @@ def _op_math(data: Dict[int, Any], op: Dict[str, Any]) -> Dict[int, Any]:
             if val is None:
                 valid = False
                 break
-            locals_dict[k] = float(val)
+            locals_dict[k] = float(val)  # type: ignore[arg-type]
 
         if not valid:
             result[eid] = None

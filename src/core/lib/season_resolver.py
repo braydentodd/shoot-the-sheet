@@ -15,25 +15,32 @@ from typing import Tuple, Union
 
 from src.core.definitions.leagues import VALID_LEAGUE_SEASON_FORMATS
 
-
 # ---------------------------------------------------------------------------
 # Shape-level validation constants (local to this module)
 # ---------------------------------------------------------------------------
 
-VALID_SHAPES = frozenset({
-    'YYYY', 'YY',
-    'YYYY-YY', 'YY-YY', 'YYYY-YYYY',
-    'YYYY/YY', 'YY/YY', 'YYYY/YYYY',
-})
-VALID_ANCHORS = frozenset({'start', 'end', None})
+VALID_SHAPES = frozenset(
+    {
+        "YYYY",
+        "YY",
+        "YYYY-YY",
+        "YY-YY",
+        "YYYY-YYYY",
+        "YYYY/YY",
+        "YY/YY",
+        "YYYY/YYYY",
+    }
+)
+VALID_ANCHORS = frozenset({"start", "end", None})
+_VALID_ANCHORS_STR = frozenset({"start", "end"})
 
 # ---------------------------------------------------------------------------
 # League format mapping
 # ---------------------------------------------------------------------------
 
 _LEAGUE_FORMAT_TO_SHAPE: dict = {
-    'same_year':  ('YYYY',    'end'),
-    'split_year': ('YYYY-YY', None),
+    "same_year": ("YYYY", "end"),
+    "split_year": ("YYYY-YY", None),
 }
 
 _TWO_DIGIT_PIVOT = 80
@@ -43,11 +50,12 @@ _TWO_DIGIT_PIVOT = 80
 # Shape parsing
 # ---------------------------------------------------------------------------
 
+
 def _separator(shape: str) -> Union[str, None]:
-    if '-' in shape:
-        return '-'
-    if '/' in shape:
-        return '/'
+    if "-" in shape:
+        return "-"
+    if "/" in shape:
+        return "/"
     return None
 
 
@@ -72,13 +80,14 @@ def _format_year(year: int, digits: int) -> str:
     if digits == 4:
         return str(year)
     if digits == 2:
-        return f'{year % 100:02d}'
+        return f"{year % 100:02d}"
     raise ValueError(f"Year segment must be 2 or 4 digits, got {digits}")
 
 
 # ---------------------------------------------------------------------------
 # Shape-level renderer / parser
 # ---------------------------------------------------------------------------
+
 
 def render_season_in_shape(
     end_year: int,
@@ -96,22 +105,24 @@ def render_season_in_shape(
     """
     _validate_shape(shape)
     if anchor not in VALID_ANCHORS:
-        raise ValueError(f"Invalid anchor {anchor!r}; expected one of {sorted(VALID_ANCHORS)}")
+        raise ValueError(
+            f"Invalid anchor {anchor!r}; expected one of {sorted(_VALID_ANCHORS_STR)} or None"
+        )
 
     sep = _separator(shape)
     if sep is None:
-        if anchor not in ('start', 'end'):
+        if anchor not in ("start", "end"):
             raise ValueError(
                 f"Single-year shape {shape!r} requires anchor='start' or 'end'"
             )
-        year = end_year if anchor == 'end' else end_year - 1
+        year = end_year if anchor == "end" else end_year - 1
         return _format_year(year, len(shape))
 
     left_seg, right_seg = _segments(shape)
     return (
-        f'{_format_year(end_year - 1, len(left_seg))}'
-        f'{sep}'
-        f'{_format_year(end_year, len(right_seg))}'
+        f"{_format_year(end_year - 1, len(left_seg))}"
+        f"{sep}"
+        f"{_format_year(end_year, len(right_seg))}"
     )
 
 
@@ -123,11 +134,13 @@ def parse_season_in_shape(
     """Inverse of :func:`render_season_in_shape`; returns the end_year integer."""
     _validate_shape(shape)
     if anchor not in VALID_ANCHORS:
-        raise ValueError(f"Invalid anchor {anchor!r}; expected one of {sorted(VALID_ANCHORS)}")
+        raise ValueError(
+            f"Invalid anchor {anchor!r}; expected one of {sorted(_VALID_ANCHORS_STR)} or None"
+        )
 
     sep = _separator(shape)
     if sep is None:
-        if anchor not in ('start', 'end'):
+        if anchor not in ("start", "end"):
             raise ValueError(
                 f"Single-year shape {shape!r} requires anchor='start' or 'end'"
             )
@@ -138,7 +151,7 @@ def parse_season_in_shape(
             year = _resolve_two_digit_year(int(label))
         else:
             raise ValueError(f"Single-year shape {shape!r} has unsupported digit count")
-        return year if anchor == 'end' else year + 1
+        return year if anchor == "end" else year + 1
 
     left_seg, right_seg = _segments(shape)
     left_label, right_label = label.split(sep)
@@ -158,6 +171,7 @@ def parse_season_in_shape(
 # ---------------------------------------------------------------------------
 # League-level convenience (same_year / split_year enum)
 # ---------------------------------------------------------------------------
+
 
 def format_season_label(end_year: int, league_season_format: str) -> str:
     """Render a season label using a league's coarse format enum.
@@ -189,6 +203,7 @@ def parse_season_end_year(label: str, league_season_format: str) -> int:
 # Source-level season parameter formatter (token-based)
 # ---------------------------------------------------------------------------
 
+
 def _format_year_token(year: int, token_len: int) -> str:
     """Format a year integer to match a token run length.
 
@@ -198,7 +213,7 @@ def _format_year_token(year: int, token_len: int) -> str:
     if token_len == 4:
         return str(year)
     if token_len == 2:
-        return f'{year % 100:02d}'
+        return f"{year % 100:02d}"
     raise ValueError(f"Unsupported token length {token_len}; expected 2 or 4")
 
 
@@ -209,14 +224,16 @@ def _replace_token_runs(param_format: str, token: str, value: str) -> str:
     while i < len(param_format):
         if param_format[i] == token:
             run_len = 1
-            while i + run_len < len(param_format) and param_format[i + run_len] == token:
+            while (
+                i + run_len < len(param_format) and param_format[i + run_len] == token
+            ):
                 run_len += 1
             result.append(value)
             i += run_len
         else:
             result.append(param_format[i])
             i += 1
-    return ''.join(result)
+    return "".join(result)
 
 
 def format_season_param(
@@ -249,22 +266,22 @@ def format_season_param(
             f"expected one of {sorted(VALID_LEAGUE_SEASON_FORMATS)}"
         )
 
-    start_year = end_year if season_format == 'same_year' else end_year - 1
+    start_year = end_year if season_format == "same_year" else end_year - 1
 
     # Determine token run lengths from the format string
     max_s = 0
     max_e = 0
     i = 0
     while i < len(param_format):
-        if param_format[i] == 'S':
+        if param_format[i] == "S":
             run_len = 1
-            while i + run_len < len(param_format) and param_format[i + run_len] == 'S':
+            while i + run_len < len(param_format) and param_format[i + run_len] == "S":
                 run_len += 1
             max_s = max(max_s, run_len)
             i += run_len
-        elif param_format[i] == 'E':
+        elif param_format[i] == "E":
             run_len = 1
-            while i + run_len < len(param_format) and param_format[i + run_len] == 'E':
+            while i + run_len < len(param_format) and param_format[i + run_len] == "E":
                 run_len += 1
             max_e = max(max_e, run_len)
             i += run_len
@@ -273,7 +290,7 @@ def format_season_param(
 
     result = param_format
     if max_s > 0:
-        result = _replace_token_runs(result, 'S', _format_year_token(start_year, max_s))
+        result = _replace_token_runs(result, "S", _format_year_token(start_year, max_s))
     if max_e > 0:
-        result = _replace_token_runs(result, 'E', _format_year_token(end_year, max_e))
+        result = _replace_token_runs(result, "E", _format_year_token(end_year, max_e))
     return result

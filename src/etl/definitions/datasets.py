@@ -25,7 +25,7 @@ Keys in ``source_mapping`` fall into two categories:
 This mirrors the ``dataset_mapping`` pattern in ``db_columns.py``.
 """
 
-from typing import Any, Dict, List, TypedDict, Union
+from typing import Dict, List, TypedDict, Union
 
 
 class SourceMappingDef(TypedDict, total=False):
@@ -41,6 +41,15 @@ class SourceMappingDef(TypedDict, total=False):
     # Pass-through — forwarded directly as API params.
     measure_type_detailed_defense: Union[str, None]
     pt_measure_type: Union[str, None]
+    player_or_team: Union[str, None]
+
+
+class RowFilterDef(TypedDict):
+    """Post-API row filter — keeps only rows matching all conditions."""
+
+    field: str
+    op: str  # "lte" | "gte" | "eq"
+    value_template: str  # "{season_end_year}" — resolved by client
 
 
 class DatasetDef(TypedDict):
@@ -56,9 +65,12 @@ class DatasetDef(TypedDict):
     min_season: Union[str, None]
     execution_tier: str
     source: str
-    role: str
+    stage: str
     coverage: str
     source_mapping: SourceMappingDef
+    discovery_tables: Union[List[str], None]
+    prune_tables: Union[List[str], None]
+    row_filters: Union[List[RowFilterDef], None]
 
 
 DATASETS: Dict[str, Dict[str, DatasetDef]] = {
@@ -71,8 +83,11 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2003-04",
             "execution_tier": "per_team",
             "source": "nba_api",
-            "role": "stats_maintainer",
+            "stage": "stats_maintainer",
             "coverage": "normal",
+            "row_filters": None,
+            "discovery_tables": ["players_staging", "player_seasons_staging"],
+            "prune_tables": None,
             "source_mapping": {
                 "class_name": "leaguedashplayerstats",
                 "result_set": "LeagueDashPlayerStats",
@@ -84,8 +99,11 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2003-04",
             "execution_tier": "per_league",
             "source": "nba_api",
-            "role": "stats_maintainer",
+            "stage": "stats_maintainer",
             "coverage": "normal",
+            "row_filters": None,
+            "discovery_tables": ["teams_staging", "team_seasons_staging"],
+            "prune_tables": None,
             "source_mapping": {
                 "class_name": "leaguedashteamstats",
                 "result_set": "LeagueDashTeamStats",
@@ -98,8 +116,11 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2003-04",
             "execution_tier": "per_team",
             "source": "nba_api",
-            "role": "stats_maintainer",
+            "stage": "stats_maintainer",
             "coverage": "normal",
+            "row_filters": None,
+            "discovery_tables": ["players_staging", "player_seasons_staging"],
+            "prune_tables": None,
             "source_mapping": {
                 "class_name": "leaguedashplayerstats",
                 "result_set": "LeagueDashPlayerStats",
@@ -112,8 +133,11 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2003-04",
             "execution_tier": "per_league",
             "source": "nba_api",
-            "role": "stats_maintainer",
+            "stage": "stats_maintainer",
             "coverage": "normal",
+            "row_filters": None,
+            "discovery_tables": ["teams_staging", "team_seasons_staging"],
+            "prune_tables": None,
             "source_mapping": {
                 "class_name": "leaguedashteamstats",
                 "result_set": "LeagueDashTeamStats",
@@ -127,28 +151,36 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2013-14",
             "execution_tier": "per_team",
             "source": "nba_api",
-            "role": "stats_maintainer",
+            "stage": "stats_maintainer",
             "coverage": "normal",
+            "row_filters": None,
+            "discovery_tables": ["players_staging", "player_seasons_staging"],
+            "prune_tables": None,
             "source_mapping": {
                 "class_name": "leaguedashptstats",
                 "result_set": "LeagueDashPtStats",
                 "season_type_param": "season_type_all_star",
                 "per_mode_param": "per_mode_simple",
                 "pt_measure_type": "Passing",
+                "player_or_team": "Player",
             },
         },
         "team_passing_stats": {
             "min_season": "2013-14",
             "execution_tier": "per_league",
             "source": "nba_api",
-            "role": "stats_maintainer",
+            "stage": "stats_maintainer",
             "coverage": "normal",
+            "row_filters": None,
+            "discovery_tables": ["teams_staging", "team_seasons_staging"],
+            "prune_tables": None,
             "source_mapping": {
                 "class_name": "leaguedashptstats",
                 "result_set": "LeagueDashPtStats",
                 "season_type_param": "season_type_all_star",
                 "per_mode_param": "per_mode_simple",
                 "pt_measure_type": "Passing",
+                "player_or_team": "Team",
             },
         },
         # --- Player tracking - Possessions (since 2013-14) ---
@@ -156,28 +188,36 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2013-14",
             "execution_tier": "per_team",
             "source": "nba_api",
-            "role": "stats_maintainer",
+            "stage": "stats_maintainer",
             "coverage": "normal",
+            "row_filters": None,
+            "discovery_tables": ["players_staging", "player_seasons_staging"],
+            "prune_tables": None,
             "source_mapping": {
                 "class_name": "leaguedashptstats",
                 "result_set": "LeagueDashPtStats",
                 "season_type_param": "season_type_all_star",
                 "per_mode_param": "per_mode_simple",
                 "pt_measure_type": "Possessions",
+                "player_or_team": "Player",
             },
         },
         "team_possession_stats": {
             "min_season": "2013-14",
             "execution_tier": "per_league",
             "source": "nba_api",
-            "role": "stats_maintainer",
+            "stage": "stats_maintainer",
             "coverage": "normal",
+            "row_filters": None,
+            "discovery_tables": ["teams_staging", "team_seasons_staging"],
+            "prune_tables": None,
             "source_mapping": {
                 "class_name": "leaguedashptstats",
                 "result_set": "LeagueDashPtStats",
                 "season_type_param": "season_type_all_star",
                 "per_mode_param": "per_mode_simple",
                 "pt_measure_type": "Possessions",
+                "player_or_team": "Team",
             },
         },
         # --- Hustle stats (since 2015-16) ---
@@ -185,8 +225,11 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2016-17",
             "execution_tier": "per_team",
             "source": "nba_api",
-            "role": "stats_maintainer",
+            "stage": "stats_maintainer",
             "coverage": "normal",
+            "row_filters": None,
+            "discovery_tables": ["players_staging", "player_seasons_staging"],
+            "prune_tables": None,
             "source_mapping": {
                 "class_name": "leaguehustlestatsplayer",
                 "result_set": "HustleStatsPlayer",
@@ -198,8 +241,11 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2015-16",
             "execution_tier": "per_league",
             "source": "nba_api",
-            "role": "stats_maintainer",
+            "stage": "stats_maintainer",
             "coverage": "normal",
+            "row_filters": None,
+            "discovery_tables": ["teams_staging", "team_seasons_staging"],
+            "prune_tables": None,
             "source_mapping": {
                 "class_name": "leaguehustlestatsteam",
                 "result_set": "HustleStatsTeam",
@@ -212,8 +258,11 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2013-14",
             "execution_tier": "per_team",
             "source": "nba_api",
-            "role": "stats_maintainer",
+            "stage": "stats_maintainer",
             "coverage": "normal",
+            "row_filters": None,
+            "discovery_tables": ["players_staging", "player_seasons_staging"],
+            "prune_tables": None,
             "source_mapping": {
                 "class_name": "leaguedashptdefend",
                 "result_set": "LeagueDashPtDefend",
@@ -225,8 +274,11 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2013-14",
             "execution_tier": "per_league",
             "source": "nba_api",
-            "role": "stats_maintainer",
+            "stage": "stats_maintainer",
             "coverage": "normal",
+            "row_filters": None,
+            "discovery_tables": ["teams_staging", "team_seasons_staging"],
+            "prune_tables": None,
             "source_mapping": {
                 "class_name": "leaguedashptteamdefend",
                 "result_set": "LeagueDashPtTeamDefend",
@@ -240,31 +292,51 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": None,
             "execution_tier": "per_league",
             "source": "nba_api",
-            "role": "profile_maintainer",
+            "stage": "profile_maintainer",
+            "row_filters": None,
+            "discovery_tables": None,
+            "prune_tables": None,
             "source_mapping": {
                 "class_name": "playerindex",
                 "result_set": "PlayerIndex",
             },
         },
         # --- Player roster / profiles (per-team, current season) ---
-        "team_player_rosters": {
+        "teams_players_rosters": {
             "coverage": "current",
             "min_season": None,
             "execution_tier": "per_team",
             "source": "nba_api",
-            "role": "player_discoverer",
+            "stage": "teams_players_maintainer",
+            "row_filters": None,
+            "discovery_tables": ["players_staging", "teams_players_staging"],
+            "prune_tables": ["teams_players_staging"],
             "source_mapping": {
                 "class_name": "commonteamroster",
                 "result_set": "CommonTeamRoster",
             },
         },
         # --- Team discovery (all active teams, 1 call) ---
-        "league_team_rosters": {
+        "leagues_teams_rosters": {
             "coverage": "current",
             "min_season": None,
             "execution_tier": "per_league",
             "source": "nba_api",
-            "role": "team_discoverer",
+            "stage": "leagues_teams_maintainer",
+            "row_filters": [
+                {
+                    "field": "MIN_YEAR",
+                    "op": "lte",
+                    "value_template": "{season_end_year}",
+                },
+                {
+                    "field": "MAX_YEAR",
+                    "op": "gte",
+                    "value_template": "{season_end_year}",
+                },
+            ],
+            "discovery_tables": ["teams_staging", "leagues_teams_staging"],
+            "prune_tables": ["leagues_teams_staging"],
             "source_mapping": {
                 "class_name": "commonteamyears",
                 "result_set": "TeamYears",
@@ -276,10 +348,13 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": None,
             "execution_tier": "per_league",
             "source": "nba_api",
-            "role": "season_detector",
+            "stage": "season_detector",
+            "row_filters": None,
+            "discovery_tables": None,
+            "prune_tables": None,
             "source_mapping": {
-                "class_name": "leaguegamefinder",
-                "result_set": "LeagueGameFinderResults",
+                "class_name": "leaguegamelog",
+                "result_set": "LeagueGameLog",
                 "season_type_param": "season_type_all_star",
             },
         },
@@ -288,11 +363,14 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2000-01",
             "execution_tier": "per_league",
             "source": "nba_api",
-            "role": "profile_maintainer",
+            "stage": "profile_maintainer",
             "coverage": "all_years",
+            "row_filters": None,
+            "discovery_tables": None,
+            "prune_tables": None,
             "source_mapping": {
                 "class_name": "draftcombineplayeranthro",
-                "result_set": "DraftCombinePlayerAnthro",
+                "result_set": "Results",
                 "season_param": "season_year",
             },
         },
@@ -301,8 +379,11 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "2007-08",
             "execution_tier": "per_team",
             "source": "nba_api",
-            "role": "stats_maintainer",
+            "stage": "stats_maintainer",
             "coverage": "normal",
+            "row_filters": None,
+            "discovery_tables": ["players_staging", "player_seasons_staging"],
+            "prune_tables": None,
             "source_mapping": {
                 "class_name": "teamplayeronoffdetails",
                 "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
@@ -310,27 +391,16 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
                 "per_mode_param": "per_mode_detailed",
             },
         },
-        # --- Opponent stats (MeasureType=Opponent) ---
-        "player_opp_stats": {
-            "min_season": "2003-04",
-            "execution_tier": "per_team",
-            "source": "nba_api",
-            "role": "stats_maintainer",
-            "coverage": "normal",
-            "source_mapping": {
-                "class_name": "leaguedashplayerstats",
-                "result_set": "LeagueDashPlayerStats",
-                "season_type_param": "season_type_all_star",
-                "per_mode_param": "per_mode_detailed",
-                "measure_type_detailed_defense": "Opponent",
-            },
-        },
+        # --- Team opponent stats (MeasureType=Opponent) ---
         "team_opp_stats": {
             "min_season": "2003-04",
             "execution_tier": "per_league",
             "source": "nba_api",
-            "role": "stats_maintainer",
+            "stage": "stats_maintainer",
             "coverage": "normal",
+            "row_filters": None,
+            "discovery_tables": ["teams_staging", "team_seasons_staging"],
+            "prune_tables": None,
             "source_mapping": {
                 "class_name": "leaguedashteamstats",
                 "result_set": "LeagueDashTeamStats",
@@ -345,7 +415,10 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": None,
             "execution_tier": "per_team",
             "source": "nba_api",
-            "role": "profile_maintainer",
+            "stage": "profile_maintainer",
+            "row_filters": None,
+            "discovery_tables": None,
+            "prune_tables": None,
             "source_mapping": {
                 "class_name": "teaminfocommon",
                 "result_set": "TeamInfoCommon",

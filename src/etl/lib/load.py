@@ -30,74 +30,30 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Schema-derived table lookups (no hardcoded table/column names)
+# Entity-to-table helpers
 # ---------------------------------------------------------------------------
 
-# Shared (entity, scope) -> bare-table-name mapping.
-# Used by _table_for_scope here and by call_groups._columns_for_table.
-ENTITY_SCOPE_TABLE: Dict[tuple, str] = {
-    ("league_code", "profiles"): "leagues",
-    ("player", "profiles"): "players",
-    ("team", "profiles"): "teams",
-    ("player", "stats"): "player_seasons",
-    ("player_opp", "stats"): "player_seasons",
-    ("player_on", "stats"): "player_seasons",
-    ("team", "stats"): "team_seasons",
-    ("team_opp", "stats"): "team_seasons",
-    ("player", "rosters"): "teams_players_staging",
-    ("team", "rosters"): "leagues_teams_staging",
-    ("country", "rosters"): "countries_players_staging",
-    ("player", "staging"): "players_staging",
-    ("team", "staging"): "teams_staging",
-    ("player", "staging_stats"): "player_seasons_staging",
-    ("player_opp", "staging_stats"): "player_seasons_staging",
-    ("player_on", "staging_stats"): "player_seasons_staging",
-    ("team", "staging_stats"): "team_seasons_staging",
-    ("team_opp", "staging_stats"): "team_seasons_staging",
-    ("player", "rosters_staging"): "teams_players_staging",
-    ("team", "rosters_staging"): "leagues_teams_staging",
-}
-
-
-def _table_for_scope(entity: str, scope: str) -> str:
-    """Return the schema-qualified table name for an entity/scope pair.
-
-    Derives from ``ENTITY_SCOPE_TABLE`` + ``TABLES`` schema metadata.
-    Raises ``ValueError`` if not found.
-    """
-    key = (entity, scope)
-    if key not in ENTITY_SCOPE_TABLE:
-        raise ValueError(f"No table mapping for entity={entity!r} scope={scope!r}")
-    table_name = ENTITY_SCOPE_TABLE[key]
-    if table_name not in TABLES:
-        raise ValueError(f"Table {table_name!r} not in TABLES registry")
-    meta = TABLES[table_name]
-    schema = meta.get("schema")
-    return f"{schema}.{table_name}" if schema else table_name
+_ENTITY_ALIASES: Dict[str, str] = {}
 
 
 def _leagues_table() -> str:
     """Return the schema-qualified leagues profile table."""
-    return _table_for_scope("league_code", "profiles")
+    return "core.leagues"
 
 
-def _resolve_league_id(conn, league_key: str) -> str:
-    """Return the league identifier for a league key.
-
-    Leagues are identified by their ``code`` (TEXT), so this simply validates
-    the league exists and returns the key itself.
-    """
+def _resolve_league_id(conn, league_code: str) -> str:
+    """Return the league identifier for a league key."""
     leagues_tbl = _leagues_table()
     code_col = "code"
 
     with conn.cursor() as cur:
         cur.execute(
             f"SELECT {quote_col(code_col)} FROM {leagues_tbl} WHERE {quote_col(code_col)} = %s",
-            (league_key,),
+            (league_code,),
         )
         row = cur.fetchone()
         if not row:
-            raise ValueError(f"League {league_key!r} not found in {leagues_tbl}")
+            raise ValueError(f"League {league_code!r} not found in {leagues_tbl}")
         return str(row[0])
 
 
@@ -116,21 +72,7 @@ def bulk_upsert(
     skip_unchanged: bool = False,
     batch_size: int = DEFAULT_BATCH_SIZE,
 ) -> int:
-    """``INSERT ... ON CONFLICT DO UPDATE SET`` for a batch of rows.
-
-    Args:
-        conn:             psycopg2 connection.
-        table:            Schema-qualified table name.
-        columns:          Ordered column names matching ``data`` tuples.
-        data:             List of value tuples (one per row).
-        conflict_columns: Unique-constraint columns for conflict detection.
-        update_columns:   Columns to overwrite on conflict.  ``None`` -> all
-                          non-conflict columns.
-        batch_size:       Rows per ``execute_values`` call.
-
-    Returns:
-        Number of rows written.
-    """
+    """``INSERT ... ON CONFLICT DO UPDATE SET`` for a batch of rows."""
     if not data:
         return 0
 
@@ -187,11 +129,7 @@ def bulk_copy(
     columns: List[str],
     data: List[tuple],
 ) -> int:
-    """Ultra-fast initial load via PostgreSQL ``COPY FROM``.
-
-    Does **not** handle conflicts -- intended for empty-table initial loads.
-    Uses ``copy_expert`` to support schema-qualified table names.
-    """
+    """Ultra-fast initial load via PostgreSQL ``COPY FROM``."""
     if not data:
         return 0
 
@@ -215,25 +153,32 @@ def bulk_copy(
         raise
 
 
+# ---------------------------------------------------------------------------
+# Row routing
+# ---------------------------------------------------------------------------
+
+
 def write_entity_rows(
     entity: str,
-    scope: str,
+    table_name: str,
     rows: Dict[Any, Dict[str, Any]],
     season: str,
     season_type: str,
-    league_key: str,
-    source_key: Union[str, None] = None,
+    league_code: str,
+    source_code: Union[str, None] = None,
 ) -> int:
     """Write extracted rows to the database.
 
     Args:
-        entity:       ``'league'``, ``'team'`` or ``'player'``.
-        scope:        ``'profiles'`` or ``'stats'``.
+        entity:       ``'player'``, ``'team'``, ``'player_opp'``, etc.
+        table_name:   Bare target table (``'players'``, ``'player_seasons'``,
+                      ``'teams_players'``).  Determines which staging table
+                      and write strategy to use.
         rows:         ``{source_entity_id: {col_name: value, ...}, ...}``.
         season:       Season label (``'2024-25'``).
         season_type:  Season type code (``'rs'``, ``'po'``, ``'pi'``, ...).
-        league_key:   League key (e.g. ``'nba'``).  Used for stats scope.
-        source_key:   Source registry key.  Defaults to the league's reader.
+        league_code:  League key (e.g. ``'nba'``).
+        source_code:  Source registry key.  Defaults to the league's reader.
 
     Returns:
         Number of rows written.
@@ -241,35 +186,41 @@ def write_entity_rows(
     if not rows:
         return 0
 
-    if source_key is None:
-        source_key = get_default_external_source(league_key)
+    if source_code is None:
+        source_code = get_default_external_source(league_code)
 
-    if scope == "profiles":
-        return write_staged_entity_rows(entity, rows, league_key, source_key)
+    _profile_tables = {"players", "teams"}
+    _roster_tables = {"teams_players", "leagues_teams", "countries_players"}
+    _stats_tables = {"player_seasons", "team_seasons"}
 
-    if scope == "rosters":
-        return write_staged_roster_rows(entity, rows, league_key, source_key)
+    if table_name in _profile_tables:
+        return write_staged_entity_rows(entity, rows, league_code, source_code)
 
-    if scope == "stats":
+    if table_name in _roster_tables:
+        return write_staged_roster_rows(entity, rows, league_code, source_code)
+
+    if table_name in _stats_tables:
         return write_staged_stats_rows(
-            entity, rows, season, season_type, league_key, source_key
+            entity, rows, season, season_type, league_code, source_code
         )
 
-    raise ValueError(f"Unsupported scope: {scope!r}")
+    raise ValueError(f"Unknown target table: {table_name!r}")
+
+
+# ---------------------------------------------------------------------------
+# Staged entity rows (profile tables)
+# ---------------------------------------------------------------------------
 
 
 def write_staged_entity_rows(
     entity: str,
     rows: Dict[Any, Dict[str, Any]],
-    league_key: str,
-    identity_key: str,
+    league_code: str,
+    identity_code: str,
 ) -> int:
-    """Merge entity data into the staging table for ``league_key``/``identity_key``.
-
-    Uses INSERT ON CONFLICT with COALESCE so that later datasets fill in
-    NULL columns without overwriting data from earlier datasets.
-    """
-    table = _table_for_scope(entity, "staging")
+    """Merge entity data into the staging table for ``league_code``/``identity_code``."""
+    canonical = _ENTITY_ALIASES.get(entity, entity)
+    table = f"ext_staging.{canonical}s_staging"
 
     data_cols: Set[str] = set()
     for vals in rows.values():
@@ -279,10 +230,8 @@ def write_staged_entity_rows(
     sorted_data_cols = sorted(data_cols)
 
     with db_connection() as conn:
-        league_val = _resolve_league_id(conn, league_key)
+        league_val = _resolve_league_id(conn, league_code)
 
-        # Always inject gender from league config when the staging table
-        # declares a gender column (even though no dataset extracts it).
         from src.core.definitions.db_columns import DB_COLUMNS
         from src.core.definitions.leagues import LEAGUES
 
@@ -292,15 +241,13 @@ def write_staged_entity_rows(
             for col_name, col_meta in DB_COLUMNS.items()
             if col_name == "gender"
         )
-        league_gender = LEAGUES.get(league_key, {}).get("gender")
+        league_gender = LEAGUES.get(league_code, {}).get("gender")
         if has_gender and league_gender:
             for vals in rows.values():
                 vals["gender"] = league_gender
             data_cols.add("gender")
 
         sorted_data_cols = sorted(data_cols)
-        # Drop columns not declared on this staging table (e.g. team_id
-        # injected by the executor for per-team calls on profile scope).
         valid_cols = {
             c for c, m in DB_COLUMNS.items() if bare_name in (m.get("tables") or [])
         }
@@ -310,7 +257,7 @@ def write_staged_entity_rows(
         for source_id, vals in rows.items():
             if source_id is None:
                 continue
-            row_values = [league_val, identity_key, str(source_id)] + [
+            row_values = [league_val, identity_code, str(source_id)] + [
                 vals.get(c) for c in sorted_data_cols
             ]
             data.append(tuple(row_values))
@@ -318,7 +265,6 @@ def write_staged_entity_rows(
         if not data:
             return 0
 
-        bare_name = table.split(".", 1)[-1]
         conflict_columns = list(TABLES[bare_name].get("primary_key") or [])
         written = _bulk_merge_upsert(
             conn,
@@ -329,21 +275,36 @@ def write_staged_entity_rows(
             skip_unchanged=True,
         )
 
-        # For team entities, also write the league-team relationship so
-        # leagues_teams_staging stays in sync with teams_staging.
+        # Sync columns declared on both teams_staging and leagues_teams_staging
+        # (e.g. conf) so roster tables stay populated.
         if entity == "team":
-            lt_table = _table_for_scope("team", "rosters_staging")
-            lt_data = [
-                (league_val, identity_key, str(source_id), str(source_id))
-                for source_id in rows
-                if source_id is not None
+            lt_cols = [
+                c
+                for c, m in DB_COLUMNS.items()
+                if "leagues_teams_staging" in (m.get("tables") or [])
+                and c not in ("league_code", "identity", "ext_team_id")
             ]
+            extra_cols = [c for c in lt_cols if c in sorted_data_cols]
+            lt_table = "ext_staging.leagues_teams_staging"
+            lt_columns = [
+                "league_code",
+                "identity",
+                "ext_team_id",
+            ] + extra_cols
+            lt_data = []
+            for source_id in rows:
+                if source_id is None:
+                    continue
+                vals = rows[source_id]
+                row_values = [league_val, identity_code, str(source_id)]
+                row_values += [vals.get(c) for c in extra_cols]
+                lt_data.append(tuple(row_values))
             if lt_data:
                 with conn.cursor() as cur:
                     execute_values(
                         cur,
                         f"""
-                        INSERT INTO {lt_table} (league_code, identity, ext_id, ext_team_id)
+                        INSERT INTO {lt_table} ({", ".join(quote_col(c) for c in lt_columns)})
                         VALUES %s
                         ON CONFLICT DO NOTHING
                         """,
@@ -351,11 +312,11 @@ def write_staged_entity_rows(
                     )
                 conn.commit()
 
-        # For player entities, sync country_code to countries_players_staging.
+        # Sync country_code from players_staging to countries_players_staging
         if entity == "player":
-            cp_table = _table_for_scope("country", "rosters_staging")
+            cp_table = "ext_staging.countries_players_staging"
             cp_data = [
-                (league_val, identity_key, str(source_id), country_val, str(source_id))
+                (league_val, identity_code, country_val, str(source_id))
                 for source_id, vals in rows.items()
                 if source_id is not None
                 and (country_val := vals.get("country_code")) is not None
@@ -365,7 +326,7 @@ def write_staged_entity_rows(
                     execute_values(
                         cur,
                         f"""
-                        INSERT INTO {cp_table} (league_code, identity, ext_id, country_code, ext_player_id)
+                        INSERT INTO {cp_table} (league_code, identity, country_code, ext_player_id)
                         VALUES %s
                         ON CONFLICT DO NOTHING
                         """,
@@ -426,16 +387,10 @@ def _bulk_merge_upsert(
 
 def _ensure_staging_profiles(
     row_dicts,
-    identity_key: str,
-    league_key: str,
+    identity_code: str,
+    league_code: str,
 ) -> None:
-    """Insert missing player / team codes into profile staging tables.
-
-    Scans the given row dicts for ``ext_player_id`` and ``ext_team_id`` values,
-    then ensures a corresponding row exists in ``players_staging`` /
-    ``teams_staging`` so that FK constraints on stats / roster staging
-    tables are satisfied.
-    """
+    """Insert missing player / team codes into profile staging tables."""
     ext_player_ids: set[str] = set()
     ext_team_ids: set[str] = set()
     for row in row_dicts:
@@ -450,7 +405,7 @@ def _ensure_staging_profiles(
         return
 
     with db_connection() as conn:
-        league_val = _resolve_league_id(conn, league_key)
+        league_val = _resolve_league_id(conn, league_code)
 
         for staging_table, codes in [
             ("players_staging", ext_player_ids),
@@ -458,13 +413,11 @@ def _ensure_staging_profiles(
         ]:
             if not codes:
                 continue
-            tbl = _table_for_scope(
-                "player" if staging_table == "players_staging" else "team", "staging"
-            )
+            tbl = f"ext_staging.{staging_table}"
             with conn.cursor() as cur:
                 cur.execute(
                     f"SELECT ext_id FROM {tbl} WHERE identity = %s AND ext_id = ANY(%s)",
-                    (identity_key, list(codes)),
+                    (identity_code, list(codes)),
                 )
                 existing = {row[0] for row in cur.fetchall()}
 
@@ -479,32 +432,41 @@ def _ensure_staging_profiles(
                 sorted(missing)[:10],
             )
 
-            rows = [(league_val, identity_key, code) for code in missing]
-            execute_values(
-                cur,
-                f"""
-                INSERT INTO {tbl} (league_code, identity, ext_id)
-                VALUES %s
-                ON CONFLICT DO NOTHING
-                """,
-                rows,
-            )
+            rows = [(league_val, identity_code, code) for code in missing]
+            with conn.cursor() as cur:
+                execute_values(
+                    cur,
+                    f"""
+                    INSERT INTO {tbl} (league_code, identity, ext_id)
+                    VALUES %s
+                    ON CONFLICT DO NOTHING
+                    """,
+                    rows,
+                )
         conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Staged roster rows
+# ---------------------------------------------------------------------------
 
 
 def write_staged_roster_rows(
     entity: str,
     rows: Dict[Any, Dict[str, Any]],
-    league_key: str,
-    identity_key: str,
+    league_code: str,
+    identity_code: str,
 ) -> int:
-    """Write roster relationships to the roster staging table.
-
-    Each row must have ``ext_team_id`` (source team identity code) set by the
-    per-team extraction context.  Table resolved from ``ENTITY_SCOPE_TABLE``
-    so the correct staging table is always used regardless of entity.
-    """
-    table = _table_for_scope(entity, "rosters_staging")
+    """Write roster relationships to the roster staging table."""
+    canonical = _ENTITY_ALIASES.get(entity, entity)
+    _ROSTER_STAGING_TABLES = {
+        "player": "ext_staging.teams_players_staging",
+        "team": "ext_staging.leagues_teams_staging",
+        "country": "ext_staging.countries_players_staging",
+    }
+    table = _ROSTER_STAGING_TABLES.get(canonical)
+    if table is None:
+        raise ValueError(f"Unsupported entity for roster write: {entity!r}")
 
     data_cols: Set[str] = set()
     for vals in rows.values():
@@ -516,7 +478,7 @@ def write_staged_roster_rows(
     sorted_data_cols = sorted(data_cols)
 
     with db_connection() as conn:
-        league_val = _resolve_league_id(conn, league_key)
+        league_val = _resolve_league_id(conn, league_code)
 
         data: List[tuple] = []
 
@@ -524,7 +486,6 @@ def write_staged_roster_rows(
             columns = [
                 "league_code",
                 "identity",
-                "code",
                 "ext_team_id",
                 "ext_player_id",
             ] + sorted_data_cols
@@ -534,8 +495,7 @@ def write_staged_roster_rows(
                     continue
                 row_values = [
                     league_val,
-                    identity_key,
-                    str(source_id),
+                    identity_code,
                     str(team_source_id),
                     str(source_id),
                 ] + [vals.get(c) for c in sorted_data_cols]
@@ -545,7 +505,6 @@ def write_staged_roster_rows(
             columns = [
                 "league_code",
                 "identity",
-                "ext_id",
                 "ext_team_id",
             ] + sorted_data_cols
             for source_id, vals in rows.items():
@@ -553,8 +512,7 @@ def write_staged_roster_rows(
                     continue
                 row_values = [
                     league_val,
-                    identity_key,
-                    str(source_id),
+                    identity_code,
                     str(source_id),
                 ] + [vals.get(c) for c in sorted_data_cols]
                 data.append(tuple(row_values))
@@ -563,18 +521,16 @@ def write_staged_roster_rows(
             columns = [
                 "league_code",
                 "identity",
-                "code",
-                "country",
+                "country_code",
                 "ext_player_id",
             ] + sorted_data_cols
             for source_id, vals in rows.items():
-                country = vals.get("country")
+                country = vals.get("country_code")
                 if source_id is None or country is None:
                     continue
                 row_values = [
                     league_val,
-                    identity_key,
-                    str(source_id),
+                    identity_code,
                     country,
                     str(source_id),
                 ] + [vals.get(c) for c in sorted_data_cols]
@@ -589,12 +545,13 @@ def write_staged_roster_rows(
         bare_name = table.split(".", 1)[-1]
         conflict_columns = list(TABLES[bare_name].get("primary_key") or [])
         return _bulk_merge_upsert(
-            conn,
-            table,
-            columns,
-            data,
-            conflict_columns=conflict_columns,
+            conn, table, columns, data, conflict_columns=conflict_columns
         )
+
+
+# ---------------------------------------------------------------------------
+# Staged stats rows
+# ---------------------------------------------------------------------------
 
 
 def write_staged_stats_rows(
@@ -602,63 +559,64 @@ def write_staged_stats_rows(
     rows: Dict[Any, Dict[str, Any]],
     season: str,
     season_type: str,
-    league_key: str,
-    identity_key: str,
+    league_code: str,
+    identity_code: str,
 ) -> int:
-    """Write stats rows to the staging table, preserving source IDs for later FK resolution.
-
-    Base columns and conflict key are derived from the table's primary key
-    in ``TABLES`` so that a schema change propagates automatically.
-
-    Before writing, any ``ext_team_id`` / ``ext_player_id`` values present in the
-    rows that do not yet exist in ``teams_staging`` / ``players_staging`` are
-    inserted so the FK constraints on stats staging tables are satisfied.
-    """
-    table = _table_for_scope(entity, "staging_stats")
+    """Write stats rows to the staging table, preserving source IDs for later FK resolution."""
+    canonical = _ENTITY_ALIASES.get(entity, entity)
+    table = f"ext_staging.{canonical}_seasons_staging"
     bare_name = table.split(".", 1)[-1]
     meta = TABLES[bare_name]
     pk_cols = list(meta.get("primary_key") or [])
 
-    # Ensure referenced profiles exist in staging before the FK-constrained INSERT.
-    _ensure_staging_profiles(rows.values(), identity_key, league_key)
+    # Inject ext_player_id / ext_team_id from source IDs before anything
+    # else so _ensure_staging_profiles can auto-discover missing entities.
+    if entity == "player":
+        for source_id, vals in rows.items():
+            if "ext_player_id" not in vals:
+                vals["ext_player_id"] = str(source_id)
 
-    # Data columns: everything in the row values.
+    if entity == "team":
+        for source_id, vals in rows.items():
+            if "ext_team_id" not in vals:
+                vals["ext_team_id"] = str(source_id)
+
+    _ensure_staging_profiles(rows.values(), identity_code, league_code)
+
     data_cols: Set[str] = set()
     for vals in rows.values():
         data_cols.update(vals.keys())
     sorted_data_cols = sorted(data_cols)
 
-    # Resolve PK values for each row from the column registry.
-    # Columns declared in the staging table's PK but not present in row values
-    # are resolved from the call context (identity, season, season_type).
-
-    # Inject ext_player_id from the source_id for player entities so the FK
-    # column is populated and auto-discovery can find new players.
-    if entity in ("player", "player_opp", "player_on"):
-        for source_id, vals in rows.items():
-            if "ext_player_id" not in vals:
-                vals["ext_player_id"] = str(source_id)
-    _PK_SOURCES = {
-        "identity": lambda sid, vals: identity_key,
-        "ext_id": lambda sid, vals: str(sid),
-        "season": lambda sid, vals: season,
-        "season_type": lambda sid, vals: season_type,
+    # PK columns are resolved by trying row data first, then falling back
+    # to context defaults.  ext_player_id / ext_team_id are injected above;
+    # identity / season / season_type come from ETL parameters.
+    _CTX_DEFAULTS = {
+        "identity": identity_code,
+        "season": season,
+        "season_type": season_type,
     }
 
     with db_connection() as conn:
-        league_val = _resolve_league_id(conn, league_key)
+        league_val = _resolve_league_id(conn, league_code)
 
-        # Build column list from TABLES PK + data cols (no hardcoded reserved set).
-        all_pk_cols = pk_cols.copy()
-        # ext_team_id and ext_player_id are declared on the table but not in every row.
-        # If a row carries them, they're treated as data cols; they are NOT in the PK
-        # for stats staging so they sit in sorted_data_cols.
-        columns = ["league_code"] + all_pk_cols + sorted_data_cols
+        # PK columns may also appear in row data (e.g. ext_team_id injected
+        # during per_team extraction).  Keep them out of the data-column list
+        # so they aren't included twice in the INSERT.
+        pk_set = set(pk_cols)
+        sorted_data_cols = [c for c in sorted_data_cols if c not in pk_set]
+
+        columns = ["league_code"] + pk_cols + sorted_data_cols
         data: List[tuple] = []
         for source_id, vals in rows.items():
             if source_id is None:
                 continue
-            pk_values = [_PK_SOURCES[col](source_id, vals) for col in all_pk_cols]
+            pk_values = []
+            for col in pk_cols:
+                val = vals.get(col)
+                if val is None and col in _CTX_DEFAULTS:
+                    val = _CTX_DEFAULTS[col]
+                pk_values.append(val)
             row_values = (
                 [league_val] + pk_values + [vals.get(c) for c in sorted_data_cols]
             )
@@ -668,28 +626,5 @@ def write_staged_stats_rows(
             return 0
 
         return _bulk_merge_upsert(
-            conn,
-            table,
-            columns,
-            data,
-            conflict_columns=pk_cols,
-            skip_unchanged=True,
+            conn, table, columns, data, conflict_columns=pk_cols, skip_unchanged=True
         )
-
-
-def _write_stats_rows(
-    entity: str,
-    rows: Dict[Any, Dict[str, Any]],
-    season: str,
-    season_type: str,
-    league_key: str,
-    source_key: str,
-) -> int:
-    """Removed — stats now flow through staging tables exclusively.
-
-    Kept as a stub to guide any future direct-to-core path.
-    """
-    raise NotImplementedError(
-        "Direct-to-core stats writes are no longer supported. "
-        "Use write_staged_stats_rows and promote via upsert_entities."
-    )

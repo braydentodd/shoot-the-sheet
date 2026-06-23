@@ -29,19 +29,19 @@ def evaluate(expr: str, variables: Dict[str, float]) -> float:
     Only allows basic arithmetic operations and variable lookups.
     Raises ``TypeError`` or ``NameError`` on any disallowed construct.
     """
-    node = ast.parse(expr, mode='eval')
+    node = ast.parse(expr, mode="eval")
 
-    def _eval(node_to_eval):
+    def _eval(node_to_eval) -> float:
         if isinstance(node_to_eval, ast.Expression):
             return _eval(node_to_eval.body)
         if isinstance(node_to_eval, ast.Constant):
             if isinstance(node_to_eval.value, (int, float)):
-                return node_to_eval.value
+                return float(node_to_eval.value)
             raise TypeError(
                 f"Unsupported constant type in math expression: {type(node_to_eval.value)}"
             )
         if isinstance(node_to_eval, ast.Num):  # for python < 3.8
-            return node_to_eval.n
+            return float(node_to_eval.n)  # type: ignore[arg-type]
         if isinstance(node_to_eval, ast.Name):
             if node_to_eval.id in variables:
                 return variables[node_to_eval.id]

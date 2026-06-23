@@ -10,7 +10,7 @@ JSON response that the provider client returns.
 """
 
 import logging
-from typing import Any, Dict, List, Literal, Union
+from typing import Any, Dict, List, Union
 
 from src.core.lib.math_evaluator import evaluate as eval_math_expr
 from src.etl.lib.transform import apply_transform
@@ -38,7 +38,12 @@ def extract_field(
         The transformed value, or None if the field is missing.
     """
     field = source.get("field")
-    if not field or field not in headers:
+    if not field:
+        return None
+    if field not in headers:
+        logger.debug(
+            "Field %r not found in API headers: %s", field, sorted(headers)[:20]
+        )
         return None
 
     raw_value = row[headers.index(field)]
@@ -125,7 +130,7 @@ def extract_derived_field(
 def extract_columns_from_result(
     api_result: Dict[str, Any],
     columns: Dict[str, Dict[str, Any]],
-    entity: Literal["player", "team"],
+    entity: str,
     entity_id_field: str,
     result_set_name: Union[str, None] = None,
     id_aliases: Union[Dict[str, List[str]], None] = None,
@@ -144,10 +149,12 @@ def extract_columns_from_result(
         ``{entity_id: {col_name: value, ...}, ...}``
     """
     all_entities: Dict[int, Dict[str, Any]] = {}
+    matched_result_set = False
 
     for rs in api_result.get("resultSets", []):
         if result_set_name and rs["name"] != result_set_name:
             continue
+        matched_result_set = True
 
         headers = rs["headers"]
 
@@ -160,6 +167,12 @@ def extract_columns_from_result(
                 None,
             )
             if id_field is None:
+                logger.debug(
+                    "Entity ID field %r not found in result set %r headers: %s",
+                    entity_id_field,
+                    rs.get("name"),
+                    sorted(headers)[:15],
+                )
                 continue
 
         id_idx = headers.index(id_field)
@@ -183,6 +196,14 @@ def extract_columns_from_result(
                 # Prefer non-None values across multiple result sets
                 if val is not None or col_name not in existing:
                     existing[col_name] = val
+
+    if result_set_name and not matched_result_set:
+        available = [rs.get("name") for rs in api_result.get("resultSets", [])]
+        logger.warning(
+            "Result set %r not found in API response; available: %s",
+            result_set_name,
+            available,
+        )
 
     return all_entities
 

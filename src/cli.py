@@ -85,7 +85,7 @@ def _run_etl(args) -> int:
 
     try:
         run_etl(
-            league_key=args.league,
+            league_code=args.league,
         )
         return 0
     except KeyboardInterrupt:

@@ -2,8 +2,8 @@
 Shoot the Sheet - Centralized Rate Limiter
 
 Source-agnostic rate limiting engine with configurable limits per source/destination.
-Implements token bucket algorithm for request throttling and exponential backoff
-for retries with auto-restart on consecutive failures.
+Implements token bucket algorithm for request throttling and linear backoff
+with optional cap for retries with auto-restart on consecutive failures.
 
 Default values are defined in src.core.definitions.rate_limits and can be overridden
 by sources/destinations providing their own rate_limits configuration.
@@ -24,16 +24,16 @@ class RateLimiter:
     Args:
         config: Rate limit configuration dict. If None, uses DEFAULT_RATE_LIMITS.
         config can override any of the default values.
-        source_key: Optional identifier for the source/destination (for logging).
+        source_code: Optional identifier for the source/destination (for logging).
     """
 
     def __init__(
         self,
-        config: Union[Dict[str, Any], None] = None,
-        source_key: Union[str, None] = None,
+        config: Any = None,
+        source_code: Union[str, None] = None,
     ):
         self.config = {**DEFAULT_RATE_LIMITS, **(config or {})}
-        self.source_key = source_key
+        self.source_code = source_code
         self._last_request_time = 0.0
         self._consecutive_failures = 0
 
@@ -74,14 +74,14 @@ class RateLimiter:
                 logger.error(
                     "Max consecutive failures (%d) reached for %s - auto-restart recommended",
                     max_failures,
-                    self.source_key or "unknown",
+                    self.source_code or "unknown",
                 )
                 return True
             else:
                 logger.warning(
                     "Max consecutive failures (%d) reached for %s - auto-restart disabled",
                     max_failures,
-                    self.source_key or "unknown",
+                    self.source_code or "unknown",
                 )
                 return False
         return False
@@ -93,7 +93,11 @@ class RateLimiter:
         return self.config.get("timeout_default", 30)
 
     def with_retry(self, func: Callable, max_retries: Union[int, None] = None) -> Any:
-        """Execute func with exponential backoff on failure.
+        """Execute func with linear backoff on failure.
+
+        Backoff grows as *attempt* * ``backoff_base``, capped by ``max_backoff``
+        when configured (0 = no cap).  After ``max_consecutive_failures`` across
+        multiple calls (not just this retry loop), auto-restart is signalled.
 
         Args:
             func: Zero-arg callable to execute.
@@ -107,6 +111,7 @@ class RateLimiter:
         """
         retries = max_retries or self.config.get("max_retries", 3)
         backoff_base = self.config.get("backoff_base", 30)
+        max_backoff = self.config.get("max_backoff", 0)
 
         for attempt in range(1, retries + 1):
             try:
@@ -116,19 +121,28 @@ class RateLimiter:
                 return result
             except Exception as exc:
                 if attempt >= retries:
-                    logger.error("Retry exhausted after %d attempts", retries)
+                    logger.error(
+                        "Retry exhausted after %d attempts: %s",
+                        retries,
+                        exc,
+                    )
                     raise
 
                 if self.record_failure():
                     # Auto-restart triggered
                     raise RuntimeError(
-                        f"Auto-restart triggered for {self.source_key or 'unknown'} "
+                        f"Auto-restart triggered for {self.source_code or 'unknown'} "
                         f"after {self._consecutive_failures} consecutive failures"
                     ) from exc
 
                 wait = attempt * backoff_base
+                if max_backoff > 0 and wait > max_backoff:
+                    wait = max_backoff
                 logger.warning(
-                    "Attempt %d failed, retrying in %ds: %s", attempt, wait, str(exc)
+                    "Attempt %d failed, retrying in %ds: %s",
+                    attempt,
+                    wait,
+                    exc,
                 )
                 time.sleep(wait)
 
@@ -136,28 +150,18 @@ class RateLimiter:
 
 
 def get_rate_limiter(
-    source_key: str,
+    source_code: str,
     config: Union[Dict[str, Any], None] = None,
     is_destination: bool = False,
 ) -> RateLimiter:
     """Get a RateLimiter instance for a given source or destination key.
 
-    For sources, reads ``RATE_LIMITS`` from the source's own config module
-    (e.g. ``nba_api/config.py``).  For destinations, reads from the
-    ``DESTINATIONS`` registry.
+    Reads per-source overrides from ``SOURCE_RATE_LIMITS`` in
+    ``src/core/definitions/rate_limits.py``.  Falls back to ``DEFAULT_RATE_LIMITS``
+    for any knobs not overridden.
     """
-    if is_destination:
-        from src.publish.definitions.destinations import DESTINATIONS
+    from src.core.definitions.rate_limits import SOURCE_RATE_LIMITS
 
-        registry = DESTINATIONS
-        config_data = registry.get(source_key, {})
-        rate_limits = config_data.get("rate_limits")
-        return RateLimiter(rate_limits or config, source_key=source_key)
-
-    # Sources: read from the source's config module
-    from src.etl.sources.registry import get_source_modules
-
-    source_config, _ = get_source_modules(source_key)
-    if source_config and hasattr(source_config, "RATE_LIMITS"):
-        return RateLimiter(source_config.RATE_LIMITS, source_key=source_key)
-    return RateLimiter(config, source_key=source_key)
+    source_overrides = SOURCE_RATE_LIMITS.get(source_code, {})
+    effective = {**(config or {}), **source_overrides}
+    return RateLimiter(effective, source_code=source_code)

@@ -25,7 +25,7 @@ ExecutionContext) lives here.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict, List, Tuple, Union
+from typing import Any, Callable, Dict, List, Union
 
 from psycopg2.extras import RealDictCursor
 
@@ -49,6 +49,7 @@ from src.etl.definitions.pipeline import (
 from src.etl.definitions.sources import SOURCES
 from src.etl.lib.call_groups import build_call_groups
 from src.etl.lib.cleanup import (
+    normalize_null_zero,
     prune_entities,
     prune_stats_retention,
 )
@@ -56,12 +57,23 @@ from src.etl.lib.coverage_tracker import (
     prune_coverages,
 )
 from src.etl.lib.executor import ExecutionContext, execute_group
-from src.etl.lib.load import _resolve_league_id, _table_for_scope
-from src.etl.lib.season_detector import detect_active_season_types
+from src.etl.lib.load import _resolve_league_id
+from src.etl.lib.season_detector import _check_recent_games
 from src.etl.lib.source_resolver import get_source_season_type_code
 from src.etl.sources.registry import get_source_modules
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Entity -> stats staging table resolution.
+# ---------------------------------------------------------------------------
+_STATS_TABLE = {
+    "player": "player_seasons",
+    "team": "team_seasons",
+}
+
+_PROFILE_TABLE = {"player": "players", "team": "teams"}
+_ROSTER_TABLE = {"player": "teams_players", "team": "leagues_teams"}
 
 
 # ============================================================================
@@ -69,27 +81,22 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 
-def _load_source(source_key: str):
+def _load_source(source_code: str):
     """Dynamically import a source's config and client modules."""
-    if source_key not in SOURCES:
+    if source_code not in SOURCES:
         raise ValueError(
-            f"Unknown source {source_key!r}. Registered: {sorted(SOURCES)}"
+            f"Unknown source {source_code!r}. Registered: {sorted(SOURCES)}"
         )
-    return get_source_modules(source_key)
+    return get_source_modules(source_code)
 
 
 # ============================================================================
-# CORE-AWARE LOOKUPS
-# ============================================================================
-
-
-# ============================================================================
-# SHARED EXECUTION ENGINE  (drives src.etl.lib.executor for one phase)
+# SHARED EXECUTION ENGINE
 # ============================================================================
 
 
 def _run_groups(
-    scope: str,
+    table_name: str,
     entities: List[str],
     seasons: List[str],
     season_type: str,
@@ -97,62 +104,85 @@ def _run_groups(
     team_ids: Dict[str, int],
     failed: List[Dict[str, Any]],
     *,
-    league_key: str,
-    source_key: str,
+    league_code: str,
+    source_code: str,
+    dataset: str,
     api_field_names: dict,
     api_config: dict,
     make_fetcher: Callable,
-    groups_override: Union[Dict[Tuple[str, str], List[Dict[str, Any]]], None] = None,
     on_entity_finished: Union[
         Callable[[str, str, List[Dict[str, Any]], int, bool, Any], None], None
     ] = None,
     in_season: bool = True,
 ) -> int:
-    """Execute call groups for a given scope across entities and seasons."""
+    """Execute call groups for *table_name* across entities and seasons.
+
+    Only columns referencing *dataset* are included (filtered inside
+    ``build_call_groups``).
+    """
     total_rows = 0
 
     for season in seasons:
         for entity in entities:
-            if groups_override is not None:
-                groups = groups_override.get((entity, season), [])
-            else:
-                groups = build_call_groups(
-                    entity,
-                    season,
-                    source_key,
-                    scope=scope,
-                    league_key=league_key,
-                    in_season=in_season,
-                )
+            groups = build_call_groups(
+                entity,
+                season,
+                source_code,
+                dataset=dataset,
+                table_name=table_name,
+                league_code=league_code,
+                in_season=in_season,
+            )
+
             if not groups:
-                continue
+                # Still need to call the API when the dataset declares
+                # discovery_tables — entity IDs must be extracted even
+                # when no db_columns fields reference this dataset.
+                ds_cfg = DATASETS.get(source_code, {}).get(dataset, {})
+                if ds_cfg.get("discovery_tables"):
+                    groups = [
+                        {
+                            "dataset": dataset,
+                            "params": {},
+                            "tier": ds_cfg.get("execution_tier", "per_league"),
+                            "columns": {},
+                        }
+                    ]
+                else:
+                    logger.debug(
+                        "No call groups for entity=%s table=%s season=%s",
+                        entity,
+                        table_name,
+                        season,
+                    )
+                    continue
 
             logger.info(
-                "%s: %s %s -- %d call groups",
-                scope,
+                "%s %s %s -- %d call groups",
+                table_name,
                 entity,
                 season,
                 len(groups),
             )
 
             season_end_year = parse_season_end_year(
-                season, LEAGUES[league_key]["season_format"]
+                season, LEAGUES[league_code]["season_format"]
             )
             ctx = ExecutionContext(
                 entity=entity,
-                scope=scope,
+                table_name=table_name,
                 season=season,
                 season_type=season_type,
                 season_type_name=season_type_name,
                 entity_id_field=api_field_names["entity_id"][entity],
-                db_schema=league_key,
-                source_key=source_key,
+                db_schema=league_code,
+                source_code=source_code,
                 api_fetcher=make_fetcher(
-                    league_key,
+                    league_code,
                     season_end_year,
                     season_type_name,
                     entity,
-                    identity_key=source_key,
+                    identity_code=source_code,
                 ),
                 team_ids=team_ids,
                 max_consecutive_failures=api_config.get("max_consecutive_failures", 5),
@@ -197,25 +227,25 @@ def _run_groups(
 
 
 # ============================================================================
-# ETL PHASE HANDLERS
+# ROLE-BASED DATASET LOOKUP
 # ============================================================================
 
 
-def _get_role_datasets(role: str) -> Dict[str, List[str]]:
-    """Return ``{identity_key: [dataset_name, ...]}`` for a pipeline role."""
+def _get_datasets_by_stage(stage_name: str) -> Dict[str, List[str]]:
+    """Return ``{identity_code: [dataset_name, ...]}`` for a pipeline stage."""
     result: Dict[str, List[str]] = {}
-    for identity_key, datasets in DATASETS.items():
+    for identity_code, datasets in DATASETS.items():
         for ds_name, ds_def in datasets.items():
-            if ds_def.get("role") == role:
-                result.setdefault(identity_key, []).append(ds_name)
+            if ds_def.get("stage") == stage_name:
+                result.setdefault(identity_code, []).append(ds_name)
     return result
 
 
-def _load_team_ids(league_key: str) -> Dict[str, int]:
-    """Return ``{ext_id: int(ext_id)}`` for teams in staging, used by per-team API calls."""
-    table = _table_for_scope("team", "staging")
+def _load_team_ids(league_code: str) -> Dict[str, int]:
+    """Return ``{ext_id: int(ext_id)}`` for teams in staging."""
+    table = "ext_staging.teams_staging"
     with db_connection() as conn:
-        league_val = _resolve_league_id(conn, league_key)
+        league_val = _resolve_league_id(conn, league_code)
         with conn.cursor() as cur:
             cur.execute(
                 f"SELECT ext_id FROM {table} WHERE league_code = %s",
@@ -224,76 +254,83 @@ def _load_team_ids(league_key: str) -> Dict[str, int]:
             return {r[0]: int(r[0]) for r in cur.fetchall() if r[0] is not None}
 
 
-# ---------------------------------------------------------------------------
+# ============================================================================
 # season_detector
-# ---------------------------------------------------------------------------
+# ============================================================================
 
 
-def _season_detector(
-    league_key: str,
-    season: str,
-) -> List[str]:
-    """Detect active season types. Called once per league, before identity loop."""
-    role_datasets = _get_role_datasets("season_detector")
-    # Build id-prefixed refs: identity.dataset_name
-    dataset_refs = [
-        f"{identity_key}.{ds_name}"
-        for identity_key, ds_names in role_datasets.items()
-        for ds_name in ds_names
-    ]
-    if not dataset_refs:
-        return get_all_canonical_season_types(league_key)
-    return detect_active_season_types(league_key, dataset_refs, season)
+def _run_season_detector(league_code: str, season: str) -> List[str]:
+    """Query season_detector datasets and return active canonical season types."""
+    active: List[str] = []
+    for identity_code, datasets in DATASETS.items():
+        for dataset_name in _get_datasets_by_stage("season_detector").get(
+            identity_code, []
+        ):
+            result = _check_recent_games(
+                identity_code, dataset_name, league_code, season
+            )
+            if result is None:
+                continue
+            if result:
+                return result
+            # [] — no activity from this dataset, try next
+    return active
 
 
-# ---------------------------------------------------------------------------
-# team_discoverer / player_discoverer
-# ---------------------------------------------------------------------------
+# ============================================================================
+# _discover_entities  (leagues_teams_maintainer / teams_players_maintainer)
+# ============================================================================
 
 
 def _discover_entities(
-    league_key: str,
+    league_code: str,
     season: str,
-    role: str,
-    identity_key: str,
-    source_key: str,
+    stage_name: str,
+    identity_code: str,
+    source_code: str,
     season_type: str,
     season_type_name: str,
     failed: List[Dict[str, Any]],
-    team_ids: Dict[str, int] = None,
+    team_ids: Dict[str, int] = None,  # type: ignore[assignment]
 ) -> int:
-    """Generic entity discovery handler. Calls datasets assigned to *role*."""
+    """Execute a maintainer stage: call each dataset, extract columns, prune stale records."""
     if team_ids is None:
         team_ids = {}
     total_rows = 0
-    dataset_names = _get_role_datasets(role).get(identity_key, [])
+    dataset_names = _get_datasets_by_stage(stage_name).get(identity_code, [])
     if not dataset_names:
         return 0
 
-    config_mod, client_mod = _load_source(source_key)
-    entities = ["player"] if role == "player_discoverer" else ["team"]
+    config_mod, client_mod = _load_source(source_code)
+    entities = ["player"] if stage_name == "teams_players_maintainer" else ["team"]
+
+    from datetime import datetime, timezone
 
     for dataset_name in dataset_names:
         logger.info(
             phase_marker(
-                role, f"dataset={identity_key}.{dataset_name} source={source_key}"
+                stage_name,
+                f"dataset={identity_code}.{dataset_name} source={source_code}",
             )
         )
-        # Both discoverers extract profile columns and roster relationships.
-        scopes = ["profiles"]
-        if role == "player_discoverer":
-            scopes.append("rosters")
-        for scope in scopes:
+
+        ds_cfg = DATASETS.get(identity_code, {}).get(dataset_name, {})
+        prune_tables = ds_cfg.get("prune_tables")
+        prune_start = datetime.now(timezone.utc) if prune_tables else None
+
+        # Profile columns → players / teams staging
+        for entity in entities:
             total_rows += _run_groups(
-                scope=scope,
-                entities=entities,
+                table_name=_PROFILE_TABLE[entity],
+                entities=[entity],
                 seasons=[season],
                 season_type=season_type,
                 season_type_name=season_type_name,
-                team_ids=team_ids,
+                team_ids=team_ids if entity == "player" else {},
                 failed=failed,
-                league_key=league_key,
-                source_key=identity_key,
+                league_code=league_code,
+                source_code=identity_code,
+                dataset=dataset_name,
                 api_field_names=config_mod.API_FIELD_NAMES
                 if hasattr(config_mod, "API_FIELD_NAMES")
                 else {},
@@ -303,224 +340,341 @@ def _discover_entities(
                 make_fetcher=client_mod.make_fetcher,
                 in_season=True,
             )
+
+        # Roster links → teams_players / leagues_teams staging (teams_players_maintainer only)
+        if stage_name == "teams_players_maintainer":
+            for entity in entities:
+                total_rows += _run_groups(
+                    table_name=_ROSTER_TABLE[entity],
+                    entities=[entity],
+                    seasons=[season],
+                    season_type=season_type,
+                    season_type_name=season_type_name,
+                    team_ids=team_ids,
+                    failed=failed,
+                    league_code=league_code,
+                    source_code=identity_code,
+                    dataset=dataset_name,
+                    api_field_names=config_mod.API_FIELD_NAMES
+                    if hasattr(config_mod, "API_FIELD_NAMES")
+                    else {},
+                    api_config=config_mod.API_CONFIG
+                    if hasattr(config_mod, "API_CONFIG")
+                    else {},
+                    make_fetcher=client_mod.make_fetcher,
+                    in_season=True,
+                )
+
+        # Prune stale records from roster tables — any row not touched
+        # by this execution (updated_at < start time) is no longer present
+        # in the dataset's API response.
+        if prune_tables and prune_start:
+            with db_connection() as conn:
+                league_val = _resolve_league_id(conn, league_code)
+                for tbl in prune_tables:
+                    qualified = f"ext_staging.{tbl}"
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            f"DELETE FROM {qualified} "
+                            f"WHERE league_code = %s AND identity = %s "
+                            f"AND updated_at < %s",
+                            (league_val, identity_code, prune_start),
+                        )
+                        deleted = cur.rowcount
+                        if deleted:
+                            logger.info(
+                                "Pruned %d stale rows from %s", deleted, qualified
+                            )
+                    conn.commit()
+
     return total_rows
 
 
-# ---------------------------------------------------------------------------
-# stats_maintainer
-# ---------------------------------------------------------------------------
+# ============================================================================
+# stats_coverage_maintainer  (backfill)
+# ============================================================================
 
 
-def _maintain_stats(
-    league_key: str,
+def _maintain_stats_coverage(
+    league_code: str,
     season_range: List[str],
-    season: str,
-    identity_key: str,
-    source_key: str,
+    identity_code: str,
+    source_code: str,
     failed: List[Dict[str, Any]],
-    in_season: bool = True,
 ) -> int:
-    """Backfill + maintain stats datasets across all season types.
+    """Ensure every retained season x every season type is covered.
 
-    Coverage tracking gates re-fetching for past seasons.  The current
-    season is always refreshed when ``in_season`` is True (games may have
-    been played since the last run).  When off-season the current season
-    is also coverage-gated since no new data is expected.
-
-    Call groups are partitioned by source so that datasets from different
-    sources (e.g. ``nba_api`` and ``pbp_stats`` within the same identity)
-    each use their own API fetcher.
+    Always runs.  Coverage tracking gates re-fetching.
     """
     from src.core.lib.leagues_resolver import (
         get_all_canonical_season_types,
-        get_season_type_def,
+        is_season_type_valid_for,
     )
-    from src.etl.lib.coverage_tracker import (
-        is_group_coverage_current,
-        upsert_group_coverage,
-    )
+    from src.etl.lib.coverage_tracker import is_group_coverage_current
 
     total_rows = 0
-    dataset_names = _get_role_datasets("stats_maintainer").get(identity_key, [])
+    dataset_names = _get_datasets_by_stage("stats_maintainer").get(identity_code, [])
     if not dataset_names:
         return 0
 
-    team_ids = _load_team_ids(league_key)
-    is_current = season
-    all_season_types = get_all_canonical_season_types(league_key)
+    team_ids = _load_team_ids(league_code)
+    all_season_types = get_all_canonical_season_types(league_code)
 
-    for season_label in season_range:
-        for st_key in all_season_types:
-            from src.core.lib.leagues_resolver import is_season_type_valid_for
+    stats_entities = ["player", "team"]
 
-            if not is_season_type_valid_for(league_key, st_key, season_label):
-                continue
-
-            st_def = get_season_type_def(league_key, st_key)
-            season_type_name = get_source_season_type_code(
-                source_key, league_key, st_key
-            )
-
-            for entity in ["team", "team_opp", "player", "player_opp", "player_on"]:
-                groups = build_call_groups(
-                    entity,
-                    season_label,
-                    identity_key,
-                    scope="stats",
-                    league_key=league_key,
-                    in_season=in_season,
-                )
-                if not groups:
+    for dataset_name in dataset_names:
+        for season_label in season_range:
+            for st_key in all_season_types:
+                if not is_season_type_valid_for(league_code, st_key, season_label):
                     continue
 
-                # Filter out already-covered groups — skip for backfill/always.
-                season_is_current = season_label == is_current
-                skip_coverage = any(
-                    DATASETS.get(identity_key, {}).get(g["dataset"], {}).get("coverage")
-                    in ("all_years", "current")
-                    for g in groups
+                season_type_name = get_source_season_type_code(
+                    source_code, league_code, st_key
                 )
-                if season_is_current and in_season or skip_coverage:
-                    filtered_groups = groups
-                else:
+
+                for entity in stats_entities:
+                    table_name = _STATS_TABLE[entity]
+                    groups = build_call_groups(
+                        entity,
+                        season_label,
+                        identity_code,
+                        dataset=dataset_name,
+                        table_name=table_name,
+                        league_code=league_code,
+                        in_season=True,
+                    )
+                    if not groups:
+                        continue
+
                     with db_connection() as conn:
                         filtered_groups = [
                             g
                             for g in groups
                             if not is_group_coverage_current(
                                 conn,
-                                league_key,
+                                league_code,
                                 entity,
                                 season_label,
                                 st_key,
-                                identity_key,
+                                identity_code,
                                 g,
                             )
                         ]
 
-                if not filtered_groups:
-                    logger.info(
-                        "stats_maintainer: %s/%s/%s — all groups covered, skipping",
-                        entity,
-                        season_label,
-                        identity_key,
-                    )
-                    continue
+                    if not filtered_groups:
+                        continue
 
-                # Partition call groups by their dataset's source so that
-                # each source uses its own fetcher (e.g. nba_api vs pbp_stats).
-                groups_by_source: Dict[str, List[Dict[str, Any]]] = {}
-                for g in filtered_groups:
-                    ds_cfg = DATASETS.get(identity_key, {}).get(g["dataset"], {})
-                    src = ds_cfg.get("source", source_key)
-                    groups_by_source.setdefault(src, []).append(g)
-
-                logger.info(
-                    phase_marker(
-                        "stats_maintainer",
-                        f"entity={entity} season={season_label} "
-                        f"season_type={st_key} "
-                        f"sources={sorted(groups_by_source.keys())} "
-                        f"groups={len(filtered_groups)}",
-                    )
-                )
-
-                for src_key, src_groups in groups_by_source.items():
-                    config_mod, client_mod = _load_source(src_key)
-
-                    # Coverage upsert callback: mark each succeeded group as covered.
-                    def _on_coverage(
-                        entity,
-                        season_label,
-                        succeeded_groups,
-                        _rows,
-                        _had_failures,
-                        conn,
-                        _league_key=league_key,
-                        _season_type=st_key,
-                        _source_key=identity_key,
-                    ):
-                        for g in succeeded_groups:
-                            upsert_group_coverage(
-                                conn,
-                                _league_key,
-                                entity,
-                                season_label,
-                                _season_type,
-                                _source_key,
-                                g,
-                            )
-
-                    total_rows += _run_groups(
-                        scope="stats",
-                        entities=[entity],
-                        seasons=[season_label],
-                        season_type=st_key,
+                    total_rows += _execute_stats_groups(
+                        league_code=league_code,
+                        entity=entity,
+                        season_label=season_label,
+                        st_key=st_key,
                         season_type_name=season_type_name,
-                        team_ids=team_ids
-                        if entity in ("player", "player_opp", "player_on")
-                        else {},
+                        identity_code=identity_code,
+                        source_code=source_code,
+                        dataset=dataset_name,
+                        filtered_groups=filtered_groups,
+                        team_ids=team_ids,
                         failed=failed,
-                        league_key=league_key,
-                        source_key=identity_key,
-                        api_field_names=config_mod.API_FIELD_NAMES
-                        if hasattr(config_mod, "API_FIELD_NAMES")
-                        else {},
-                        api_config=config_mod.API_CONFIG
-                        if hasattr(config_mod, "API_CONFIG")
-                        else {},
-                        make_fetcher=client_mod.make_fetcher,
-                        in_season=in_season,
-                        groups_override={(entity, season_label): src_groups},
-                        on_entity_finished=_on_coverage,
+                        use_coverage=True,
                     )
 
     return total_rows
 
 
-# ---------------------------------------------------------------------------
+# ============================================================================
+# current_stats_maintainer  (current season refresh)
+# ============================================================================
+
+
+def _maintain_current_stats(
+    league_code: str,
+    season: str,
+    identity_code: str,
+    source_code: str,
+    active_types: List[str],
+    failed: List[Dict[str, Any]],
+) -> int:
+    """Refresh stats for the CURRENT season and ACTIVE season types only."""
+    from src.core.lib.leagues_resolver import is_season_type_valid_for
+
+    total_rows = 0
+    dataset_names = _get_datasets_by_stage("stats_maintainer").get(identity_code, [])
+    if not dataset_names:
+        return 0
+
+    team_ids = _load_team_ids(league_code)
+    stats_entities = ["player", "team"]
+
+    for st_key in active_types:
+        if not is_season_type_valid_for(league_code, st_key, season):
+            continue
+
+        season_type_name = get_source_season_type_code(source_code, league_code, st_key)
+
+        for dataset_name in dataset_names:
+            for entity in stats_entities:
+                table_name = _STATS_TABLE[entity]
+                groups = build_call_groups(
+                    entity,
+                    season,
+                    identity_code,
+                    dataset=dataset_name,
+                    table_name=table_name,
+                    league_code=league_code,
+                    in_season=True,
+                )
+                if not groups:
+                    continue
+
+                total_rows += _execute_stats_groups(
+                    league_code=league_code,
+                    entity=entity,
+                    season_label=season,
+                    st_key=st_key,
+                    season_type_name=season_type_name,
+                    identity_code=identity_code,
+                    source_code=source_code,
+                    dataset=dataset_name,
+                    filtered_groups=groups,
+                    team_ids=team_ids,
+                    failed=failed,
+                    use_coverage=True,
+                )
+
+    return total_rows
+
+
+# ============================================================================
+# stats execution helper
+# ============================================================================
+
+
+def _execute_stats_groups(
+    *,
+    league_code: str,
+    entity: str,
+    season_label: str,
+    st_key: str,
+    season_type_name: str,
+    identity_code: str,
+    source_code: str,
+    dataset: str,
+    filtered_groups: List[Dict[str, Any]],
+    team_ids: Dict[str, int],
+    failed: List[Dict[str, Any]],
+    use_coverage: bool,
+) -> int:
+    """Execute stats call groups for a single dataset / entity slice."""
+    from src.etl.lib.coverage_tracker import upsert_group_coverage
+
+    if not filtered_groups:
+        return 0
+
+    ds_cfg = DATASETS.get(identity_code, {}).get(dataset, {})
+    src_key = ds_cfg.get("source", source_code)
+
+    logger.info(
+        phase_marker(
+            "stats",
+            f"entity={entity} season={season_label} "
+            f"season_type={st_key} "
+            f"dataset={dataset} "
+            f"groups={len(filtered_groups)}",
+        )
+    )
+
+    table_name = _STATS_TABLE[entity]
+    config_mod, client_mod = _load_source(src_key)
+
+    def _on_coverage(
+        entity,
+        season_label,
+        succeeded_groups,
+        _rows,
+        _had_failures,
+        conn,
+        _league_key=league_code,
+        _season_type=st_key,
+        _source_key=identity_code,
+    ):
+        if not use_coverage:
+            return
+        for g in succeeded_groups:
+            upsert_group_coverage(
+                conn,
+                _league_key,
+                entity,
+                season_label,
+                _season_type,
+                _source_key,
+                g,
+            )
+
+    return _run_groups(
+        table_name=table_name,
+        entities=[entity],
+        seasons=[season_label],
+        season_type=st_key,
+        season_type_name=season_type_name,
+        team_ids=team_ids if entity == "player" else {},
+        failed=failed,
+        league_code=league_code,
+        source_code=identity_code,
+        dataset=dataset,
+        api_field_names=config_mod.API_FIELD_NAMES
+        if hasattr(config_mod, "API_FIELD_NAMES")
+        else {},
+        api_config=config_mod.API_CONFIG if hasattr(config_mod, "API_CONFIG") else {},
+        make_fetcher=client_mod.make_fetcher,
+        in_season=True,
+        on_entity_finished=_on_coverage if use_coverage else None,
+    )
+
+
+# ============================================================================
 # profile_maintainer
-# ---------------------------------------------------------------------------
+# ============================================================================
 
 
 def _maintain_profiles(
-    league_key: str,
+    league_code: str,
     season: str,
-    identity_key: str,
-    source_key: str,
+    identity_code: str,
+    source_code: str,
     season_type: str,
     season_type_name: str,
     failed: List[Dict[str, Any]],
-    team_ids: Dict[str, int] = None,
+    team_ids: Dict[str, int] = None,  # type: ignore[assignment]
 ) -> int:
     """Update profile fields for entities already in staging."""
     if team_ids is None:
         team_ids = {}
     total_rows = 0
-    dataset_names = _get_role_datasets("profile_maintainer").get(identity_key, [])
+    dataset_names = _get_datasets_by_stage("profile_maintainer").get(identity_code, [])
     if not dataset_names:
         return 0
 
-    config_mod, client_mod = _load_source(source_key)
+    config_mod, client_mod = _load_source(source_code)
 
     for dataset_name in dataset_names:
         for entity in ["team", "player"]:
             logger.info(
                 phase_marker(
                     "profile_maintainer",
-                    f"dataset={identity_key}.{dataset_name} entity={entity}",
+                    f"dataset={identity_code}.{dataset_name} entity={entity}",
                 )
             )
             total_rows += _run_groups(
-                scope="profiles",
+                table_name=_PROFILE_TABLE[entity],
                 entities=[entity],
                 seasons=[season],
                 season_type=season_type,
                 season_type_name=season_type_name,
                 team_ids=team_ids,
                 failed=failed,
-                league_key=league_key,
-                source_key=identity_key,
+                league_code=league_code,
+                source_code=identity_code,
                 api_field_names=config_mod.API_FIELD_NAMES
                 if hasattr(config_mod, "API_FIELD_NAMES")
                 else {},
@@ -529,6 +683,7 @@ def _maintain_profiles(
                 else {},
                 make_fetcher=client_mod.make_fetcher,
                 in_season=True,
+                dataset=dataset_name,
             )
 
     return total_rows
@@ -536,34 +691,23 @@ def _maintain_profiles(
 
 # ============================================================================
 # ENTITY MATCHING & UPSERT
-# ---------------------------------------------------------------------------
-# match_entities / upsert_entities (stubs — user handles matching logic)
-# ---------------------------------------------------------------------------
+# ============================================================================
 
 
 def _match_entities(
-    league_key: str,
+    league_code: str,
     failed: List[Dict[str, Any]],
 ) -> int:
-    """Resolve staged identities to existing sts_ids.
-
-    For each staging row, look up (identity, entity) in
-    ``identities_entities``.  If found, set ``matched_sts_id``.  If not
-    found, leave NULL for manual review.
-
-    This runs every ETL, so newly reviewed entities get matched on the
-    next pass.
-    """
+    """Resolve staged identities to existing sts_ids."""
     logger.info(phase_marker("match_entities"))
     total_matched = 0
 
-    # Derive the identities_entities table from the schema registry.
     ie_meta = TABLES["identities_entities"]
     identities_table = f"{ie_meta['schema']}.identities_entities"
 
     staging_entities = [
-        ("player", _table_for_scope("player", "staging")),
-        ("team", _table_for_scope("team", "staging")),
+        ("player", "ext_staging.players_staging"),
+        ("team", "ext_staging.teams_staging"),
     ]
 
     with db_connection() as conn:
@@ -590,382 +734,256 @@ def _match_entities(
 
 
 def _upsert_entities(
-    league_key: str,
+    league_code: str,
     failed: List[Dict[str, Any]],
 ) -> int:
-    """Promote staged rows to core tables.
-
-    On cold start (no ``identities_entities`` entries for this league),
-    all staged entities with a ``name`` are auto-promoted.  On subsequent
-    runs, only rows with ``matched_sts_id IS NOT NULL`` or ``reviewed = True``
-    are promoted.  Unmatched / unreviewed rows remain for manual review.
-    """
+    """Promote staged rows to core tables."""
     logger.info(phase_marker("upsert_entities"))
-    total_promoted = 0
-
-    # Derive the identities_entities table reference from the schema registry.
-    ie_meta = TABLES["identities_entities"]
-    identities_table = f"{ie_meta['schema']}.identities_entities"
-    # Core roster tables used during promotion.
-    teams_players_table = _table_for_scope("player", "rosters")
-    countries_players_table = _table_for_scope("country", "rosters")
-    leagues_teams_table = _table_for_scope("team", "rosters")
+    total_upserted = 0
 
     with db_connection() as conn:
-        for entity in ["team", "player"]:
-            staging_table = _table_for_scope(entity, "staging")
-            core_table = _table_for_scope(entity, "profiles")
-
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor() as cur:
+            for entity, staging_table, core_table in [
+                ("player", "ext_staging.players_staging", "core.players"),
+                ("team", "ext_staging.teams_staging", "core.teams"),
+            ]:
+                # Count staged rows needing promotion
                 cur.execute(
-                    f"""
-                    SELECT *
-                      FROM {staging_table}
-                     WHERE (matched_sts_id IS NOT NULL OR reviewed = True)
-                       AND league_code = %s
-                    """,
-                    (league_key,),
+                    f"SELECT COUNT(*) FROM {staging_table} WHERE matched_sts_id IS NULL"
                 )
-                promotable = list(cur.fetchall())
-
-            if not promotable:
-                continue
-
-            # Separate: rows with matched_sts_id (existing entity) vs
-            # new entities (cold start or reviewed)
-            existing = []
-            new_entities = []
-            for row_data in promotable:
-                if row_data.get("matched_sts_id"):
-                    existing.append(row_data)
-                else:
-                    new_entities.append(row_data)
-
-            # Create new sts_ids for new entities
-            if new_entities:
-                with conn.cursor() as cur:
-                    sts_seq = next(
-                        k for k, v in SEQUENCES.items() if v["schema"] == "profiles"
+                unmatched = cur.fetchone()[0]
+                if unmatched:
+                    logger.info(
+                        "%d unmatched %s rows in staging — awaiting manual review",
+                        unmatched,
+                        entity,
                     )
-                    for row_data in new_entities:
-                        cur.execute(f"SELECT nextval('{sts_seq}')")
-                        new_id = cur.fetchone()[0]
-                        row_data["matched_sts_id"] = new_id
-                        # Register identity mapping
-                        cur.execute(
-                            f"""
-                            INSERT INTO {identities_table}
-                                (identity, code, entity, entity_id)
-                            VALUES (%s, %s, %s, %s)
-                            ON CONFLICT (identity, code, entity) DO UPDATE
-                                SET entity_id = EXCLUDED.entity_id
-                            """,
-                            (
-                                row_data["identity"],
-                                row_data["ext_id"],
-                                entity,
-                                new_id,
-                            ),
-                        )
-                        existing.append(row_data)
-                conn.commit()
 
-            # Upsert to core table
-            promoted_ids = []
-            # Derive column list from db_columns — only columns that
-            # belong to the core table AND are not system columns
-            from src.core.definitions.db_columns import DB_COLUMNS as _COLS
-
-            profile_cols = {
-                col_name: col_def
-                for col_name, col_def in _COLS.items()
-                if entity in (col_def.get("tables") or [])
-                and col_def.get("dataset_mapping") is not None
-            }
-
-            for row_data in existing:
-                sts_id = row_data["matched_sts_id"]
-
-                # Collect only profile columns that have values
-                cols = {
-                    k: v
-                    for k, v in row_data.items()
-                    if k in profile_cols and v is not None
-                }
-                if cols:
-                    set_clause = ", ".join(
-                        f"{quote_col(k)} = COALESCE(%s, {quote_col(k)})" for k in cols
+                # Promote matched rows: insert into core + update staging
+                sql = f"""
+                    INSERT INTO {core_table} (league_code, nba_id_id, display_name, sts_id)
+                    SELECT s.league_code, s.ext_id, s.display_name, ie.entity_id
+                      FROM {staging_table} s
+                      JOIN core.identities_entities ie
+                        ON s.identity = ie.identity AND s.ext_id = ie.ext_id
+                       AND ie.entity = %s
+                     WHERE s.matched_sts_id IS NOT NULL
+                       AND NOT EXISTS (
+                           SELECT 1 FROM {core_table} c
+                            WHERE c.sts_id = ie.entity_id
+                       )
+                """
+                cur.execute(sql, (entity,))
+                upserted = cur.rowcount
+                total_upserted += upserted
+                if upserted:
+                    logger.info(
+                        "Promoted %d %s rows from staging to core", upserted, entity
                     )
-                    values = list(cols.values()) + [sts_id]
-                    with conn.cursor() as cur:
-                        cur.execute(
-                            f"""
-                            UPDATE {core_table}
-                               SET {set_clause}, updated_at = NOW()
-                             WHERE sts_id = %s
-                            """,
-                            values,
-                        )
-                        if cur.rowcount:
-                            promoted_ids.append(sts_id)
-
-            # Roster relationships for players
-            if entity == "player" and promoted_ids:
-                with conn.cursor() as cur:
-                    for row_data in existing:
-                        sts_id = row_data.get("matched_sts_id")
-                        if sts_id not in promoted_ids:
-                            continue
-                        ext_team_id = row_data.get("ext_team_id")
-                        if ext_team_id:
-                            cur.execute(
-                                f"""
-                                SELECT entity_id
-                                  FROM {identities_table}
-                                 WHERE code = %s
-                                   AND entity = 'team'
-                                """,
-                                (ext_team_id,),
-                            )
-                            team_row = cur.fetchone()
-                            if team_row:
-                                cur.execute(
-                                    f"""
-                                    INSERT INTO {teams_players_table}
-                                        (league_code, team_id, player_id)
-                                    VALUES (%s, %s, %s)
-                                    ON CONFLICT (league_code, team_id, player_id)
-                                    DO NOTHING
-                                    """,
-                                    (league_key, team_row[0], sts_id),
-                                )
-                        # Country resolution: read from countries_players_staging
-                        # where country_code was written during player discovery.
-                        cp_staging = _table_for_scope("country", "rosters_staging")
-                        cur.execute(
-                            f"""
-                            SELECT country_code
-                              FROM {cp_staging}
-                             WHERE ext_player_id = %s
-                            """,
-                            (row_data["ext_id"],),
-                        )
-                        for (country_code,) in cur.fetchall():
-                            if country_code:
-                                cur.execute(
-                                    f"""
-                                    INSERT INTO {countries_players_table}
-                                        (country_code, player_id)
-                                    VALUES (%s, %s)
-                                    ON CONFLICT (country_code, player_id)
-                                    DO NOTHING
-                                    """,
-                                    (country_code, sts_id),
-                                )
-
-            # League-team relationships for teams
-            if entity == "team" and promoted_ids:
-                with conn.cursor() as cur:
-                    for sts_id in promoted_ids:
-                        cur.execute(
-                            f"""
-                            INSERT INTO {leagues_teams_table}
-                                (league, team_id)
-                            VALUES (%s, %s)
-                            ON CONFLICT (league, team_id) DO NOTHING
-                            """,
-                            (league_key, sts_id),
-                        )
-
-            # Delete promoted rows from staging
-            if promoted_ids:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        f"""
-                        DELETE FROM {staging_table}
-                         WHERE matched_sts_id = ANY(%s)
-                        """,
-                        (promoted_ids,),
-                    )
-                deleted = cur.rowcount
-                total_promoted += deleted
-                logger.info(
-                    "Promoted %d %ss to core, deleted from staging", deleted, entity
-                )
-
         conn.commit()
 
-    return total_promoted
+    return total_upserted
 
 
 # ============================================================================
-# PUBLIC ENTRY
+# TOP-LEVEL RUNNER
 # ============================================================================
 
 
 def run_etl(
-    league_key: Union[str, None] = None,
+    league_code: Union[str, None] = None,
 ) -> None:
     """Run all ETL phase clusters for a league or all leagues.
 
-    Args:
-        league_key:  Registered league key (e.g. ``'nba'``). If None,
-                     runs all leagues in sorted order.
-
-    Caller (the CLI) is expected to have already configured logging and run
-    config validation; this function never touches stdout directly.
+    execution_start and execution_end run once total (schema bootstrap,
+    pruning).  per_identity runs once per league.
     """
-    clusters = ["execution_start", "per_identity", "execution_end"]
-
-    # Multi-league execution
-    if not league_key:
+    if league_code:
+        if league_code not in LEAGUES:
+            raise ValueError(
+                f"Unknown league {league_code!r}. Registered: {sorted(LEAGUES)}"
+            )
+        leagues_to_run = [league_code]
+    else:
         leagues_to_run = list(LEAGUES)
 
-        for cluster in clusters:
-            handlers = PIPELINE_PHASES.get(cluster, [])
-            if not handlers:
-                continue
+    # execution_start — once (schema is global)
+    _run_cluster("execution_start", leagues_to_run[0])
 
-            logger.info("=" * 80)
-            logger.info("Phase cluster: %s", cluster)
-            logger.info("=" * 80)
+    # per_league — once per league (season detection)
+    for lcode in leagues_to_run:
+        _run_cluster("per_league", lcode)
 
-            for lkey in leagues_to_run:
-                try:
-                    _run_league_phases(lkey, handlers, cluster, season_range=None)
-                except KeyboardInterrupt:
-                    logger.warning("Interrupted by user.")
-                    raise
-                except Exception as exc:
-                    logger.exception(
-                        "ETL run failed for league %s in cluster %s.", lkey, cluster
-                    )
+    # per_identity — per league
+    for lcode in leagues_to_run:
+        _run_cluster("per_identity", lcode)
+
+    # execution_end — once (pruning is global)
+    _run_cluster("execution_end", leagues_to_run[0])
+
+
+def _run_cluster(cluster: str, league_code: str) -> None:
+    handlers = PIPELINE_PHASES.get(cluster, [])
+    if not handlers:
         return
 
-    if league_key not in LEAGUES:
-        raise ValueError(
-            f"Unknown league {league_key!r}. Registered: {sorted(LEAGUES)}"
-        )
+    logger.info("=" * 80)
+    logger.info("Cluster: %s", cluster)
+    logger.info("=" * 80)
 
-    # Single-league path
-    for cluster in clusters:
-        handlers = PIPELINE_PHASES.get(cluster, [])
-        if not handlers:
-            continue
-        _run_league_phases(league_key, handlers, cluster)
+    try:
+        _run_league_phases(league_code, handlers, cluster, season_range=None)
+    except KeyboardInterrupt:
+        logger.warning("Interrupted by user.")
+        raise
+    except Exception:
+        logger.exception(
+            "ETL run failed for league %s in cluster %s.", league_code, cluster
+        )
 
 
 def _run_league_phases(
-    league_key: str,
+    league_code: str,
     handlers: List[str],
-    phase: str,
+    cluster: str,
     season_range: Union[List[str], None] = None,
 ) -> int:
     """Run per-league handlers for a single league. Returns total rows written."""
-    _league_or_raise(league_key)
-    season = get_current_season(league_key)
+    _league_or_raise(league_code)
+    season = get_current_season(league_code)
     if season_range is None:
-        season_range = get_retained_seasons(league_key, season)
+        season_range = get_retained_seasons(league_code, season)
 
     logger.info(
-        "ETL starting: league=%s phase=%s season=%s",
-        league_key,
-        phase,
+        "ETL starting: league=%s cluster=%s season=%s",
+        league_code,
+        cluster,
         season,
     )
 
     failed: List[Dict[str, Any]] = []
     total_rows = 0
-    in_season = False
-    active_types: List[str] = []
 
     for handler in handlers:
         if handler == "build_schema":
             logger.info(phase_marker("build_schema"))
             with db_connection() as conn:
-                bootstrap_schema(league_key, conn=conn)
+                bootstrap_schema(league_code, conn=conn)
 
         elif handler == "season_detector":
             logger.info(phase_marker("season_detector"))
-            active_types = _season_detector(league_key, season)
-            in_season = bool(active_types)
+            active = _run_season_detector(league_code, season)
             logger.info(
                 "Season detector result: active=%s in_season=%s",
-                active_types,
-                in_season,
+                active,
+                bool(active),
             )
 
-        elif handler in ("team_discoverer", "player_discoverer"):
+        elif handler in ("leagues_teams_maintainer", "teams_players_maintainer"):
             logger.info(phase_marker(handler))
             team_ids = (
-                _load_team_ids(league_key) if handler == "player_discoverer" else {}
+                _load_team_ids(league_code)
+                if handler == "teams_players_maintainer"
+                else {}
             )
 
-            for identity_key in DATASETS:
-                role_datasets = _get_role_datasets(handler).get(identity_key, [])
-                if not role_datasets:
+            for identity_code in DATASETS:
+                stage_datasets = _get_datasets_by_stage(handler).get(identity_code, [])
+                if not stage_datasets:
                     continue
-                source_key = DATASETS[identity_key][role_datasets[0]]["source"]
-                if league_key not in SOURCES[source_key].get("leagues", {}):
+                source_code = DATASETS[identity_code][stage_datasets[0]]["source"]
+                if league_code not in SOURCES[source_code].get("leagues", {}):
                     continue
                 logger.info(
                     "  identity=%s source=%s datasets=%s",
-                    identity_key,
-                    source_key,
-                    role_datasets,
+                    identity_code,
+                    source_code,
+                    stage_datasets,
                 )
-                reg_st = get_regular_season_types(league_key)[0]
-                reg_code = get_source_season_type_code(source_key, league_key, reg_st)
+                reg_st = get_regular_season_types(league_code)[0]
+                reg_code = get_source_season_type_code(source_code, league_code, reg_st)
                 total_rows += _discover_entities(
-                    league_key,
+                    league_code,
                     season,
                     handler,
-                    identity_key,
-                    source_key,
+                    identity_code,
+                    source_code,
                     reg_st,
                     reg_code,
                     failed,
                     team_ids=team_ids,
                 )
 
-        elif handler == "stats_maintainer":
-            logger.info(phase_marker("stats_maintainer", f"in_season={in_season}"))
+        elif handler == "stats_coverage_maintainer":
+            logger.info(phase_marker("stats_coverage_maintainer"))
 
-            for identity_key in DATASETS:
-                role_datasets = _get_role_datasets(handler).get(identity_key, [])
-                if not role_datasets:
+            for identity_code in DATASETS:
+                stage_datasets = _get_datasets_by_stage("stats_maintainer").get(
+                    identity_code, []
+                )
+                if not stage_datasets:
                     continue
-                source_key = DATASETS[identity_key][role_datasets[0]]["source"]
-                if league_key not in SOURCES[source_key].get("leagues", {}):
+                source_code = DATASETS[identity_code][stage_datasets[0]]["source"]
+                if league_code not in SOURCES[source_code].get("leagues", {}):
                     continue
-                total_rows += _maintain_stats(
-                    league_key,
+                total_rows += _maintain_stats_coverage(
+                    league_code,
                     season_range,
-                    season,
-                    identity_key,
-                    source_key,
+                    identity_code,
+                    source_code,
                     failed,
-                    in_season=in_season,
+                )
+
+        elif handler == "current_stats_maintainer":
+            active_types = _run_season_detector(league_code, season)
+            if not active_types:
+                logger.info(
+                    phase_marker(
+                        "current_stats_maintainer", "no active types — skipping"
+                    )
+                )
+                continue
+
+            logger.info(
+                phase_marker("current_stats_maintainer", f"active_types={active_types}")
+            )
+
+            for identity_code in DATASETS:
+                stage_datasets = _get_datasets_by_stage("stats_maintainer").get(
+                    identity_code, []
+                )
+                if not stage_datasets:
+                    continue
+                source_code = DATASETS[identity_code][stage_datasets[0]]["source"]
+                if league_code not in SOURCES[source_code].get("leagues", {}):
+                    continue
+                total_rows += _maintain_current_stats(
+                    league_code,
+                    season,
+                    identity_code,
+                    source_code,
+                    active_types,
+                    failed,
                 )
 
         elif handler == "profile_maintainer":
             logger.info(phase_marker("profile_maintainer"))
 
-            for identity_key in DATASETS:
-                role_datasets = _get_role_datasets(handler).get(identity_key, [])
-                if not role_datasets:
+            for identity_code in DATASETS:
+                stage_datasets = _get_datasets_by_stage(handler).get(identity_code, [])
+                if not stage_datasets:
                     continue
-                source_key = DATASETS[identity_key][role_datasets[0]]["source"]
-                if league_key not in SOURCES[source_key].get("leagues", {}):
+                source_code = DATASETS[identity_code][stage_datasets[0]]["source"]
+                if league_code not in SOURCES[source_code].get("leagues", {}):
                     continue
-                team_ids = _load_team_ids(league_key)
-                reg_st = get_regular_season_types(league_key)[0]
-                reg_code = get_source_season_type_code(source_key, league_key, reg_st)
+                team_ids = _load_team_ids(league_code)
+                reg_st = get_regular_season_types(league_code)[0]
+                reg_code = get_source_season_type_code(source_code, league_code, reg_st)
                 total_rows += _maintain_profiles(
-                    league_key,
+                    league_code,
                     season,
-                    identity_key,
-                    source_key,
+                    identity_code,
+                    source_code,
                     reg_st,
                     reg_code,
                     failed,
@@ -973,14 +991,18 @@ def _run_league_phases(
                 )
 
         elif handler == "match_entities":
-            total_rows += _match_entities(league_key, failed)
+            total_rows += _match_entities(league_code, failed)
 
         elif handler == "upsert_entities":
-            total_rows += _upsert_entities(league_key, failed)
+            total_rows += _upsert_entities(league_code, failed)
+
+        elif handler == "normalize_null_zero":
+            logger.info(phase_marker(handler))
+            total_rows += normalize_null_zero(league_code)
 
         elif handler == "prune_stats_retention":
             logger.info(phase_marker(handler))
-            total_rows += prune_stats_retention(league_key, season)
+            total_rows += prune_stats_retention(league_code, season)
 
         elif handler == "prune_entities":
             logger.info(phase_marker(handler))
@@ -989,11 +1011,11 @@ def _run_league_phases(
 
         elif handler == "prune_coverages":
             logger.info(phase_marker(handler))
-            total_rows += prune_coverages(league_key)
+            total_rows += prune_coverages(league_code)
 
         else:
             raise ValueError(
-                f"Unknown ETL stage handler {handler!r} for league {league_key!r}"
+                f"Unknown ETL stage handler {handler!r} for league {league_code!r}"
             )
 
     logger.info("ETL complete: %d total rows written/pruned", total_rows)
@@ -1002,3 +1024,5 @@ def _run_league_phases(
         logger.warning("%d failures:", len(failed))
         for f in failed:
             logger.warning("  %s", f)
+
+    return total_rows

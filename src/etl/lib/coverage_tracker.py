@@ -28,11 +28,11 @@ logger = logging.getLogger(__name__)
 
 _COVERAGE_META = TABLES["stat_coverages"]
 _COVERAGE_TABLE = f"{_COVERAGE_META['schema']}.stat_coverages"
-_COVERAGE_PK_COLS = _COVERAGE_META["primary_key"]
+_COVERAGE_PK_COLS = _COVERAGE_META["primary_key"] or []
 _COVERAGE_CONFLICT = ", ".join(quote_col(c) for c in _COVERAGE_PK_COLS)
 
 
-def _entities_for_column(col_meta: Dict[str, Any]) -> set:
+def _entities_for_column(col_meta: Any) -> set:
     entities: set[str] = set()
     mapping = col_meta.get("dataset_mapping")
     if not mapping:
@@ -54,11 +54,11 @@ def _entities_for_column(col_meta: Dict[str, Any]) -> set:
 
 def is_group_coverage_current(
     conn: Any,
-    league_key: str,
+    league_code: str,
     entity: str,
     season: str,
     season_type: str,
-    identity_key: str,
+    identity_code: str,
     group: Dict[str, Any],
 ) -> bool:
     """Return True if every col_name in this group already has a coverage row."""
@@ -75,14 +75,22 @@ def is_group_coverage_current(
             SELECT col_name
               FROM {_COVERAGE_TABLE}
              WHERE identity = %s
-               AND league   = %s
+               AND league_code = %s
                AND entity   = %s
                AND season   = %s
                AND season_type = %s
                AND dataset  = %s
                AND col_name = ANY(%s)
             """,
-            (identity_key, league_key, entity, season, season_type, dataset, col_names),
+            (
+                identity_code,
+                league_code,
+                entity,
+                season,
+                season_type,
+                dataset,
+                col_names,
+            ),
         )
         covered = {row[0] for row in cur.fetchall()}
 
@@ -91,11 +99,11 @@ def is_group_coverage_current(
 
 def upsert_group_coverage(
     conn: Any,
-    league_key: str,
+    league_code: str,
     entity: str,
     season: str,
     season_type: str,
-    identity_key: str,
+    identity_code: str,
     group: Dict[str, Any],
 ) -> None:
     """Upsert coverage rows for every col_name produced by this call group."""
@@ -117,8 +125,8 @@ def upsert_group_coverage(
                 DO UPDATE SET completed_at = NOW()
                 """,
                 (
-                    identity_key,
-                    league_key,
+                    identity_code,
+                    league_code,
                     entity,
                     season,
                     season_type,
@@ -129,7 +137,7 @@ def upsert_group_coverage(
     conn.commit()
 
 
-def prune_coverages(league_key: str) -> int:
+def prune_coverages(league_code: str) -> int:
     """Delete coverage rows for (entity, col_name) pairs no longer in config."""
     valid: set[tuple[str, str]] = set()
     for col_name, col_meta in DB_COLUMNS.items():
@@ -141,7 +149,7 @@ def prune_coverages(league_key: str) -> int:
         with conn.cursor() as cur:
             cur.execute(
                 f"SELECT entity, col_name FROM {_COVERAGE_TABLE} WHERE league_code = %s",
-                (league_key,),
+                (league_code,),
             )
             to_delete: List[tuple[str, str]] = [
                 (row[0], row[1])
@@ -162,11 +170,11 @@ def prune_coverages(league_key: str) -> int:
                 + values
                 + """)
                 """,
-                (league_key,) + tuple(flat),
+                (league_code,) + tuple(flat),
             )
             deleted = cur.rowcount
         conn.commit()
 
     if deleted:
-        logger.info("Pruned %d stale coverage rows for %s", deleted, league_key)
+        logger.info("Pruned %d stale coverage rows for %s", deleted, league_code)
     return deleted

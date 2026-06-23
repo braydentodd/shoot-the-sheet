@@ -171,11 +171,11 @@ def with_retry(
 
 def build_dataset_params(
     dataset_name: str,
-    league_key: str,
+    league_code: str,
     season_end_year: int,
     season_type_name: str,
     entity: str,
-    identity_key: str = "nba_id",
+    identity_code: str = "nba_id",
     extra_params: Union[Dict[str, Any], None] = None,
 ) -> Dict[str, Any]:
     """Assemble the full parameter dict for an NBA API call.
@@ -187,10 +187,10 @@ def build_dataset_params(
     (class_name, result_set, season_type_param, per_mode_param, season_param,
     endpoint) is forwarded directly as an API parameter.
     """
-    ds_cfg = DATASETS.get(identity_key, {}).get(dataset_name, {})
+    ds_cfg = DATASETS.get(identity_code, {}).get(dataset_name, {})
     wire = ds_cfg.get("source_mapping", {})
-    league_cfg = LEAGUES[league_key]
-    source_league_id = get_source_league_id("nba_api", league_key)
+    league_cfg = LEAGUES[league_code]
+    source_league_id = get_source_league_id("nba_api", league_code)
 
     # Known meta-keys consumed by this builder; everything else in source_mapping
     # is forwarded directly as an API parameter.
@@ -206,11 +206,13 @@ def build_dataset_params(
     }
 
     # Season parameter format: source config > dataset override > auto-inferred
-    source_format = get_source_league_season_param_format("nba_api", league_key)
+    source_format = get_source_league_season_param_format("nba_api", league_code)
     param_format = wire.get("season_param_format", source_format)
 
     # Season parameter — format according to source's token spec
     season_param = wire.get("season_param", "season")
+    assert isinstance(season_param, str)
+    params: Dict[str, Any]
     if season_param == "season_year":
         # Start year (season year) for datasets that need an integer
         start_year = (
@@ -218,9 +220,9 @@ def build_dataset_params(
             if league_cfg["season_format"] == "split_year"
             else season_end_year
         )
-        params: Dict[str, Any] = {season_param: start_year}
+        params = {season_param: start_year}
     else:
-        params: Dict[str, Any] = {
+        params = {
             season_param: format_season_param(
                 season_end_year, param_format, league_cfg["season_format"]
             )
@@ -248,7 +250,7 @@ def build_dataset_params(
 
     # Forward any source_mapping entries that are not known meta-keys.
     for key, value in wire.items():
-        if key not in _META_KEYS:
+        if key not in _META_KEYS and value is not None:
             params[key] = value
 
     # Caller overrides win
@@ -266,16 +268,69 @@ def build_dataset_params(
 
 
 # ============================================================================
+# Row filtering
+# ============================================================================
+
+
+def _apply_row_filters(
+    result: Dict[str, Any],
+    ds_cfg: Any,
+    season_end_year: int,
+) -> Dict[str, Any]:
+    """Apply dataset-configured row_filters to an API response.
+
+    Each filter declares a *field*, an *op* (``lte`` / ``gte`` / ``eq``),
+    and a *value_template* that may contain ``{season_end_year}``.
+    Rows that fail any filter are removed from every result set.
+    """
+    filters = ds_cfg.get("row_filters")
+    if not filters:
+        return result
+
+    template_vars = {"season_end_year": season_end_year}
+
+    for rs in result.get("resultSets", []):
+        headers = rs.get("headers", [])
+        rows = rs.get("rowSet", [])
+        if not rows:
+            continue
+
+        for f in filters:
+            field = f["field"]
+            if field not in headers:
+                continue
+            idx = headers.index(field)
+            op = f["op"]
+            raw_value = f["value_template"]
+            threshold = raw_value.format(**template_vars)
+            try:
+                threshold = type(rows[0][idx])(threshold)
+            except (ValueError, IndexError):
+                pass
+
+            if op == "lte":
+                rows = [r for r in rows if r[idx] <= threshold]
+            elif op == "gte":
+                rows = [r for r in rows if r[idx] >= threshold]
+            elif op == "eq":
+                rows = [r for r in rows if r[idx] == threshold]
+
+        rs["rowSet"] = rows
+
+    return result
+
+
+# ============================================================================
 # FETCHER FACTORY
 # ============================================================================
 
 
 def make_fetcher(
-    league_key: str,
+    league_code: str,
     season_end_year: int,
     season_type_name: str,
     entity: str,
-    identity_key: str = "nba_id",
+    identity_code: str = "nba_id",
 ) -> Callable:
     """Create an api_fetcher closure for the given league, season, type, and entity.
 
@@ -287,14 +342,14 @@ def make_fetcher(
     def fetch(
         dataset: str, extra_params: Union[Dict[str, Any], None] = None
     ) -> Union[Dict, None]:
-        ds_cfg = DATASETS.get(identity_key, {}).get(dataset, {})
+        ds_cfg = DATASETS.get(identity_code, {}).get(dataset, {})
         class_name = ds_cfg.get("source_mapping", {}).get("class_name", dataset)
         DatasetClass = load_dataset_class(class_name)
         if DatasetClass is None:
             return None
         full_params = build_dataset_params(
             dataset,
-            league_key,
+            league_code,
             season_end_year,
             season_type_name,
             entity,
@@ -303,6 +358,73 @@ def make_fetcher(
         api_call = create_api_call(
             DatasetClass, full_params, dataset_name=dataset, rate_limiter=rate_limiter
         )
-        return with_retry(api_call, rate_limiter)
+        result = with_retry(api_call, rate_limiter)
+        if result is not None:
+            result = _apply_row_filters(result, ds_cfg, season_end_year)
+        return result
 
     return fetch
+
+
+# ============================================================================
+# Season detection
+# ============================================================================
+
+
+def detect_recent_games(
+    dataset_name: str,
+    league_code: str,
+    season: str,
+    season_type: str,
+    lookback_days: int = 8,
+    identity_code: str = "nba_id",
+) -> Union[Dict, None]:
+    """Query the NBA API for games of *season_type* within *lookback_days*.
+
+    Returns the raw API result dict (with ``resultSets``) or ``None`` on failure.
+    Used by the season detector to find active season types.
+    """
+    from datetime import datetime, timedelta
+
+    rate_limiter = get_rate_limiter("nba_api")
+    league_cfg = LEAGUES[league_code]
+    season_end_year = parse_season_end_year(season, league_cfg["season_format"])
+
+    ds_cfg = DATASETS.get(identity_code, {}).get(dataset_name, {})
+    wire = ds_cfg.get("source_mapping", {})
+    class_name = wire.get("class_name", dataset_name)
+    DatasetClass = load_dataset_class(class_name)
+    if DatasetClass is None:
+        return None
+
+    end = datetime.now().date()
+    start = end - timedelta(days=lookback_days)
+
+    params = build_dataset_params(
+        dataset_name,
+        league_code,
+        season_end_year,
+        season_type,
+        "player",
+    )
+    params["date_from_nullable"] = start.isoformat()
+    params["date_to_nullable"] = end.isoformat()
+
+    try:
+        api_call = create_api_call(
+            DatasetClass,
+            params,
+            dataset_name=dataset_name,
+            rate_limiter=rate_limiter,
+        )
+        return with_retry(api_call, rate_limiter, max_retries=1)
+    except Exception as exc:
+        logger.warning(
+            "Season detector %s call failed for %s/%s (lookback=%dd): %s",
+            dataset_name,
+            league_code,
+            season_type,
+            lookback_days,
+            exc,
+        )
+        return None

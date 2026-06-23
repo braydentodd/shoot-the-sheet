@@ -27,7 +27,7 @@ from src.etl.lib.extract import (
     get_pipeline_columns,
     get_simple_columns,
 )
-from src.etl.lib.load import _table_for_scope, write_entity_rows
+from src.etl.lib.load import write_entity_rows
 from src.etl.lib.transform import (
     aggregate_multi_season_most_recent_non_null,
     execute_pipeline,
@@ -45,20 +45,19 @@ logger = logging.getLogger(__name__)
 class ExecutionContext:
     """Bundles everything the execution engine needs from the provider.
 
-    Note:
-        ``db_schema`` always equals the league key (``'nba'``, ``'ncaa'``, ...)
-        and is used wherever a schema prefix is expected.  ``source_key`` is the
-        registered source (``'nba_api'``) and drives source-id column resolution.
+    ``table_name`` is the bare target table (e.g. ``'players'``,
+    ``'player_seasons'``).  It is used to resolve the staging table for
+    null-entity queries and to route writes.
     """
 
     entity: str
-    scope: str
+    table_name: str
     season: str
     season_type: str
     season_type_name: str
     entity_id_field: str
     db_schema: str
-    source_key: str
+    source_code: str
     api_fetcher: Callable
     team_ids: Dict[str, int] = field(default_factory=dict)
     max_consecutive_failures: int = 5
@@ -85,7 +84,28 @@ def _should_abort(
 
 
 # ============================================================================
-# EXECUTION STRATEGIES
+# STAGING TABLE RESOLUTION
+# ============================================================================
+
+_STATS_TABLES = {"player_seasons", "team_seasons"}
+
+
+def _resolve_staging_table(entity: str, table_name: str) -> str:
+    """Return the schema-qualified staging table for a target core/staging table.
+
+    ``table_name`` is the bare name (e.g. ``'players'``, ``'player_seasons'``).
+    We derive the staging equivalent by appending ``_staging`` when the table
+    is in the core schema, or return it as-is when it already lives in staging.
+    """
+    if table_name.endswith("_staging"):
+        return f"ext_staging.{table_name}"
+    # Core tables (players, teams, player_seasons, team_seasons) map to
+    # their staging counterparts.
+    return f"ext_staging.{table_name}_staging"
+
+
+# ============================================================================
+# NULL-ENTITY ID FETCHING
 # ============================================================================
 
 
@@ -94,38 +114,27 @@ def _fetch_null_entity_ids(
     columns: List[str],
     conn=None,
 ) -> List[Any]:
-    """Fetch entity source IDs from staging tables that have NULL values for target columns.
-
-    Queries the staging tables (not core) because in the staging architecture
-    all ETL data lands in staging first.  Core tables only receive data after
-    promotion via ``_upsert_entities``.
-
-    Results are cached in ``ctx._null_entity_cache``.
-    """
+    """Fetch entity source IDs from the staging table that have NULL values
+    for the given *columns*."""
     cols_key = frozenset(columns)
     if cols_key in ctx._null_entity_cache:
         return ctx._null_entity_cache[cols_key]
 
-    # Resolve the correct staging table for this scope.
-    if ctx.scope == "profiles":
-        target_table = _table_for_scope(ctx.entity, "staging")
-    elif ctx.scope == "stats":
-        target_table = _table_for_scope(ctx.entity, "staging_stats")
-    else:
-        raise ValueError(f"Unsupported scope {ctx.scope!r}")
+    target_table = _resolve_staging_table(ctx.entity, ctx.table_name)
+    is_stats = ctx.table_name in _STATS_TABLES
 
     def _query(cur):
         null_checks = " OR ".join(f"{quote_col(c)} IS NULL" for c in columns)
-        if ctx.scope == "profiles":
-            cur.execute(
-                f"SELECT {quote_col('ext_id')} FROM {target_table} WHERE {null_checks}"
-            )
-        else:
+        if is_stats:
             cur.execute(
                 f"SELECT {quote_col('ext_id')} FROM {target_table} "
                 f"WHERE season = %s AND season_type = %s "
                 f"AND ({null_checks})",
                 (ctx.season, ctx.season_type),
+            )
+        else:
+            cur.execute(
+                f"SELECT {quote_col('ext_id')} FROM {target_table} WHERE {null_checks}"
             )
         return [row[0] for row in cur.fetchall() if row[0] is not None]
 
@@ -138,7 +147,18 @@ def _fetch_null_entity_ids(
                 source_ids = _query(cur)
 
     ctx._null_entity_cache[cols_key] = source_ids
+    logger.debug(
+        "_fetch_null_entity_ids: table=%s cols=%s -> %d identities",
+        target_table,
+        columns,
+        len(source_ids),
+    )
     return source_ids
+
+
+# ============================================================================
+# EXECUTION STRATEGIES
+# ============================================================================
 
 
 def _execute_multi_season_league_wide(
@@ -151,13 +171,13 @@ def _execute_multi_season_league_wide(
     conn=None,
 ) -> int:
     """Fetch data across multiple years and aggregate using most_recent_non_null."""
+    season_format = LEAGUES[ctx.db_schema]["season_format"]
+    ds_cfg = DATASETS.get(ctx.source_code, {}).get(dataset, {})
+
     start_year_str = ds_cfg.get("min_season") or "2000-01"
     start_year = parse_season_end_year(start_year_str, season_format)
-    season_format = LEAGUES[ctx.db_schema]["season_format"]
     current_year = parse_season_end_year(ctx.season, season_format)
 
-    # Determine the correct season parameter key from the dataset config.
-    ds_cfg = DATASETS.get(ctx.source_key, {}).get(dataset, {})
     wire = ds_cfg.get("source_mapping", {})
     season_param = wire.get("season_param", "season")
 
@@ -182,21 +202,18 @@ def _execute_multi_season_league_wide(
                     columns,
                     ctx.entity,
                     ctx.entity_id_field,
-                    result_set_name=_get_result_set(dataset, ctx.source_key),
+                    result_set_name=_get_result_set(dataset, ctx.source_code),
                     id_aliases=ctx.id_aliases,
                 )
-                # Store values by entity by year
                 for entity_id, row_data in rows.items():
                     if entity_id not in entity_values_by_year:
                         entity_values_by_year[entity_id] = {}
-                    # Assuming single column per multi_season group
                     col_name = next(iter(columns.keys()))
                     entity_values_by_year[entity_id][year] = row_data.get(col_name)
         except Exception as exc:
             logger.warning("Multi-season %s year %d failed: %s", dataset, year, exc)
             continue
 
-    # Aggregate: most recent non-null per entity
     final_rows: Dict[int, Dict[str, Any]] = {}
     col_name = next(iter(columns.keys()))
 
@@ -210,12 +227,12 @@ def _execute_multi_season_league_wide(
 
     return write_entity_rows(
         ctx.entity,
-        ctx.scope,
+        ctx.table_name,
         final_rows,
         ctx.season,
         ctx.season_type,
         ctx.db_schema,
-        ctx.source_key,
+        ctx.source_code,
     )
 
 
@@ -228,9 +245,7 @@ def _execute_league_wide(
     conn=None,
 ) -> int:
     """One API call returns all entities -- extract, transform, write."""
-    # Datasets with coverage "all_years" fetch every season from
-    # min_season to current and aggregate most-recent-non-null.
-    ds_cfg = DATASETS.get(ctx.source_key, {}).get(dataset, {})
+    ds_cfg = DATASETS.get(ctx.source_code, {}).get(dataset, {})
     multi_season_config = (
         {"aggregation": "most_recent_non_null"}
         if ds_cfg.get("coverage") == "all_years"
@@ -239,13 +254,7 @@ def _execute_league_wide(
 
     if multi_season_config:
         return _execute_multi_season_league_wide(
-            dataset,
-            params,
-            columns,
-            ctx,
-            failed,
-            multi_season_config,
-            conn=conn,
+            dataset, params, columns, ctx, failed, multi_season_config, conn=conn
         )
 
     try:
@@ -263,17 +272,20 @@ def _execute_league_wide(
         columns,
         ctx.entity,
         ctx.entity_id_field,
-        result_set_name=_get_result_set(dataset, ctx.source_key),
+        result_set_name=_get_result_set(dataset, ctx.source_code),
         id_aliases=ctx.id_aliases,
+    )
+    logger.debug(
+        "_execute_league_wide: %s -> %d entities extracted", dataset, len(rows)
     )
     return write_entity_rows(
         ctx.entity,
-        ctx.scope,
+        ctx.table_name,
         rows,
         ctx.season,
         ctx.season_type,
         ctx.db_schema,
-        ctx.source_key,
+        ctx.source_code,
     )
 
 
@@ -330,7 +342,7 @@ def _execute_pipeline_per_entity(
                 ctx.season,
                 ctx.season_type_name,
                 entity_id_field=ctx.entity_id_field,
-                default_entity_id=sid,
+                default_entity_id=identity_value,
             )
             consecutive_failures = 0
             if result:
@@ -348,24 +360,24 @@ def _execute_pipeline_per_entity(
         if len(all_rows) >= ENTITY_CHUNK_SIZE:
             written_count += write_entity_rows(
                 ctx.entity,
-                ctx.scope,
+                ctx.table_name,
                 all_rows,
                 ctx.season,
                 ctx.season_type,
                 ctx.db_schema,
-                ctx.source_key,
+                ctx.source_code,
             )
             all_rows = {}
 
     if all_rows:
         written_count += write_entity_rows(
             ctx.entity,
-            ctx.scope,
+            ctx.table_name,
             all_rows,
             ctx.season,
             ctx.season_type,
             ctx.db_schema,
-            ctx.source_key,
+            ctx.source_code,
         )
 
     return written_count
@@ -411,19 +423,19 @@ def _execute_pipeline_column(
     rows = {eid: {col_name: val} for eid, val in result.items()}
     return write_entity_rows(
         ctx.entity,
-        ctx.scope,
+        ctx.table_name,
         rows,
         ctx.season,
         ctx.season_type,
         ctx.db_schema,
-        ctx.source_key,
+        ctx.source_code,
     )
 
 
-def _get_result_set(dataset: str, source_key: str) -> Union[str, None]:
+def _get_result_set(dataset: str, source_code: str) -> Union[str, None]:
     """Return the result_set name configured for a dataset, if any."""
     return (
-        DATASETS.get(source_key, {})
+        DATASETS.get(source_code, {})
         .get(dataset, {})
         .get("source_mapping", {})
         .get("result_set")
@@ -441,9 +453,6 @@ def _execute_per_entity(
 ) -> int:
     """Per-entity API calls for simple columns.
 
-    Iterates over all known entities in the DB, calls the dataset once
-    per entity, and extracts simple columns.
-
     When *tier* is ``'per_team'``, passes ``team_id`` (from ``ctx.team_ids``)
     instead of ``{entity}_id``, and iterates over team identities rather
     than entity identities.
@@ -451,30 +460,22 @@ def _execute_per_entity(
     if tier == "per_team":
         identities = list(ctx.team_ids.values())
         if not identities:
+            logger.debug(
+                "Per-entity %s: no team IDs available (table=%s)",
+                dataset,
+                ctx.table_name,
+            )
             return 0
-    elif removed_refresh_mode == "current":
-        # "current" refresh: re-fetch every known entity from the staging table.
-        # The coverage tracker does not gate these datasets.
-        if ctx.scope == "profiles":
-            source_table = _table_for_scope(ctx.entity, "staging")
-        else:
-            source_table = _table_for_scope(ctx.entity, "staging_stats")
-
-        def _query_all(cur):
-            cur.execute(f"SELECT DISTINCT {quote_col('code')} FROM {source_table}")
-            return [row[0] for row in cur.fetchall() if row[0] is not None]
-
-        if conn is not None:
-            with conn.cursor() as cur:
-                identities = _query_all(cur)
-        else:
-            with db_connection() as fresh_conn:
-                with fresh_conn.cursor() as cur:
-                    identities = _query_all(cur)
     else:
         identities = _fetch_null_entity_ids(ctx, list(columns.keys()), conn=conn)
 
     if not identities:
+        logger.debug(
+            "Per-entity %s: no identities to query (tier=%s refresh=%s)",
+            dataset,
+            tier,
+            removed_refresh_mode,
+        )
         return 0
 
     all_rows: Dict[int, Dict[str, Any]] = {}
@@ -487,8 +488,6 @@ def _execute_per_entity(
             result = ctx.api_fetcher(dataset, {id_param: identity_value})
             consecutive_failures = 0
         except KeyError as exc:
-            # Malformed response for this specific entity (e.g. missing
-            # resultSet key) — skip without counting toward API-level abort.
             logger.debug(
                 "Per-entity %s: no data for %s=%s (KeyError: %s)",
                 dataset,
@@ -521,24 +520,21 @@ def _execute_per_entity(
             columns,
             ctx.entity,
             ctx.entity_id_field,
-            result_set_name=_get_result_set(dataset, ctx.source_key),
+            result_set_name=_get_result_set(dataset, ctx.source_code),
             id_aliases=ctx.id_aliases,
         )
 
         if tier == "per_team":
-            # Per-team calls: inject the queried team identity so traded players
-            # get one row per stint.  The write function filters columns
-            # to only those the target staging table actually has.
             for row in extracted.values():
                 row["ext_team_id"] = identity_value
             written_count += write_entity_rows(
                 ctx.entity,
-                ctx.scope,
+                ctx.table_name,
                 extracted,
                 ctx.season,
                 ctx.season_type,
                 ctx.db_schema,
-                ctx.source_key,
+                ctx.source_code,
             )
         else:
             all_rows.update(extracted)
@@ -546,24 +542,24 @@ def _execute_per_entity(
             if len(all_rows) >= ENTITY_CHUNK_SIZE:
                 written_count += write_entity_rows(
                     ctx.entity,
-                    ctx.scope,
+                    ctx.table_name,
                     all_rows,
                     ctx.season,
                     ctx.season_type,
                     ctx.db_schema,
-                    ctx.source_key,
+                    ctx.source_code,
                 )
                 all_rows = {}
 
     if all_rows:
         written_count += write_entity_rows(
             ctx.entity,
-            ctx.scope,
+            ctx.table_name,
             all_rows,
             ctx.season,
             ctx.season_type,
             ctx.db_schema,
-            ctx.source_key,
+            ctx.source_code,
         )
 
     return written_count
@@ -590,38 +586,43 @@ def execute_group(
     pipelines = get_pipeline_columns(columns)
 
     param_label = " ".join(f"{k}={v}" for k, v in sorted(params.items()))
-    logger.info(
-        "Processing %s %s %s %s [%s]",
-        ctx.season,
-        ctx.season_type_name,
-        dataset,
-        ctx.entity,
-        param_label,
-    )
+    if param_label:
+        logger.info(
+            "Processing %s %s %s %s [%s]",
+            ctx.season,
+            ctx.season_type_name,
+            dataset,
+            ctx.entity,
+            param_label,
+        )
+    else:
+        logger.info(
+            "Processing %s %s %s %s",
+            ctx.season,
+            ctx.season_type_name,
+            dataset,
+            ctx.entity,
+        )
 
     written = 0
     per_entity_tiers = {"per_team", "per_player"}
 
     if tier in per_entity_tiers:
-        if simple:
-            written += _execute_per_entity(
-                dataset,
-                simple,
-                ctx,
-                failed,
-                tier,
-                removed_refresh_mode=group.get("removed_refresh_mode", "null_only"),
-                conn=conn,
-            )
+        written += _execute_per_entity(
+            dataset,
+            simple,
+            ctx,
+            failed,
+            tier,
+            removed_refresh_mode=group.get("removed_refresh_mode", "null_only"),
+            conn=conn,
+        )
         for col_name, source in pipelines.items():
             written += _execute_pipeline_column(
                 col_name, source, ctx, failed, conn=conn
             )
     else:
-        if simple:
-            written += _execute_league_wide(
-                dataset, params, simple, ctx, failed, conn=conn
-            )
+        written += _execute_league_wide(dataset, params, simple, ctx, failed, conn=conn)
         for col_name, source in pipelines.items():
             written += _execute_pipeline_column(
                 col_name, source, ctx, failed, conn=conn

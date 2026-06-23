@@ -16,7 +16,7 @@ in :func:`validate_config`.
 """
 
 import logging
-from typing import Dict, List, Union
+from typing import Any, Dict, List, Union
 
 from src.etl.lib.source_resolver import get_identity_entities
 
@@ -43,7 +43,7 @@ VALID_TRANSFORMS = {
 # ============================================================================
 
 
-def _validate_pg_types(db_columns: Dict[str, Dict]) -> List[str]:
+def _validate_pg_types(db_columns: Dict[str, Any]) -> List[str]:
     """Validate that all DB_COLUMNS types are valid PostgreSQL types."""
     from src.core.definitions.schema import VALID_PG_TYPES
 
@@ -57,8 +57,8 @@ def _validate_pg_types(db_columns: Dict[str, Dict]) -> List[str]:
 
 
 def _validate_source_structure(
-    db_columns: Dict[str, Dict],
-    sources: Dict[str, Dict],
+    db_columns: Dict[str, Any],
+    sources: Dict[str, Any],
 ) -> List[str]:
     """Validate the nested identity structure in DB_COLUMNS.
 
@@ -119,7 +119,7 @@ def _validate_source_structure(
 
 
 def _validate_dataset_refs(
-    db_columns: Dict[str, Dict],
+    db_columns: Dict[str, Any],
     provider_filter: Union[str, None] = None,
 ) -> List[str]:
     """Validate that source dataset references exist in DATASETS."""
@@ -132,7 +132,7 @@ def _validate_dataset_refs(
             continue
 
         prefix = f"DB_COLUMNS['{col_name}']"
-        for league_key, provider_map in sources.items():
+        for league_code, provider_map in sources.items():
             if not isinstance(provider_map, dict):
                 continue
             for provider, entities in provider_map.items():
@@ -152,14 +152,14 @@ def _validate_dataset_refs(
                     if ds and ds not in source_datasets:
                         errors.append(
                             f"{prefix}: references unknown dataset '{ds}' "
-                            f"for sources['{league_key}']['{provider}']['{entity_name}']"
+                            f"for sources['{league_code}']['{provider}']['{entity_name}']"
                         )
     return errors
 
 
 def _validate_table_definitions(
-    tables: Dict[str, Dict],
-    db_columns: Dict[str, Dict],
+    tables: Dict[str, Any],
+    db_columns: Dict[str, Any],
 ) -> List[str]:
     """Robustly validate all table definitions in TABLES registry.
 
@@ -176,11 +176,9 @@ def _validate_table_definitions(
         prefix = f"TABLES['{table_name}']"
 
         # Collect columns declared on this table (both database columns and FK columns)
-        fk_columns = {
-            fk.get("column")
-            for fk in (meta.get("foreign_keys") or [])
-            if fk.get("column")
-        }
+        fk_columns = set()
+        for fk in meta.get("foreign_keys") or []:
+            fk_columns.update(fk["columns"])
         surrogate_pks = {"process_id", "id"}
 
         # 2. Primary Key validation
@@ -205,19 +203,19 @@ def _validate_table_definitions(
         else:
             for idx, fk in enumerate(fks):
                 fk_prefix = f"{prefix}.foreign_keys[{idx}]"
-                col = fk.get("column")
+                cols = fk.get("columns", [])
                 ref_table = fk.get("ref_table")
-                ref_col = fk.get("ref_column")
+                ref_cols = fk.get("ref_columns", [])
 
-                if not col:
-                    errors.append(f"{fk_prefix}: missing 'column'")
+                if not cols:
+                    errors.append(f"{fk_prefix}: missing 'columns'")
                 if not ref_table:
                     errors.append(f"{fk_prefix}: missing 'ref_table'")
                 elif ref_table not in tables:
                     errors.append(f"{fk_prefix}: ref_table '{ref_table}' not in TABLES")
 
-                if not ref_col:
-                    errors.append(f"{fk_prefix}: missing 'ref_column'")
+                if not ref_cols:
+                    errors.append(f"{fk_prefix}: missing 'ref_columns'")
 
                 for action in ("on_update", "on_delete"):
                     act = fk.get(action)
@@ -280,7 +278,7 @@ def _validate_table_definitions(
     return errors
 
 
-def _validate_fk_targets(tables: Dict[str, Dict]) -> List[str]:
+def _validate_fk_targets(tables: Dict[str, Any]) -> List[str]:
     """Every FK ref_schema/ref_table must resolve to a known table, and the
     on_update / on_delete actions must be in the allowed set."""
     from src.core.definitions.schema import VALID_FK_ACTIONS
@@ -289,7 +287,7 @@ def _validate_fk_targets(tables: Dict[str, Dict]) -> List[str]:
 
     for tname, meta in tables.items():
         for fk in meta.get("foreign_keys") or []:
-            prefix = f"TABLES['{tname}'] FK on '{fk.get('column', '?')}'"
+            prefix = f"TABLES['{tname}'] FK on '{fk.get('columns', ['?'])[0]}'"
             for action_key in ("on_update", "on_delete"):
                 action = fk.get(action_key)
                 if action and action not in VALID_FK_ACTIONS:
@@ -363,7 +361,6 @@ def _validate_league_stage_definitions() -> List[str]:
 
 def validate_config() -> List[str]:
     from src.core.definitions.db_columns import DB_COLUMNS
-    from src.core.definitions.leagues import LEAGUES
     from src.core.definitions.schema import TABLES
     from src.etl.definitions.sources import SOURCES
 
@@ -397,12 +394,12 @@ def validate_all() -> List[str]:
     from src.core.definitions.db_columns import DB_COLUMNS
 
     aggregated: List[str] = []
-    for source_key in sorted(SOURCES):
+    for source_code in sorted(SOURCES):
         # Only validate external sources (those not under sts_id identity)
         from src.etl.definitions.datasets import DATASETS
 
         is_internal = any(
-            ds_def.get("source") == source_key
+            ds_def.get("source") == source_code
             for ds_def in DATASETS.get("sts_id", {}).values()
         )
         if is_internal:
@@ -410,7 +407,7 @@ def validate_all() -> List[str]:
         aggregated.extend(
             _validate_dataset_refs(
                 DB_COLUMNS,
-                provider_filter=source_key,
+                provider_filter=source_code,
             )
         )
 

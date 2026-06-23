@@ -12,7 +12,7 @@ import logging
 from typing import Any, Dict, List, Tuple
 
 from src.core.definitions.db_columns import DB_COLUMNS
-from src.core.definitions.schema import SEQUENCES, TABLE_ENTITY, TABLES
+from src.core.definitions.schema import SEQUENCES, TABLES
 from src.core.lib.postgres import get_db_connection, quote_col
 
 logger = logging.getLogger(__name__)
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _column_in_table(col_meta: Dict[str, Any], table_name: str) -> bool:
+def _column_in_table(col_meta: Any, table_name: str) -> bool:
     """Whether a DB_COLUMNS entry contributes to *table_name*.
 
     Supports the ``'all'`` wildcard, which means the column belongs to
@@ -36,7 +36,7 @@ def _column_in_table(col_meta: Dict[str, Any], table_name: str) -> bool:
     return table_name in tables or "all" in tables
 
 
-def _data_columns_for_table(table_name: str) -> List[Tuple[str, Dict[str, Any]]]:
+def _data_columns_for_table(table_name: str) -> List[Tuple[str, Any]]:
     """Return ``[(col_name, col_meta), ...]`` for every matching DB_COLUMNS entry."""
     return [
         (name, meta)
@@ -47,9 +47,9 @@ def _data_columns_for_table(table_name: str) -> List[Tuple[str, Dict[str, Any]]]
 
 def _data_columns_for_tables(
     table_names: List[str],
-) -> List[Tuple[str, Dict[str, Any]]]:
+) -> List[Tuple[str, Any]]:
     """Return matching DB columns across several tables without duplicates."""
-    ordered: List[Tuple[str, Dict[str, Any]]] = []
+    ordered: List[Tuple[str, Any]] = []
     seen = set()
     for table_name in table_names:
         for name, meta in _data_columns_for_table(table_name):
@@ -74,12 +74,12 @@ def _format_default(default: Any, pg_type: str) -> str:
     return f"DEFAULT {default}"
 
 
-def _column_ddl(name: str, meta: Dict[str, Any]) -> str:
+def _column_ddl(name: str, col_meta: Any) -> str:
     """Render a single ``CREATE TABLE`` column fragment."""
-    parts = [quote_col(name), meta["type"]]
-    if not meta.get("nullable", True):
+    parts = [quote_col(name), col_meta["type"]]
+    if not col_meta.get("nullable", True):
         parts.append("NOT NULL")
-    default = _format_default(meta.get("default"), meta["type"])
+    default = _format_default(col_meta.get("default"), col_meta["type"])
     if default:
         parts.append(default)
     return " ".join(parts)
@@ -89,9 +89,9 @@ def _foreign_key_ddl(fk: Dict[str, Any]) -> str:
     """Render a ``FOREIGN KEY`` clause."""
     target = f"{fk['ref_schema']}.{fk['ref_table']}"
     return (
-        f"FOREIGN KEY ({quote_col(fk['column'])}) "
+        f"FOREIGN KEY ({', '.join(quote_col(c) for c in fk['columns'])}) "
         f"REFERENCES {target}"
-        f"({quote_col(fk['ref_column'])}) "
+        f"({', '.join(quote_col(c) for c in fk['ref_columns'])}) "
         f"ON UPDATE {fk['on_update']} ON DELETE {fk['on_delete']}"
     )
 
@@ -175,13 +175,13 @@ def _insert_row(
 def _get_expected_columns(
     table_name: str,
     meta: Dict[str, Any],
-) -> List[Tuple[str, Dict[str, Any]]]:
+) -> List[Tuple[str, Any]]:
     """Return the complete ordered set of (column_name, column_meta) for a table.
 
     Centralises column resolution so that both ``_create_table`` and
     ``_sync_table`` derive their column lists from a single source of truth.
     """
-    expected: List[Tuple[str, Dict[str, Any]]] = []
+    expected: List[Tuple[str, Any]] = []
     seen: set = set()
 
     for col in meta.get("primary_key") or []:
@@ -189,10 +189,10 @@ def _get_expected_columns(
         seen.add(col)
 
     for fk in meta.get("foreign_keys") or []:
-        col = fk["column"]
-        if col not in seen:
-            expected.append((col, DB_COLUMNS[col]))
-            seen.add(col)
+        for col in fk["columns"]:
+            if col not in seen:
+                expected.append((col, DB_COLUMNS[col]))
+                seen.add(col)
 
     for name, m in _data_columns_for_table(table_name):
         if name not in seen:
@@ -282,7 +282,7 @@ def _ensure_updated_at_trigger(cur, schema_name: str, table_name: str) -> None:
 def _sync_table(
     cur,
     table_name: str,
-    meta: Dict[str, Any],
+    meta: Any,
     schema_name: str,
 ) -> List[str]:
     """Sync table structure against config; purely additive."""
@@ -319,7 +319,9 @@ def _validate_sequence_coverage() -> None:
     import re
 
     for col_name, col_meta in DB_COLUMNS.items():
-        default = col_meta.get("default") or ""
+        default = col_meta.get("default")
+        if not default or not isinstance(default, str):
+            continue
         m = re.search(r"nextval\('([^']+)'\)", default)
         if not m:
             continue
@@ -372,7 +374,7 @@ def ensure_schema(
             conn.close()
 
 
-def ensure_league_profile(league_key: str, conn=None) -> Dict[str, List[str]]:
+def ensure_league_profile(league_code: str, conn=None) -> Dict[str, List[str]]:
     """Ensure the ``profiles.leagues`` row exists for a single league."""
     own = conn is None
     if own:
@@ -380,26 +382,30 @@ def ensure_league_profile(league_key: str, conn=None) -> Dict[str, List[str]]:
 
     leagues_meta = TABLES["leagues"]
     leagues_schema = leagues_meta["schema"]
+    if not leagues_schema:
+        raise RuntimeError("leagues table has no schema")
 
     actions: Dict[str, List[str]] = {}
     try:
         with conn.cursor() as cur:
             from src.core.definitions.leagues import LEAGUES
 
-            if league_key not in LEAGUES:
-                raise ValueError(f"Unknown league {league_key!r}")
+            if league_code not in LEAGUES:
+                raise ValueError(f"Unknown league {league_code!r}")
 
-            cfg = LEAGUES[league_key]
+            cfg = LEAGUES[league_code]
 
             vals: Dict[str, Any] = {}
             for col, col_def in _data_columns_for_table("leagues"):
                 if col == "code":
-                    vals[col] = league_key
+                    vals[col] = league_code
                 elif col in cfg:
                     vals[col] = cfg[col]
 
             if not vals:
-                raise ValueError(f"No seedable columns found for league {league_key!r}")
+                raise ValueError(
+                    f"No seedable columns found for league {league_code!r}"
+                )
 
             constraints = leagues_meta.get("unique_constraints")
             conflict_cols = constraints[0] if constraints else ["code"]
@@ -417,7 +423,7 @@ def ensure_league_profile(league_key: str, conn=None) -> Dict[str, List[str]]:
             conn.close()
 
 
-def _topological_table_order() -> List[Tuple[str, Dict[str, Any]]]:
+def _topological_table_order() -> List[Tuple[str, Any]]:
     """Return all tables in dependency order based on foreign key references.
 
     Uses Kahn's algorithm. Tables with no outbound FKs come first.
@@ -450,7 +456,7 @@ def _topological_table_order() -> List[Tuple[str, Dict[str, Any]]]:
 
     # Kahn's algorithm
     queue = deque([k for k, d in in_degree.items() if d == 0])
-    ordered: List[Tuple[str, Dict[str, Any]]] = []
+    ordered: List[Tuple[str, Any]] = []
 
     while queue:
         key = queue.popleft()
@@ -554,7 +560,7 @@ def ensure_countries(conn=None) -> Dict[str, int]:
 
 
 def bootstrap_schema(
-    league_key: str,
+    league_code: str,
     conn=None,
 ) -> Dict[str, List[str]]:
     """Unified bootstrap: ensure all schemas and seed the league profile row.
@@ -572,7 +578,12 @@ def bootstrap_schema(
         _validate_sequence_coverage()
 
         with conn.cursor() as cur:
-            schemas = sorted({m["schema"] for m in TABLES.values() if m.get("schema")})
+            schemas_set: set[str] = set()
+            for m in TABLES.values():
+                schema = m.get("schema")
+                if isinstance(schema, str):
+                    schemas_set.add(schema)
+            schemas = sorted(schemas_set)
             # 1. Create all schemas first
             for schema_name in schemas:
                 cur.execute(f"CREATE SCHEMA IF NOT EXISTS {schema_name}")
@@ -590,7 +601,7 @@ def bootstrap_schema(
                 if acts:
                     logger.info("Table %s: %s", qualified, ", ".join(acts))
 
-        actions.update(ensure_league_profile(league_key, conn=conn))
+        actions.update(ensure_league_profile(league_code, conn=conn))
         country_result = ensure_countries(conn=conn)
         countries_meta = TABLES["countries"]
         actions[f"{countries_meta['schema']}.countries"] = [
