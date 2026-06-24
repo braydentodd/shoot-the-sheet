@@ -47,13 +47,12 @@ def get_source_league_id(source_code: str, league_code: str) -> str:
     return entry["id"]
 
 
-def get_source_league_season_param_format(source_code: str, league_code: str) -> str:
-    """Return the wire season token format for a league/source pair.
-
-    e.g. ``"SSSS-EE"`` for NBA on nba_api, ``"EEEE"`` for WNBA on nba_api.
-    """
-    entry = _get_league_entry(source_code, league_code)
-    return entry["season_param_format"]
+def get_default_external_source(league_code: str) -> str:
+    """Return a deterministic default external source for a league."""
+    sources = get_external_sources_for_league(league_code)
+    if not sources:
+        raise ValueError(f"League {league_code!r} has no external sources configured")
+    return sources[0]
 
 
 def _get_league_entry(source_code: str, league_code: str) -> "LeagueEntryDef":
@@ -68,14 +67,6 @@ def _get_league_entry(source_code: str, league_code: str) -> "LeagueEntryDef":
             f"Source {source_code!r} does not support league {league_code!r}"
         )
     return leagues[league_code]
-
-
-def get_default_external_source(league_code: str) -> str:
-    """Return a deterministic default external source for a league."""
-    sources = get_external_sources_for_league(league_code)
-    if not sources:
-        raise ValueError(f"League {league_code!r} has no external sources configured")
-    return sources[0]
 
 
 # ============================================================================

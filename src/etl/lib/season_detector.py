@@ -165,6 +165,6 @@ def is_league_in_season(league_code: str, season: Optional[str] = None) -> bool:
         f"{ic}.{ds}"
         for ic, datasets in DATASETS.items()
         for ds, ds_def in datasets.items()
-        if ds_def.get("stage") == "season_detector"
+        if ds_def.get("phase") == "detect_season_activity"
     ]
     return bool(detect_active_season_types(league_code, dataset_refs, season))

@@ -65,6 +65,10 @@ SEQUENCES: Dict[str, SequenceDef] = {
         "schema": "core",
         "owner_columns": ["sts_id"],
     },
+    "core.game_id_seq": {
+        "schema": "core",
+        "owner_columns": ["game_id"],
+    },
 }
 
 
@@ -140,7 +144,7 @@ TABLES: Dict[str, TableDef] = {
                 "strategy": "profile_lookup",
                 "on_update": "CASCADE",
                 "on_delete": "SET NULL",
-            }
+            },
         ],
         "unique_constraints": None,
         "indexes": None,
@@ -156,14 +160,14 @@ TABLES: Dict[str, TableDef] = {
     # STAGING — profile staging tables
     # ------------------------------------------------------------------
     "teams_staging": {
-        "schema": "ext_staging",
+        "schema": "staging",
         "primary_key": ["identity", "ext_id"],
         "foreign_keys": None,
         "unique_constraints": None,
         "indexes": None,
     },
     "players_staging": {
-        "schema": "ext_staging",
+        "schema": "staging",
         "primary_key": ["identity", "ext_id"],
         "foreign_keys": None,
         "unique_constraints": None,
@@ -173,7 +177,7 @@ TABLES: Dict[str, TableDef] = {
     # STAGING — stats staging tables
     # ------------------------------------------------------------------
     "player_seasons_staging": {
-        "schema": "ext_staging",
+        "schema": "staging",
         "primary_key": [
             "identity",
             "ext_player_id",
@@ -184,7 +188,7 @@ TABLES: Dict[str, TableDef] = {
         "foreign_keys": [
             {
                 "columns": ["identity", "ext_player_id"],
-                "ref_schema": "ext_staging",
+                "ref_schema": "staging",
                 "ref_table": "players_staging",
                 "ref_columns": ["identity", "ext_id"],
                 "strategy": "direct",
@@ -193,7 +197,7 @@ TABLES: Dict[str, TableDef] = {
             },
             {
                 "columns": ["identity", "ext_team_id"],
-                "ref_schema": "ext_staging",
+                "ref_schema": "staging",
                 "ref_table": "teams_staging",
                 "ref_columns": ["identity", "ext_id"],
                 "strategy": "direct",
@@ -205,12 +209,12 @@ TABLES: Dict[str, TableDef] = {
         "indexes": None,
     },
     "team_seasons_staging": {
-        "schema": "ext_staging",
+        "schema": "staging",
         "primary_key": ["identity", "ext_team_id", "season", "season_type"],
         "foreign_keys": [
             {
                 "columns": ["identity", "ext_team_id"],
-                "ref_schema": "ext_staging",
+                "ref_schema": "staging",
                 "ref_table": "teams_staging",
                 "ref_columns": ["identity", "ext_id"],
                 "strategy": "direct",
@@ -225,12 +229,12 @@ TABLES: Dict[str, TableDef] = {
     # STAGING — roster staging tables
     # ------------------------------------------------------------------
     "leagues_teams_staging": {
-        "schema": "ext_staging",
+        "schema": "staging",
         "primary_key": ["league_code", "identity", "ext_team_id"],
         "foreign_keys": [
             {
                 "columns": ["identity", "ext_team_id"],
-                "ref_schema": "ext_staging",
+                "ref_schema": "staging",
                 "ref_table": "teams_staging",
                 "ref_columns": ["identity", "ext_id"],
                 "strategy": "direct",
@@ -242,7 +246,7 @@ TABLES: Dict[str, TableDef] = {
         "indexes": None,
     },
     "teams_players_staging": {
-        "schema": "ext_staging",
+        "schema": "staging",
         "primary_key": [
             "league_code",
             "identity",
@@ -252,7 +256,7 @@ TABLES: Dict[str, TableDef] = {
         "foreign_keys": [
             {
                 "columns": ["identity", "ext_team_id"],
-                "ref_schema": "ext_staging",
+                "ref_schema": "staging",
                 "ref_table": "teams_staging",
                 "ref_columns": ["identity", "ext_id"],
                 "strategy": "direct",
@@ -261,7 +265,7 @@ TABLES: Dict[str, TableDef] = {
             },
             {
                 "columns": ["identity", "ext_player_id"],
-                "ref_schema": "ext_staging",
+                "ref_schema": "staging",
                 "ref_table": "players_staging",
                 "ref_columns": ["identity", "ext_id"],
                 "strategy": "direct",
@@ -273,12 +277,12 @@ TABLES: Dict[str, TableDef] = {
         "indexes": None,
     },
     "countries_players_staging": {
-        "schema": "ext_staging",
+        "schema": "staging",
         "primary_key": ["identity", "country_code", "ext_player_id"],
         "foreign_keys": [
             {
                 "columns": ["identity", "ext_player_id"],
-                "ref_schema": "ext_staging",
+                "ref_schema": "staging",
                 "ref_table": "players_staging",
                 "ref_columns": ["identity", "ext_id"],
                 "strategy": "direct",
@@ -316,7 +320,7 @@ TABLES: Dict[str, TableDef] = {
             },
         ],
         "unique_constraints": None,
-        "indexes": None,
+        "indexes": [{"name": "team_id_idx", "columns": ["team_id"]}],
     },
     "teams_players": {
         "schema": "core",
@@ -351,7 +355,10 @@ TABLES: Dict[str, TableDef] = {
             },
         ],
         "unique_constraints": None,
-        "indexes": None,
+        "indexes": [
+            {"name": "team_id_idx", "columns": ["team_id"]},
+            {"name": "player_id_idx", "columns": ["player_id"]},
+        ],
     },
     "countries_players": {
         "schema": "core",
@@ -379,12 +386,39 @@ TABLES: Dict[str, TableDef] = {
         "unique_constraints": None,
         "indexes": None,
     },
-    "identities_entities": {
+    "identities_players": {
         "schema": "core",
-        "primary_key": ["identity", "ext_id", "entity"],
-        "foreign_keys": None,
+        "primary_key": ["identity", "ext_id"],
+        "foreign_keys": [
+            {
+                "columns": ["player_id"],
+                "ref_schema": "core",
+                "ref_table": "players",
+                "ref_columns": ["sts_id"],
+                "strategy": "profile_lookup",
+                "on_update": "CASCADE",
+                "on_delete": "CASCADE",
+            },
+        ],
         "unique_constraints": None,
-        "indexes": None,
+        "indexes": [{"name": "player_id_idx", "columns": ["player_id"]}],
+    },
+    "identities_teams": {
+        "schema": "core",
+        "primary_key": ["identity", "ext_id"],
+        "foreign_keys": [
+            {
+                "columns": ["team_id"],
+                "ref_schema": "core",
+                "ref_table": "teams",
+                "ref_columns": ["sts_id"],
+                "strategy": "profile_lookup",
+                "on_update": "CASCADE",
+                "on_delete": "CASCADE",
+            },
+        ],
+        "unique_constraints": None,
+        "indexes": [{"name": "team_id_idx", "columns": ["team_id"]}],
     },
     # ------------------------------------------------------------------
     # CORE — stats tables
@@ -457,12 +491,252 @@ TABLES: Dict[str, TableDef] = {
     # ------------------------------------------------------------------
     # CORE — operational tables
     # ------------------------------------------------------------------
-    "stat_coverages": {
+    "games": {
+        "schema": "core",
+        "primary_key": ["game_id"],
+        "foreign_keys": [
+            {
+                "columns": ["home_team_id"],
+                "ref_schema": "core",
+                "ref_table": "teams",
+                "ref_columns": ["sts_id"],
+                "strategy": "profile_lookup",
+                "on_update": "CASCADE",
+                "on_delete": "SET NULL",
+            },
+            {
+                "columns": ["away_team_id"],
+                "ref_schema": "core",
+                "ref_table": "teams",
+                "ref_columns": ["sts_id"],
+                "strategy": "profile_lookup",
+                "on_update": "CASCADE",
+                "on_delete": "SET NULL",
+            },
+        ],
+        "unique_constraints": [["source_game_id"]],
+        "indexes": [
+            {"name": "date_idx", "columns": ["date"]},
+        ],
+    },
+    # ------------------------------------------------------------------
+    # STAGING — game staging
+    # ------------------------------------------------------------------
+    "games_staging": {
+        "schema": "staging",
+        "primary_key": ["identity", "ext_game_id"],
+        "foreign_keys": [
+            {
+                "columns": ["identity", "ext_home_team_id"],
+                "ref_schema": "staging",
+                "ref_table": "teams_staging",
+                "ref_columns": ["identity", "ext_id"],
+                "strategy": "direct",
+                "on_update": "CASCADE",
+                "on_delete": "CASCADE",
+            },
+            {
+                "columns": ["identity", "ext_away_team_id"],
+                "ref_schema": "staging",
+                "ref_table": "teams_staging",
+                "ref_columns": ["identity", "ext_id"],
+                "strategy": "direct",
+                "on_update": "CASCADE",
+                "on_delete": "CASCADE",
+            },
+        ],
+        "unique_constraints": None,
+        "indexes": None,
+    },
+    # ------------------------------------------------------------------
+    # STAGING — game stats staging
+    # ------------------------------------------------------------------
+    "player_games_staging": {
+        "schema": "staging",
+        "primary_key": [
+            "identity",
+            "ext_player_id",
+            "ext_team_id",
+            "ext_game_id",
+        ],
+        "foreign_keys": [
+            {
+                "columns": ["identity", "ext_player_id"],
+                "ref_schema": "staging",
+                "ref_table": "players_staging",
+                "ref_columns": ["identity", "ext_id"],
+                "strategy": "direct",
+                "on_update": "CASCADE",
+                "on_delete": "CASCADE",
+            },
+            {
+                "columns": ["identity", "ext_team_id"],
+                "ref_schema": "staging",
+                "ref_table": "teams_staging",
+                "ref_columns": ["identity", "ext_id"],
+                "strategy": "direct",
+                "on_update": "CASCADE",
+                "on_delete": "CASCADE",
+            },
+            {
+                "columns": ["identity", "ext_game_id"],
+                "ref_schema": "staging",
+                "ref_table": "games_staging",
+                "ref_columns": ["identity", "ext_game_id"],
+                "strategy": "direct",
+                "on_update": "CASCADE",
+                "on_delete": "CASCADE",
+            },
+        ],
+        "unique_constraints": None,
+        "indexes": None,
+    },
+    "team_games_staging": {
+        "schema": "staging",
+        "primary_key": [
+            "identity",
+            "ext_team_id",
+            "ext_game_id",
+        ],
+        "foreign_keys": [
+            {
+                "columns": ["identity", "ext_team_id"],
+                "ref_schema": "staging",
+                "ref_table": "teams_staging",
+                "ref_columns": ["identity", "ext_id"],
+                "strategy": "direct",
+                "on_update": "CASCADE",
+                "on_delete": "CASCADE",
+            },
+            {
+                "columns": ["identity", "ext_game_id"],
+                "ref_schema": "staging",
+                "ref_table": "games_staging",
+                "ref_columns": ["identity", "ext_game_id"],
+                "strategy": "direct",
+                "on_update": "CASCADE",
+                "on_delete": "CASCADE",
+            },
+        ],
+        "unique_constraints": None,
+        "indexes": None,
+    },
+    # ------------------------------------------------------------------
+    # CORE — game stats tables
+    # ------------------------------------------------------------------
+    "player_games": {
+        "schema": "core",
+        "primary_key": ["league_code", "game_id", "player_id", "team_id"],
+        "foreign_keys": [
+            {
+                "columns": ["player_id"],
+                "ref_schema": "core",
+                "ref_table": "players",
+                "ref_columns": ["sts_id"],
+                "strategy": "profile_lookup",
+                "on_update": "CASCADE",
+                "on_delete": "CASCADE",
+            },
+            {
+                "columns": ["team_id"],
+                "ref_schema": "core",
+                "ref_table": "teams",
+                "ref_columns": ["sts_id"],
+                "strategy": "profile_lookup",
+                "on_update": "CASCADE",
+                "on_delete": "CASCADE",
+            },
+            {
+                "columns": ["game_id"],
+                "ref_schema": "core",
+                "ref_table": "games",
+                "ref_columns": ["game_id"],
+                "strategy": "profile_lookup",
+                "on_update": "CASCADE",
+                "on_delete": "CASCADE",
+            },
+            {
+                "columns": ["league_code"],
+                "ref_schema": "core",
+                "ref_table": "leagues",
+                "ref_columns": ["code"],
+                "strategy": "profile_lookup",
+                "on_update": "CASCADE",
+                "on_delete": "CASCADE",
+            },
+        ],
+        "unique_constraints": None,
+        "indexes": [
+            {"name": "date_idx", "columns": ["date"]},
+        ],
+    },
+    "team_games": {
+        "schema": "core",
+        "primary_key": ["league_code", "game_id", "team_id"],
+        "foreign_keys": [
+            {
+                "columns": ["team_id"],
+                "ref_schema": "core",
+                "ref_table": "teams",
+                "ref_columns": ["sts_id"],
+                "strategy": "profile_lookup",
+                "on_update": "CASCADE",
+                "on_delete": "CASCADE",
+            },
+            {
+                "columns": ["game_id"],
+                "ref_schema": "core",
+                "ref_table": "games",
+                "ref_columns": ["game_id"],
+                "strategy": "profile_lookup",
+                "on_update": "CASCADE",
+                "on_delete": "CASCADE",
+            },
+            {
+                "columns": ["league_code"],
+                "ref_schema": "core",
+                "ref_table": "leagues",
+                "ref_columns": ["code"],
+                "strategy": "profile_lookup",
+                "on_update": "CASCADE",
+                "on_delete": "CASCADE",
+            },
+        ],
+        "unique_constraints": None,
+        "indexes": [
+            {"name": "date_idx", "columns": ["date"]},
+        ],
+    },
+    "game_coverages": {
         "schema": "core",
         "primary_key": [
             "identity",
             "league_code",
-            "entity",
+            "ext_game_id",
+            "target",
+            "dataset",
+            "col_name",
+        ],
+        "foreign_keys": [
+            {
+                "columns": ["league_code"],
+                "ref_schema": "core",
+                "ref_table": "leagues",
+                "ref_columns": ["code"],
+                "strategy": "profile_lookup",
+                "on_update": "CASCADE",
+                "on_delete": "CASCADE",
+            },
+        ],
+        "unique_constraints": None,
+        "indexes": None,
+    },
+    "season_coverages": {
+        "schema": "core",
+        "primary_key": [
+            "identity",
+            "league_code",
+            "target",
             "season",
             "season_type",
             "dataset",

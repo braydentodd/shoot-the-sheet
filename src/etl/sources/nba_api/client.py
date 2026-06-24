@@ -20,7 +20,6 @@ from src.core.lib.season_resolver import format_season_param, parse_season_end_y
 from src.etl.definitions.datasets import DATASETS
 from src.etl.lib.source_resolver import (
     get_source_league_id,
-    get_source_league_season_param_format,
 )
 from src.etl.sources.nba_api.config import (
     API_CONFIG,
@@ -205,9 +204,14 @@ def build_dataset_params(
         "endpoint",
     }
 
-    # Season parameter format: source config > dataset override > auto-inferred
-    source_format = get_source_league_season_param_format("nba_api", league_code)
-    param_format = wire.get("season_param_format", source_format)
+    # Season parameter format — per-league from dataset config.
+    param_format_raw = wire.get("season_param_format")
+    if isinstance(param_format_raw, dict):
+        param_format = param_format_raw[league_code]
+    elif isinstance(param_format_raw, str):
+        param_format = param_format_raw
+    else:
+        param_format = "SSSS-EE"
 
     # Season parameter — format according to source's token spec
     season_param = wire.get("season_param", "season")
@@ -321,6 +325,36 @@ def _apply_row_filters(
 
 
 # ============================================================================
+# PBP RESPONSE NORMALIZER
+# ============================================================================
+
+
+def _normalize_pbp_response(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert a playbyplayv3 response to standard resultSets format.
+
+    Extracts the ``actions`` array from the nested v3 structure and
+    returns it as a single ``PlayByPlay`` result set.
+    """
+    game = raw.get("game", {})
+    if not isinstance(game, dict):
+        return raw
+    actions = game.get("actions", [])
+    if not actions:
+        return {"resultSets": []}
+    return {
+        "resultSets": [
+            {
+                "name": "PlayByPlay",
+                "headers": sorted(actions[0].keys()),
+                "rowSet": [
+                    [a.get(h) for h in sorted(actions[0].keys())] for a in actions
+                ],
+            }
+        ]
+    }
+
+
+# ============================================================================
 # FETCHER FACTORY
 # ============================================================================
 
@@ -360,6 +394,8 @@ def make_fetcher(
         )
         result = with_retry(api_call, rate_limiter)
         if result is not None:
+            if class_name == "playbyplayv3":
+                result = _normalize_pbp_response(result)
             result = _apply_row_filters(result, ds_cfg, season_end_year)
         return result
 

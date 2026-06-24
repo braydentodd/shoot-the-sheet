@@ -50,7 +50,7 @@ class ExecutionContext:
     null-entity queries and to route writes.
     """
 
-    entity: str
+    target: str
     table_name: str
     season: str
     season_type: str
@@ -90,18 +90,27 @@ def _should_abort(
 _STATS_TABLES = {"player_seasons", "team_seasons"}
 
 
-def _resolve_staging_table(entity: str, table_name: str) -> str:
-    """Return the schema-qualified staging table for a target core/staging table.
+def _target_api_param(target: str) -> str:
+    """Derive the API parameter name from a target key.
+
+    ``player_seasons`` and ``player_games`` both use ``player_id``;
+    ``team_seasons`` and ``team_games`` both use ``team_id``.
+    """
+    return "player_id" if target.startswith("player") else "team_id"
+
+
+def _resolve_staging_table(table_name: str) -> str:
+    """Return the schema-qualified staging table for a core/staging table.
 
     ``table_name`` is the bare name (e.g. ``'players'``, ``'player_seasons'``).
     We derive the staging equivalent by appending ``_staging`` when the table
     is in the core schema, or return it as-is when it already lives in staging.
     """
     if table_name.endswith("_staging"):
-        return f"ext_staging.{table_name}"
+        return f"staging.{table_name}"
     # Core tables (players, teams, player_seasons, team_seasons) map to
     # their staging counterparts.
-    return f"ext_staging.{table_name}_staging"
+    return f"staging.{table_name}_staging"
 
 
 # ============================================================================
@@ -114,27 +123,27 @@ def _fetch_null_entity_ids(
     columns: List[str],
     conn=None,
 ) -> List[Any]:
-    """Fetch entity source IDs from the staging table that have NULL values
+    """Fetch target source IDs from the staging table that have NULL values
     for the given *columns*."""
     cols_key = frozenset(columns)
     if cols_key in ctx._null_entity_cache:
         return ctx._null_entity_cache[cols_key]
 
-    target_table = _resolve_staging_table(ctx.entity, ctx.table_name)
+    staging_table = _resolve_staging_table(ctx.table_name)
     is_stats = ctx.table_name in _STATS_TABLES
 
     def _query(cur):
         null_checks = " OR ".join(f"{quote_col(c)} IS NULL" for c in columns)
         if is_stats:
             cur.execute(
-                f"SELECT {quote_col('ext_id')} FROM {target_table} "
+                f"SELECT {quote_col('ext_id')} FROM {staging_table} "
                 f"WHERE season = %s AND season_type = %s "
                 f"AND ({null_checks})",
                 (ctx.season, ctx.season_type),
             )
         else:
             cur.execute(
-                f"SELECT {quote_col('ext_id')} FROM {target_table} WHERE {null_checks}"
+                f"SELECT {quote_col('ext_id')} FROM {staging_table} WHERE {null_checks}"
             )
         return [row[0] for row in cur.fetchall() if row[0] is not None]
 
@@ -149,7 +158,7 @@ def _fetch_null_entity_ids(
     ctx._null_entity_cache[cols_key] = source_ids
     logger.debug(
         "_fetch_null_entity_ids: table=%s cols=%s -> %d identities",
-        target_table,
+        staging_table,
         columns,
         len(source_ids),
     )
@@ -200,7 +209,7 @@ def _execute_multi_season_league_wide(
                 rows = extract_columns_from_result(
                     result,
                     columns,
-                    ctx.entity,
+                    ctx.target,
                     ctx.entity_id_field,
                     result_set_name=_get_result_set(dataset, ctx.source_code),
                     id_aliases=ctx.id_aliases,
@@ -226,7 +235,7 @@ def _execute_multi_season_league_wide(
         return 0
 
     return write_entity_rows(
-        ctx.entity,
+        ctx.target,
         ctx.table_name,
         final_rows,
         ctx.season,
@@ -270,7 +279,7 @@ def _execute_league_wide(
     rows = extract_columns_from_result(
         result,
         columns,
-        ctx.entity,
+        ctx.target,
         ctx.entity_id_field,
         result_set_name=_get_result_set(dataset, ctx.source_code),
         id_aliases=ctx.id_aliases,
@@ -279,7 +288,7 @@ def _execute_league_wide(
         "_execute_league_wide: %s -> %d entities extracted", dataset, len(rows)
     )
     return write_entity_rows(
-        ctx.entity,
+        ctx.target,
         ctx.table_name,
         rows,
         ctx.season,
@@ -325,7 +334,7 @@ def _execute_pipeline_per_entity(
     all_rows: Dict[int, Dict[str, Any]] = {}
     written_count = 0
     consecutive_failures = 0
-    id_param = f"{ctx.entity}_id"
+    id_param = _target_api_param(ctx.target)
 
     for identity_value in identities:
         fetcher = partial(
@@ -338,7 +347,7 @@ def _execute_pipeline_per_entity(
             result = execute_pipeline(
                 pipeline_config,
                 fetcher,
-                ctx.entity,
+                ctx.target,
                 ctx.season,
                 ctx.season_type_name,
                 entity_id_field=ctx.entity_id_field,
@@ -359,7 +368,7 @@ def _execute_pipeline_per_entity(
 
         if len(all_rows) >= ENTITY_CHUNK_SIZE:
             written_count += write_entity_rows(
-                ctx.entity,
+                ctx.target,
                 ctx.table_name,
                 all_rows,
                 ctx.season,
@@ -371,7 +380,7 @@ def _execute_pipeline_per_entity(
 
     if all_rows:
         written_count += write_entity_rows(
-            ctx.entity,
+            ctx.target,
             ctx.table_name,
             all_rows,
             ctx.season,
@@ -407,7 +416,7 @@ def _execute_pipeline_column(
         result = execute_pipeline(
             pipeline_config,
             pipeline_fetcher,
-            ctx.entity,
+            ctx.target,
             ctx.season,
             ctx.season_type_name,
             entity_id_field=ctx.entity_id_field,
@@ -422,7 +431,7 @@ def _execute_pipeline_column(
         return 0
     rows = {eid: {col_name: val} for eid, val in result.items()}
     return write_entity_rows(
-        ctx.entity,
+        ctx.target,
         ctx.table_name,
         rows,
         ctx.season,
@@ -451,11 +460,11 @@ def _execute_per_entity(
     removed_refresh_mode: str = "null_only",
     conn=None,
 ) -> int:
-    """Per-entity API calls for simple columns.
+    """Per-target API calls for simple columns.
 
     When *tier* is ``'per_team'``, passes ``team_id`` (from ``ctx.team_ids``)
-    instead of ``{entity}_id``, and iterates over team identities rather
-    than entity identities.
+    instead of ``{target}_id``, and iterates over team identities rather
+    than target identities.
     """
     if tier == "per_team":
         identities = list(ctx.team_ids.values())
@@ -481,7 +490,7 @@ def _execute_per_entity(
     all_rows: Dict[int, Dict[str, Any]] = {}
     written_count = 0
     consecutive_failures = 0
-    id_param = "team_id" if tier == "per_team" else f"{ctx.entity}_id"
+    id_param = "team_id" if tier == "per_team" else _target_api_param(ctx.target)
 
     for idx, identity_value in enumerate(identities):
         try:
@@ -518,7 +527,7 @@ def _execute_per_entity(
         extracted = extract_columns_from_result(
             result,
             columns,
-            ctx.entity,
+            ctx.target,
             ctx.entity_id_field,
             result_set_name=_get_result_set(dataset, ctx.source_code),
             id_aliases=ctx.id_aliases,
@@ -528,7 +537,7 @@ def _execute_per_entity(
             for row in extracted.values():
                 row["ext_team_id"] = identity_value
             written_count += write_entity_rows(
-                ctx.entity,
+                ctx.target,
                 ctx.table_name,
                 extracted,
                 ctx.season,
@@ -541,7 +550,7 @@ def _execute_per_entity(
 
             if len(all_rows) >= ENTITY_CHUNK_SIZE:
                 written_count += write_entity_rows(
-                    ctx.entity,
+                    ctx.target,
                     ctx.table_name,
                     all_rows,
                     ctx.season,
@@ -553,7 +562,7 @@ def _execute_per_entity(
 
     if all_rows:
         written_count += write_entity_rows(
-            ctx.entity,
+            ctx.target,
             ctx.table_name,
             all_rows,
             ctx.season,
@@ -592,7 +601,7 @@ def execute_group(
             ctx.season,
             ctx.season_type_name,
             dataset,
-            ctx.entity,
+            ctx.target,
             param_label,
         )
     else:
@@ -601,11 +610,11 @@ def execute_group(
             ctx.season,
             ctx.season_type_name,
             dataset,
-            ctx.entity,
+            ctx.target,
         )
 
     written = 0
-    per_entity_tiers = {"per_team", "per_player"}
+    per_entity_tiers = {"per_team", "per_player", "per_game"}
 
     if tier in per_entity_tiers:
         written += _execute_per_entity(

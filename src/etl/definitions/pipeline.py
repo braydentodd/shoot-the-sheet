@@ -1,48 +1,50 @@
 """
 Shoot the Sheet - Global ETL Pipeline Policy
 
-Phases are ordered lists of handler names grouped into execution clusters.
-The orchestrator dispatches each handler directly.  Which datasets run in
-which phase is declared by each dataset's ``stage`` field in
-:data:`src.etl.definitions.datasets.DATASETS`.
+Phases are grouped into clusters, and clusters are grouped into stages.
 
-Clusters:
-    - ``execution_start``  — runs once before all leagues (schema bootstrap only).
-    - ``per_league``       — runs once per league (season detection).
-    - ``per_identity``     — runs once per league (maintain / match / upsert).
-    - ``execution_end``    — runs once after all leagues (prune phases).
+  stage (ingest | promote)
+    └─ cluster (execution_start | per_league | per_identity | execution_end)
+         └─ phase  (build_schema | maintain_games | promote_profiles | ...)
+
+A dataset's ``phase`` field declares which phase triggers it.
+
+The orchestrator dispatches each phase directly.
 """
 
 from typing import Dict, List
 
-VALID_ETL_PHASES = frozenset(
+VALID_CLUSTERS = frozenset(
     {"execution_start", "per_league", "per_identity", "execution_end"}
 )
 
-PIPELINE_PHASES: Dict[str, List[str]] = {
+PIPELINE: Dict[str, List[str]] = {
     "execution_start": [
         "build_schema",
     ],
     "per_league": [
-        "season_detector",
+        "detect_season_activity",
     ],
     "per_identity": [
-        "leagues_teams_maintainer",
-        "teams_players_maintainer",
-        "current_stats_maintainer",
-        "stats_coverage_maintainer",
-        "profile_maintainer",
-        "match_entities",
-        "upsert_entities",
+        "maintain_leagues_teams",
+        "maintain_teams_players",
+        "maintain_games",
+        "maintain_seasons",
+        "maintain_profiles",
     ],
     "execution_end": [
-        "normalize_null_zero",
+        "match_entities",
+        "merge_staging",
+        "promote_profiles",
+        "promote_rosters",
+        "promote_stats",
+        "cascade_delete_reviewed",
+        "normalize_nulls_zeroes",
         "prune_stats_retention",
         "prune_entities",
-        "prune_coverages",
+        "prune_season_coverages",
+        "prune_game_coverages",
     ],
 }
 
-VALID_ETL_STEP_HANDLERS = frozenset(
-    handler for handlers in PIPELINE_PHASES.values() for handler in handlers
-)
+VALID_PHASES = frozenset(phase for phases in PIPELINE.values() for phase in phases)

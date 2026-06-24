@@ -63,18 +63,40 @@ def null_if_zero(value: Any) -> Union[int, None]:
     return safe_int(value)
 
 
-def parse_height(height_str: Any) -> Union[int, None]:
-    """Parse height string (e.g. '6-10') to total inches. Returns None on failure."""
-    if not height_str or height_str == "" or height_str == "None":
+def parse_inches(raw: Any) -> Union[int, None]:
+    """Parse feet/inches string to total inches, rounded to nearest inch.
+
+    Handles: 6-10, 6-10.5, 6'10", 6'10, 6'10.5", 6 ft 10 in, 72, 72.5.
+    Returns None on unparseable input.
+    """
+    if not raw:
         return None
-    try:
-        s = str(height_str)
-        if "-" in s:
-            feet, inches = s.split("-")
-            return int(feet) * 12 + int(inches)
-        return int(float(s)) if s else None
-    except (ValueError, AttributeError):
+
+    s = str(raw).strip()
+    if not s or s.lower() in ("none", "nan", "n/a", "-"):
         return None
+
+    # 1) Raw inches: "72" or "72.5" (no separator, no quote/apostrophe)
+    if _re.fullmatch(r"\d+(?:\.\d+)?", s):
+        return int(float(s) + 0.5)
+
+    # 2) Feet-inches with dash or quote: "6-10.5", "6'10.5\"", "6'10.5", etc.
+    m = _re.fullmatch(r"(\d+)\s*[-'\u2019]\s*(\d+(?:\.\d+)?)\"?", s)
+    if m:
+        total = int(m.group(1)) * 12 + float(m.group(2))
+        return int(total + 0.5)
+
+    # 3) Human-readable: "6 ft 10 in" or "6ft 10in"
+    m = _re.fullmatch(
+        r"(\d+)\s*(?:ft|foot|feet)\s*(\d+(?:\.\d+)?)\s*(?:in|inch(?:es)?)?",
+        s,
+        _re.IGNORECASE,
+    )
+    if m:
+        total = int(m.group(1)) * 12 + float(m.group(2))
+        return int(total + 0.5)
+
+    return None
 
 
 def parse_birthdate(date_str: Any) -> Union[date, None]:
@@ -188,7 +210,7 @@ TRANSFORMS: Dict[str, Callable] = {
     "safe_int": safe_int,
     "safe_str": safe_str,
     "null_if_zero": null_if_zero,
-    "parse_height": parse_height,
+    "parse_inches": parse_inches,
     "parse_birthdate": parse_birthdate,
     "format_season": format_season,
     "normalize_name": _normalize_name,
@@ -229,7 +251,7 @@ def apply_transform(value: Any, transform_name: str, scale: int = 1) -> Any:
 def execute_pipeline(
     pipeline_config: Dict[str, Any],
     api_fetcher: Callable,
-    entity: str,
+    target: str,
     season: str,
     season_type_name: str,
     entity_id_field: str,
@@ -241,7 +263,7 @@ def execute_pipeline(
         pipeline_config: The ``transformation`` dict from a SOURCES entry.
         api_fetcher: Callable ``(dataset, params, execution_tier) -> raw_result``
             that handles the actual API call (provided by the runner).
-        entity: 'player' or 'team'.
+        target: Table routing target (e.g. ``'player_seasons'``, ``'team_games'``).
         season: Season string.
         season_type_name: e.g. 'Regular Season'.
         entity_id_field: API header name for the entity's ID

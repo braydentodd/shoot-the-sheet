@@ -30,7 +30,7 @@ VALID_TRANSFORMS = {
     "safe_int",
     "safe_str",
     "null_if_zero",
-    "parse_height",
+    "parse_inches",
     "parse_birthdate",
     "format_season",
     "normalize_name",
@@ -301,54 +301,50 @@ def _validate_fk_targets(tables: Dict[str, Any]) -> List[str]:
 def _validate_league_stage_definitions() -> List[str]:
     """Validate global ETL phase ordering declarations."""
     from src.etl.definitions.pipeline import (
-        PIPELINE_PHASES,
-        VALID_ETL_PHASES,
-        VALID_ETL_STEP_HANDLERS,
+        PIPELINE,
+        VALID_CLUSTERS,
+        VALID_PHASES,
     )
 
     errors: List[str] = []
 
-    if not isinstance(PIPELINE_PHASES, dict):
-        return [f"PIPELINE_PHASES: expected dict, got {type(PIPELINE_PHASES).__name__}"]
+    if not isinstance(PIPELINE, dict):
+        return [f"PIPELINE: expected dict, got {type(PIPELINE).__name__}"]
 
-    unsupported_phases = sorted(
-        phase for phase in PIPELINE_PHASES if phase not in VALID_ETL_PHASES
+    unsupported = sorted(
+        cluster for cluster in PIPELINE if cluster not in VALID_CLUSTERS
     )
-    if unsupported_phases:
+    if unsupported:
         errors.append(
-            f"PIPELINE_PHASES: unsupported phases {unsupported_phases}; expected subset of {sorted(VALID_ETL_PHASES)}"
+            f"PIPELINE: unsupported clusters {unsupported}; expected subset of {sorted(VALID_CLUSTERS)}"
         )
 
-    missing_phases = sorted(
-        phase for phase in VALID_ETL_PHASES if phase not in PIPELINE_PHASES
-    )
-    if missing_phases:
-        errors.append(f"PIPELINE_PHASES: missing required phases {missing_phases}")
+    missing = sorted(cluster for cluster in VALID_CLUSTERS if cluster not in PIPELINE)
+    if missing:
+        errors.append(f"PIPELINE: missing required clusters {missing}")
 
-    for phase, handlers in PIPELINE_PHASES.items():
-        phase_prefix = f"PIPELINE_PHASES['{phase}']"
-        if not isinstance(handlers, list):
-            errors.append(
-                f"{phase_prefix}: expected list, got {type(handlers).__name__}"
-            )
+    for cluster, phases in PIPELINE.items():
+        prefix = f"PIPELINE['{cluster}']"
+        if not isinstance(phases, list):
+            errors.append(f"{prefix}: expected list, got {type(phases).__name__}")
             continue
-        if not handlers:
-            errors.append(f"{phase_prefix}: must not be empty")
+        if not phases:
+            errors.append(f"{prefix}: must not be empty")
             continue
 
         seen = set()
-        for idx, handler in enumerate(handlers):
-            prefix = f"{phase_prefix}[{idx}]"
-            if not isinstance(handler, str) or not handler:
-                errors.append(f"{prefix}: expected non-empty str")
+        for idx, phase in enumerate(phases):
+            pfx = f"{prefix}[{idx}]"
+            if not isinstance(phase, str) or not phase:
+                errors.append(f"{pfx}: expected non-empty str")
                 continue
-            if handler in seen:
-                errors.append(f"{phase_prefix}: duplicate handler {handler!r}")
+            if phase in seen:
+                errors.append(f"{prefix}: duplicate phase {phase!r}")
                 continue
-            seen.add(handler)
-            if handler not in VALID_ETL_STEP_HANDLERS:
+            seen.add(phase)
+            if phase not in VALID_PHASES:
                 errors.append(
-                    f"{prefix}: unknown handler {handler!r}; expected one of {sorted(VALID_ETL_STEP_HANDLERS)}"
+                    f"{pfx}: unknown phase {phase!r}; expected one of {sorted(VALID_PHASES)}"
                 )
 
     return errors

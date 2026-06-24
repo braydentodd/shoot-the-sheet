@@ -55,29 +55,29 @@ def _enrich_source(source: Dict[str, Any], col_meta: Any) -> Dict[str, Any]:
 
 def _get_source_definitions(
     col_meta: Any,
-    entity: str,
+    target: str,
     source_code: str,
     league_code: str,
 ) -> List[Dict[str, Any]]:
-    """Return source entries for a column matching the exact *entity* key.
+    """Return source entries for a column matching the exact *target* key.
 
-    Each column declares which entities it supports in ``dataset_mapping``.
-    If *entity* is not present, this column is not applicable — there is no
+    Each column declares which targets it supports in ``dataset_mapping``.
+    If *target* is not present, this column is not applicable — there is no
     fallback aliasing.  Profile columns (e.g. ``birthdate``) are only
-    extracted for the ``"player"`` entity; opponent columns (e.g.
-    ``opp_fg3m``) are only extracted for ``"team"``.
+    extracted for the ``"players"`` target; opponent columns (e.g.
+    ``opp_fg3m``) are only extracted for ``"teams"``.
     """
     all_sources = col_meta.get("dataset_mapping") or {}
     league_sources = all_sources.get(league_code, {})
     identity_sources = league_sources.get(source_code)
     if not isinstance(identity_sources, dict):
         return []
-    entity_sources = identity_sources.get(entity)
-    if not isinstance(entity_sources, dict):
+    target_sources = identity_sources.get(target)
+    if not isinstance(target_sources, dict):
         return []
     return [
         {"dataset": dataset_name, **mapping}
-        for dataset_name, mapping in entity_sources.items()
+        for dataset_name, mapping in target_sources.items()
     ]
 
 
@@ -132,7 +132,7 @@ def tier_for_source(source: Dict[str, Any], dataset: str, source_code: str) -> s
 
 
 def build_call_groups(
-    entity: str,
+    target: str,
     season: str,
     source_code: str,
     dataset: str,
@@ -140,7 +140,7 @@ def build_call_groups(
     league_code: Union[str, None] = None,
     in_season: bool = True,
 ) -> List[Dict[str, Any]]:
-    """Group columns for *entity* that reference *dataset*.
+    """Group columns for *target* that reference *dataset*.
 
     Groups simple/derived columns that share the same params so each
     batch requires exactly one API call.  Pipeline columns get their
@@ -185,7 +185,7 @@ def build_call_groups(
 
         sources = _get_source_definitions(
             col_meta,
-            entity,
+            target,
             source_code,
             league_code=league_code or "",
         )
@@ -252,6 +252,8 @@ def build_call_groups(
     # Merge per_entity columns that share dataset + params into one group.
     per_entity_merged: Dict[str, Dict[tuple, Dict[str, Any]]] = {
         "per_team": {},
+        "per_game": {},
+        "per_player": {},
     }
     for item in per_entity:
         tier = item["tier"]
@@ -289,8 +291,8 @@ def build_call_groups(
             )
 
     logger.debug(
-        "build_call_groups: entity=%s table=%s -> %d groups (%d league_wide, %d per_entity)",
-        entity,
+        "build_call_groups: target=%s table=%s -> %d groups (%d league_wide, %d per_entity)",
+        target,
         table_name,
         len(groups),
         len(league_wide),

@@ -4,7 +4,7 @@ Shoot the Sheet - ETL Cleanup
 Multi-phase data hygiene:
 
   Phase 0: Stats normalization (null/zero)
-      normalize_null_zero - Normalize zero-values and NULLs in stats
+      normalize_nulls_zeroes - Normalize zero-values and NULLs in stats
                              tables based on minutes played.
 
   Phase A: Per-league stats retention
@@ -16,7 +16,7 @@ Multi-phase data hygiene:
                       stats rows in any league schema AND no roster history.
 
   Phase C: Coverage pruning
-      prune_coverages - DELETE stat_coverages rows for seasons outside
+      prune_season_coverages - DELETE season_coverages rows for seasons outside
                         the league's retention window.
 
 All phases are idempotent.  Phase B should be run only after every league
@@ -87,59 +87,51 @@ def _discover_stats_columns(cur, table_name: str) -> List[str]:
     return [row[0] for row in cur.fetchall()]
 
 
-def normalize_null_zero(league_code: str) -> int:
+def normalize_nulls_zeroes(league_code: Union[str, None] = None) -> int:
     """Normalize null/zero values in stats tables based on minutes played.
 
-    For rows where ``mins = 0`` (player/team did not play):
-        Set any stats column with value ``0`` to ``NULL``.  Exceptions:
-        ``games``, ``poss``, and ``opp_poss`` are preserved as zero.
-
-    For rows where ``mins > 0`` (player/team did play):
-        Set any stats column with value ``NULL`` to ``0``.
-
-    Returns the total number of rows updated across both tables.
+    If *league_code* is None, normalizes across all registered leagues.
     """
+    league_codes = [league_code] if league_code else list(LEAGUES)
     updated = 0
     with db_connection() as conn:
         with conn.cursor() as cur:
-            for table_name in ("player_seasons", "team_seasons"):
-                stats_cols = _discover_stats_columns(cur, table_name)
-                if not stats_cols:
-                    continue
+            for lc in league_codes:
+                for table_name in ("player_seasons", "team_seasons"):
+                    stats_cols = _discover_stats_columns(cur, table_name)
+                    if not stats_cols:
+                        continue
 
-                # --- Mins = 0: zero → NULL (except preserved columns) ---
-                zero_to_null = [c for c in stats_cols if c not in _ZERO_PRESERVE_COLS]
-                if zero_to_null:
-                    assignments = ", ".join(
-                        f"{quote_col(c)} = NULLIF({quote_col(c)}, 0)"
-                        for c in zero_to_null
+                    zero_to_null = [
+                        c for c in stats_cols if c not in _ZERO_PRESERVE_COLS
+                    ]
+                    if zero_to_null:
+                        assignments = ", ".join(
+                            f"{quote_col(c)} = NULLIF({quote_col(c)}, 0)"
+                            for c in zero_to_null
+                        )
+                        cur.execute(
+                            f"UPDATE core.{table_name} SET {assignments}"
+                            f" WHERE league_code = %s AND mins = 0",
+                            (lc,),
+                        )
+                        updated += cur.rowcount
+
+                    null_to_zero = ", ".join(
+                        f"{quote_col(c)} = COALESCE({quote_col(c)}, 0)"
+                        for c in stats_cols
                     )
                     cur.execute(
-                        f"UPDATE core.{table_name} SET {assignments}"
-                        f" WHERE league_code = %s AND mins = 0",
-                        (league_code,),
+                        f"UPDATE core.{table_name} SET {null_to_zero}"
+                        f" WHERE league_code = %s AND mins > 0",
+                        (lc,),
                     )
                     updated += cur.rowcount
-
-                # --- Mins > 0: NULL → zero ---
-                null_to_zero = ", ".join(
-                    f"{quote_col(c)} = COALESCE({quote_col(c)}, 0)" for c in stats_cols
-                )
-                cur.execute(
-                    f"UPDATE core.{table_name} SET {null_to_zero}"
-                    f" WHERE league_code = %s AND mins > 0",
-                    (league_code,),
-                )
-                updated += cur.rowcount
 
         conn.commit()
 
     if updated:
-        logger.info(
-            "Normalized null/zero for %s: %d rows updated",
-            league_code,
-            updated,
-        )
+        logger.info("Normalized null/zero: %d rows updated", updated)
     return updated
 
 
@@ -148,44 +140,43 @@ def normalize_null_zero(league_code: str) -> int:
 # ---------------------------------------------------------------------------
 
 
-def prune_stats_retention(league_code: str, current_season: str) -> int:
-    """Delete stats rows older than the league's retention window.
+def prune_stats_retention(
+    league_code: Union[str, None] = None, current_season: str = ""
+) -> int:
+    """Delete stats rows older than each league's retention window.
 
-    ``current_season`` defines the most recent season (e.g. ``'2025-26'``);
-    the retention window is governed by the league's ``season_retention_start``.
+    If *league_code* is None, prunes across all registered leagues.
     """
-    if league_code not in LEAGUES:
-        raise ValueError(f"Unknown league: {league_code!r}")
-
-    oldest = get_oldest_retained_season(league_code, current_season)
+    league_codes = [league_code] if league_code else list(LEAGUES)
     pruned = 0
     with db_connection() as conn:
         with conn.cursor() as cur:
-            for table_name, meta in TABLES.items():
-                if meta.get("schema") != "core":
-                    continue
-                if table_name.endswith("_staging"):
-                    continue
-                # Only prune stats tables (they have both league and season columns).
-                if (
-                    not table_name.endswith("_seasons")
-                    and table_name != "stat_coverages"
-                ):
-                    continue
-                schema_name = meta["schema"]
-                cur.execute(
-                    f"DELETE FROM {schema_name}.{table_name} WHERE league_code = %s AND season < %s",
-                    (league_code, oldest),
-                )
-                if cur.rowcount:
-                    logger.info(
-                        "Pruned %d rows from %s.%s (season < %s)",
-                        cur.rowcount,
-                        schema_name,
-                        table_name,
-                        oldest,
+            for lc in league_codes:
+                oldest = get_oldest_retained_season(lc, current_season)
+                for table_name, meta in TABLES.items():
+                    if meta.get("schema") != "core":
+                        continue
+                    if table_name.endswith("_staging"):
+                        continue
+                    if (
+                        not table_name.endswith("_seasons")
+                        and table_name != "season_coverages"
+                    ):
+                        continue
+                    schema_name = meta["schema"]
+                    cur.execute(
+                        f"DELETE FROM {schema_name}.{table_name} WHERE league_code = %s AND season < %s",
+                        (lc, oldest),
                     )
-                    pruned += cur.rowcount
+                    if cur.rowcount:
+                        logger.info(
+                            "Pruned %d rows from %s.%s (season < %s)",
+                            cur.rowcount,
+                            schema_name,
+                            table_name,
+                            oldest,
+                        )
+                        pruned += cur.rowcount
         conn.commit()
     return pruned
 

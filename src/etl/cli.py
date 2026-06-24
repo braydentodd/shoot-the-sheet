@@ -24,3 +24,10 @@ def add_subparser(subparsers) -> None:
         choices=sorted(LEAGUES),
         help="League key. If omitted, all leagues are executed consecutively in sorted order.",
     )
+    p.add_argument(
+        "--stage",
+        type=str,
+        default=None,
+        choices=["ingest", "promote"],
+        help="Run only a subset of the pipeline. 'ingest' = execution_start + per_league + per_identity (data into staging). 'promote' = execution_end (staging → core, cleanup). Omit for full run.",
+    )

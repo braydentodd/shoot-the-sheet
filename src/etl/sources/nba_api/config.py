@@ -73,9 +73,19 @@ API_CONFIG: ApiConfigDef = {
 # ============================================================================
 
 API_FIELD_NAMES: Dict[str, Dict[str, Any]] = {
-    "entity_id": {
-        "player": "PLAYER_ID",
-        "team": "TEAM_ID",
+    "target_id": {
+        "players": "PLAYER_ID",
+        "player_seasons": "PLAYER_ID",
+        "player_games": "PLAYER_ID",
+        "teams_players": "PLAYER_ID",
+        "countries_players": "PLAYER_ID",
+        "teams": "TEAM_ID",
+        "team_seasons": "TEAM_ID",
+        "team_games": "TEAM_ID",
+        "leagues_teams": "TEAM_ID",
     },
-    "id_aliases": {"PLAYER_ID": ["PERSON_ID", "VS_PLAYER_ID"]},
+    "id_aliases": {
+        "PLAYER_ID": ["PERSON_ID", "VS_PLAYER_ID", "personId"],
+        "TEAM_ID": ["teamId"],
+    },
 }

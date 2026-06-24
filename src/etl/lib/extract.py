@@ -130,7 +130,7 @@ def extract_derived_field(
 def extract_columns_from_result(
     api_result: Dict[str, Any],
     columns: Dict[str, Dict[str, Any]],
-    entity: str,
+    target: str,
     entity_id_field: str,
     result_set_name: Union[str, None] = None,
     id_aliases: Union[Dict[str, List[str]], None] = None,
@@ -141,7 +141,7 @@ def extract_columns_from_result(
         api_result: Raw API JSON with ``resultSets``.
         columns: ``{canonical_col_name: source_config}`` — typically a
                  subset of SOURCES filtered for a specific dataset.
-        entity: 'player' or 'team'.
+        target: Table routing target (e.g. ``'player_seasons'``, ``'team_games'``).
         entity_id_field: API header name for the entity ID (e.g. 'PLAYER_ID').
         result_set_name: If given, only process this result set.
 

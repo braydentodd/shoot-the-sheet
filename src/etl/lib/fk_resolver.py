@@ -17,34 +17,32 @@ def load_fk_mapping(
     source_code: str,
     source_ids: Optional[Iterable[Any]] = None,
 ) -> Dict[str, int]:
-    """Return ``{str(source_id): target_id}`` via ``identities_entities``.
+    """Return ``{str(ext_id): sts_id}`` via the identity registry.
 
-    In the identity-based system, entity resolution goes through the
-    identities_entities table which maps ``(identity, code, entity)``
-    to ``entity_id`` (the internal ``sts_id``).
+    Routes to ``identities_players`` or ``identities_teams`` based on
+    *ref_table* (e.g. ``"players"`` → identities_players).
     """
-    ie_meta = TABLES["identities_entities"]
-    ie_table = f"{ie_meta['schema']}.identities_entities"
+    if ref_table in ("players", "player"):
+        id_table = "core.identities_players"
+        id_col = "player_id"
+    elif ref_table in ("teams", "team"):
+        id_table = "core.identities_teams"
+        id_col = "team_id"
+    else:
+        raise ValueError(f"Unsupported ref_table for FK mapping: {ref_table!r}")
 
-    # Derive entity from table name (e.g. "players" -> "player")
-    entity = ref_table.rstrip("s") if ref_table.endswith("s") else ref_table
-
-    sql = (
-        "SELECT ie.ext_id, ie.entity_id "
-        f"FROM {ie_table} ie "
-        "WHERE ie.identity = %s AND ie.entity = %s"
-    )
+    sql = f"SELECT i.ext_id, i.{id_col} FROM {id_table} i WHERE i.identity = %s"
 
     with conn.cursor() as cur:
         if source_ids is None:
-            cur.execute(sql, (source_code, entity))
+            cur.execute(sql, (source_code,))
         else:
             ids_list = [str(v) for v in source_ids if v is not None]
             if not ids_list:
                 return {}
             cur.execute(
-                sql + " AND ie.ext_id = ANY(%s)",
-                (source_code, entity, ids_list),
+                sql + " AND i.ext_id = ANY(%s)",
+                (source_code, ids_list),
             )
         return {str(row[0]): int(row[1]) for row in cur.fetchall()}
 

@@ -69,10 +69,14 @@ def _build_parser():
 def _run_etl(args) -> int:
     from src.etl.lib.config_validation import validate_all
 
-    print_banner("Shoot the Sheet -- ETL", f"league={args.league or 'all'}")
+    print_banner(
+        "Shoot the Sheet -- ETL",
+        f"league={args.league or 'all'} stage={args.stage or 'full'}",
+    )
     print_summary(
         {
             "league": args.league or "all",
+            "stage": args.stage or "full",
         },
         title="Run parameters",
     )
@@ -86,6 +90,7 @@ def _run_etl(args) -> int:
     try:
         run_etl(
             league_code=args.league,
+            stage=args.stage,
         )
         return 0
     except KeyboardInterrupt:

@@ -30,10 +30,8 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Entity-to-table helpers
+# Table resolution helpers
 # ---------------------------------------------------------------------------
-
-_ENTITY_ALIASES: Dict[str, str] = {}
 
 
 def _leagues_table() -> str:
@@ -159,7 +157,7 @@ def bulk_copy(
 
 
 def write_entity_rows(
-    entity: str,
+    target: str,
     table_name: str,
     rows: Dict[Any, Dict[str, Any]],
     season: str,
@@ -170,7 +168,7 @@ def write_entity_rows(
     """Write extracted rows to the database.
 
     Args:
-        entity:       ``'player'``, ``'team'``, ``'player_opp'``, etc.
+        target:       ``'player'``, ``'team'``, ``'player_opp'``, etc.
         table_name:   Bare target table (``'players'``, ``'player_seasons'``,
                       ``'teams_players'``).  Determines which staging table
                       and write strategy to use.
@@ -194,14 +192,14 @@ def write_entity_rows(
     _stats_tables = {"player_seasons", "team_seasons"}
 
     if table_name in _profile_tables:
-        return write_staged_entity_rows(entity, rows, league_code, source_code)
+        return write_staged_entity_rows(target, rows, league_code, source_code)
 
     if table_name in _roster_tables:
-        return write_staged_roster_rows(entity, rows, league_code, source_code)
+        return write_staged_roster_rows(target, rows, league_code, source_code)
 
     if table_name in _stats_tables:
         return write_staged_stats_rows(
-            entity, rows, season, season_type, league_code, source_code
+            target, rows, season, season_type, league_code, source_code
         )
 
     raise ValueError(f"Unknown target table: {table_name!r}")
@@ -213,14 +211,13 @@ def write_entity_rows(
 
 
 def write_staged_entity_rows(
-    entity: str,
+    target: str,
     rows: Dict[Any, Dict[str, Any]],
     league_code: str,
     identity_code: str,
 ) -> int:
     """Merge entity data into the staging table for ``league_code``/``identity_code``."""
-    canonical = _ENTITY_ALIASES.get(entity, entity)
-    table = f"ext_staging.{canonical}s_staging"
+    table = f"staging.{target}_staging"
 
     data_cols: Set[str] = set()
     for vals in rows.values():
@@ -277,7 +274,7 @@ def write_staged_entity_rows(
 
         # Sync columns declared on both teams_staging and leagues_teams_staging
         # (e.g. conf) so roster tables stay populated.
-        if entity == "team":
+        if target == "team":
             lt_cols = [
                 c
                 for c, m in DB_COLUMNS.items()
@@ -285,7 +282,7 @@ def write_staged_entity_rows(
                 and c not in ("league_code", "identity", "ext_team_id")
             ]
             extra_cols = [c for c in lt_cols if c in sorted_data_cols]
-            lt_table = "ext_staging.leagues_teams_staging"
+            lt_table = "staging.leagues_teams_staging"
             lt_columns = [
                 "league_code",
                 "identity",
@@ -313,8 +310,8 @@ def write_staged_entity_rows(
                 conn.commit()
 
         # Sync country_code from players_staging to countries_players_staging
-        if entity == "player":
-            cp_table = "ext_staging.countries_players_staging"
+        if target == "player":
+            cp_table = "staging.countries_players_staging"
             cp_data = [
                 (league_val, identity_code, country_val, str(source_id))
                 for source_id, vals in rows.items()
@@ -347,7 +344,7 @@ def _bulk_merge_upsert(
     skip_unchanged: bool = False,
     batch_size: int = DEFAULT_BATCH_SIZE,
 ) -> int:
-    """``INSERT ... ON CONFLICT DO UPDATE`` merge that preserves non-null values."""
+    """``INSERT ... ON CONFLICT DO UPDATE`` merge that preserves existing non-null values."""
     if not data:
         return 0
 
@@ -360,7 +357,7 @@ def _bulk_merge_upsert(
     conflict_sql = ", ".join(quote_col(c) for c in conflict_columns)
     if update_columns:
         update_sql = ", ".join(
-            f"{quote_col(c)} = COALESCE(EXCLUDED.{quote_col(c)}, {bare_table}.{quote_col(c)})"
+            f"{quote_col(c)} = COALESCE({bare_table}.{quote_col(c)}, EXCLUDED.{quote_col(c)})"
             for c in update_columns
         )
         conflict_clause = f"ON CONFLICT ({conflict_sql}) DO UPDATE SET {update_sql}"
@@ -413,7 +410,7 @@ def _ensure_staging_profiles(
         ]:
             if not codes:
                 continue
-            tbl = f"ext_staging.{staging_table}"
+            tbl = f"staging.{staging_table}"
             with conn.cursor() as cur:
                 cur.execute(
                     f"SELECT ext_id FROM {tbl} WHERE identity = %s AND ext_id = ANY(%s)",
@@ -452,21 +449,20 @@ def _ensure_staging_profiles(
 
 
 def write_staged_roster_rows(
-    entity: str,
+    target: str,
     rows: Dict[Any, Dict[str, Any]],
     league_code: str,
     identity_code: str,
 ) -> int:
     """Write roster relationships to the roster staging table."""
-    canonical = _ENTITY_ALIASES.get(entity, entity)
     _ROSTER_STAGING_TABLES = {
-        "player": "ext_staging.teams_players_staging",
-        "team": "ext_staging.leagues_teams_staging",
-        "country": "ext_staging.countries_players_staging",
+        "teams_players": "staging.teams_players_staging",
+        "leagues_teams": "staging.leagues_teams_staging",
+        "countries_players": "staging.countries_players_staging",
     }
-    table = _ROSTER_STAGING_TABLES.get(canonical)
+    table = _ROSTER_STAGING_TABLES.get(target)
     if table is None:
-        raise ValueError(f"Unsupported entity for roster write: {entity!r}")
+        raise ValueError(f"Unsupported target for roster write: {target!r}")
 
     data_cols: Set[str] = set()
     for vals in rows.values():
@@ -475,6 +471,7 @@ def write_staged_roster_rows(
     data_cols.discard("identity")
     data_cols.discard("ext_team_id")
     data_cols.discard("ext_player_id")
+    data_cols.discard("country_code")
     sorted_data_cols = sorted(data_cols)
 
     with db_connection() as conn:
@@ -482,7 +479,7 @@ def write_staged_roster_rows(
 
         data: List[tuple] = []
 
-        if entity == "player":
+        if target == "teams_players":
             columns = [
                 "league_code",
                 "identity",
@@ -501,7 +498,7 @@ def write_staged_roster_rows(
                 ] + [vals.get(c) for c in sorted_data_cols]
                 data.append(tuple(row_values))
 
-        elif entity == "team":
+        elif target == "leagues_teams":
             columns = [
                 "league_code",
                 "identity",
@@ -517,7 +514,7 @@ def write_staged_roster_rows(
                 ] + [vals.get(c) for c in sorted_data_cols]
                 data.append(tuple(row_values))
 
-        elif entity == "country":
+        elif target == "countries_players":
             columns = [
                 "league_code",
                 "identity",
@@ -537,7 +534,7 @@ def write_staged_roster_rows(
                 data.append(tuple(row_values))
 
         else:
-            raise ValueError(f"Unsupported entity for roster write: {entity!r}")
+            raise ValueError(f"Unsupported target for roster write: {target!r}")
 
         if not data:
             return 0
@@ -555,7 +552,7 @@ def write_staged_roster_rows(
 
 
 def write_staged_stats_rows(
-    entity: str,
+    target: str,
     rows: Dict[Any, Dict[str, Any]],
     season: str,
     season_type: str,
@@ -563,20 +560,19 @@ def write_staged_stats_rows(
     identity_code: str,
 ) -> int:
     """Write stats rows to the staging table, preserving source IDs for later FK resolution."""
-    canonical = _ENTITY_ALIASES.get(entity, entity)
-    table = f"ext_staging.{canonical}_seasons_staging"
+    table = f"staging.{target}_staging"
     bare_name = table.split(".", 1)[-1]
     meta = TABLES[bare_name]
     pk_cols = list(meta.get("primary_key") or [])
 
     # Inject ext_player_id / ext_team_id from source IDs before anything
     # else so _ensure_staging_profiles can auto-discover missing entities.
-    if entity == "player":
+    if target.startswith("player"):
         for source_id, vals in rows.items():
             if "ext_player_id" not in vals:
                 vals["ext_player_id"] = str(source_id)
 
-    if entity == "team":
+    if target.startswith("team"):
         for source_id, vals in rows.items():
             if "ext_team_id" not in vals:
                 vals["ext_team_id"] = str(source_id)

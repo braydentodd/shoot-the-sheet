@@ -15,7 +15,7 @@ Dataset-level role assignments and source wiring live in
 Pure declarative data; helpers live in :mod:`src.core.lib.leagues_resolver`.
 """
 
-from typing import Dict, List, TypedDict, Union
+from typing import Dict, TypedDict, Union
 
 # ============================================================================
 # VALIDATION CONSTANTS
@@ -54,7 +54,6 @@ class LeagueDef(TypedDict):
     season_format: str
     season_types: Dict[str, SeasonTypeDef]
     calendar_flip: str
-    stat_rates: List[str]
     season_retention_start: str
 
 
@@ -82,47 +81,6 @@ LEAGUES: Dict[str, LeagueDef] = {
             },
         },
         "calendar_flip": "07/01",
-        "stat_rates": ["per_poss", "per_min"],
-        "season_retention_start": "2000-01",
-    },
-    "WNBA": {
-        "name": "Women's National Basketball Association",
-        "gender": "W",
-        "season_format": "same_year",
-        "season_types": {
-            "regular_season": {
-                "is_postseason": False,
-                "min_season": None,
-            },
-            "playoffs": {
-                "is_postseason": True,
-                "min_season": None,
-            },
-        },
-        "calendar_flip": "12/31",
-        "stat_rates": ["per_poss", "per_min"],
-        "season_retention_start": "2000",
-    },
-    "GLG": {
-        "name": "NBA G League",
-        "gender": "M",
-        "season_format": "split_year",
-        "season_types": {
-            "regular_season": {
-                "is_postseason": False,
-                "min_season": None,
-            },
-            "showcase_cup": {
-                "is_postseason": False,
-                "min_season": "2022-23",
-            },
-            "playoffs": {
-                "is_postseason": True,
-                "min_season": None,
-            },
-        },
-        "calendar_flip": "08/01",
-        "stat_rates": ["per_poss", "per_min"],
-        "season_retention_start": "2001-02",
+        "season_retention_start": "2024-25",
     },
 }
