@@ -38,9 +38,6 @@ class ColumnDef(TypedDict, total=True):
 
 
 DB_COLUMNS: Dict[str, ColumnDef] = {
-    # ------------------------------------------------------------------
-    # SYSTEM COLUMNS  (managed by DB / ETL engine, no provider sources)
-    # ------------------------------------------------------------------
     "sts_id": {
         "type": "BIGINT",
         "tables": ["teams", "players"],
@@ -105,16 +102,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "default": None,
         "dataset_mapping": None,
     },
-    "notes": {
-        "type": "TEXT",
-        "tables": ["teams", "players"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    # ------------------------------------------------------------------
-    # STAGING IDENTITY & FK COLUMNS  (external identity / namespace / FK codes)
-    # ------------------------------------------------------------------
     "identity": {
         "type": "TEXT",
         "tables": [
@@ -182,9 +169,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "default": None,
         "dataset_mapping": None,
     },
-    # ------------------------------------------------------------------
-    # REFERENCE ID COLUMNS  (core FK references)
-    # ------------------------------------------------------------------
     "player_id": {
         "type": "BIGINT",
         "tables": [
@@ -242,6 +226,34 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "nullable": False,
         "default": None,
         "dataset_mapping": None,
+    },
+    "date": {
+        "type": "DATE",
+        "tables": [
+            "games",
+            "games_staging",
+            "player_games",
+            "team_games",
+            "player_games_staging",
+            "team_games_staging",
+        ],
+        "nullable": False,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "games": {
+                        "team_game_stats": {"field": "GAME_DATE"},
+                    },
+                    "player_games": {
+                        "player_game_stats": {"field": "GAME_DATE"},
+                    },
+                    "team_games": {
+                        "team_game_stats": {"field": "GAME_DATE"},
+                    },
+                },
+            },
+        },
     },
     "ext_home_team_id": {
         "type": "TEXT",
@@ -336,9 +348,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             },
         },
     },
-    # ------------------------------------------------------------------
-    # ENTITY INFORMATION  (league / team / player / country profile data)
-    # ------------------------------------------------------------------
     "name": {
         "type": "TEXT",
         "tables": [
@@ -438,44 +447,29 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             },
         },
     },
-    "country_code": {
+    "notes": {
         "type": "TEXT",
-        "tables": [
-            "teams",
-            "countries_players",
-            "countries_players_staging",
-        ],
+        "tables": ["teams", "players"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "jersey_num": {
+        "type": "TEXT",
+        "tables": ["teams_players", "teams_players_staging"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "countries_players": {
-                        "countries_players": {
-                            "field": "COUNTRY",
-                            "transform": "match_country",
-                        },
-                    },
-                    "teams": {
-                        "team_profiles": {
-                            "field": "TEAM_COUNTRY",
-                            "transform": "match_country",
-                        },
+                    "teams_players": {
+                        "teams_players_rosters": {"field": "NUM"},
+                        "player_profiles": {"field": "JERSEY_NUMBER"},
                     },
                 },
             },
         },
     },
-    "gender": {
-        "type": "CHAR",
-        "tables": ["leagues", "teams", "players", "teams_staging", "players_staging"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    # ------------------------------------------------------------------
-    # PLAYER MEASUREMENTS
-    # ------------------------------------------------------------------
     "height_ins_no_shoes": {
         "type": "SMALLINT",
         "tables": ["players", "players_staging"],
@@ -590,6 +584,48 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "default": None,
         "dataset_mapping": None,
     },
+    "country_code": {
+        "type": "TEXT",
+        "tables": [
+            "teams",
+            "countries_players",
+            "countries_players_staging",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "countries_players": {
+                        "countries_players": {
+                            "field": "COUNTRY",
+                            "transform": "match_country",
+                        },
+                    },
+                    "teams": {
+                        "team_profiles": {
+                            "field": "TEAM_COUNTRY",
+                            "transform": "match_country",
+                        },
+                    },
+                },
+            },
+        },
+    },
+    "sovereign_country": {
+        "type": "TEXT",
+        "tables": ["countries"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "gender": {
+        "type": "CHAR",
+        "tables": ["leagues", "teams", "players", "teams_staging", "players_staging"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
     "active": {
         "type": "BOOLEAN",
         "tables": [
@@ -603,37 +639,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "nullable": False,
         "default": True,
         "dataset_mapping": None,
-    },
-    # ------------------------------------------------------------------
-    # GAMES & MINUTES
-    # ------------------------------------------------------------------
-    "date": {
-        "type": "DATE",
-        "tables": [
-            "games",
-            "games_staging",
-            "player_games",
-            "team_games",
-            "player_games_staging",
-            "team_games_staging",
-        ],
-        "nullable": False,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "games": {
-                        "team_game_stats": {"field": "GAME_DATE"},
-                    },
-                    "player_games": {
-                        "player_game_stats": {"field": "GAME_DATE"},
-                    },
-                    "team_games": {
-                        "team_game_stats": {"field": "GAME_DATE"},
-                    },
-                },
-            },
-        },
     },
     "games": {
         "type": "SMALLINT",
@@ -668,7 +673,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             },
         },
     },
-    "mins": {
+    "secs": {  # Support PBP (players: add up all seconds stints; build lineups using starting lineups + substitutions; teams: add up all minutes in game)
         "type": "INTEGER",
         "tables": [
             "team_seasons",
@@ -686,16 +691,16 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "NBA": {
                 "nba_id": {
                     "player_seasons": {
-                        "player_basic_stats": {"field": "MIN"},
+                        "player_basic_stats": {"field": "MIN", "scale": 60},
                     },
                     "player_games": {
-                        "player_game_stats": {"field": "MIN"},
+                        "player_game_stats": {"field": "MIN", "scale": 60},
                     },
                     "team_seasons": {
-                        "team_basic_stats": {"field": "MIN"},
+                        "team_basic_stats": {"field": "MIN", "scale": 60},
                     },
                     "team_games": {
-                        "team_game_stats": {"field": "MIN"},
+                        "team_game_stats": {"field": "MIN", "scale": 60},
                     },
                 },
             },
@@ -731,7 +736,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (compare final score)
     "wins": {
         "type": "SMALLINT",
         "tables": [
@@ -755,11 +760,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             },
         },
     },
-    # ------------------------------------------------------------------
-    # SCORING
-    # ------------------------------------------------------------------
     "fg2m": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "team_seasons",
             "player_seasons",
@@ -810,9 +812,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all 2pt field goal makes)
     "fg2a": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "team_seasons",
             "player_seasons",
@@ -863,7 +865,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all 2pt field goal attempts)
     "fg3m": {
         "type": "SMALLINT",
         "tables": [
@@ -896,9 +898,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all 3pt field goal makes)
     "fg3a": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "team_seasons",
             "player_seasons",
@@ -929,9 +931,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all 3pt field goal attempts)
     "ftm": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "team_seasons",
             "player_seasons",
@@ -962,9 +964,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all free throw makes)
     "fta": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "team_seasons",
             "player_seasons",
@@ -995,12 +997,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
-    # ------------------------------------------------------------------
-    # REBOUNDS
-    # ------------------------------------------------------------------
+    },  # Support PBP (add up all free throw attempts)
     "o_rebs": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "team_seasons",
             "player_seasons",
@@ -1031,9 +1030,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all offensive rebounds)
     "d_rebs": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "team_seasons",
             "player_seasons",
@@ -1064,12 +1063,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
-    # ------------------------------------------------------------------
-    # PLAYMAKING
-    # ------------------------------------------------------------------
+    },  # Support PBP (add up all defensive rebounds)
     "assists": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "team_seasons",
             "player_seasons",
@@ -1100,9 +1096,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all assists)
     "pot_assists": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "team_seasons",
             "player_seasons",
@@ -1132,9 +1128,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             },
         },
     },
-    # ------------------------------------------------------------------
-    # BALL HANDLING
-    # ------------------------------------------------------------------
     "touches": {
         "type": "INTEGER",
         "tables": [
@@ -1197,11 +1190,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             },
         },
     },
-    # ------------------------------------------------------------------
-    # TURNOVERS
-    # ------------------------------------------------------------------
     "turnovers": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "team_seasons",
             "player_seasons",
@@ -1232,10 +1222,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
-    # ------------------------------------------------------------------
-    # DEFENSE
-    # ------------------------------------------------------------------
+    },  # Support PBP (add up all turnovers)
     "steals": {
         "type": "SMALLINT",
         "tables": [
@@ -1268,7 +1255,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all steals)
     "blocks": {
         "type": "SMALLINT",
         "tables": [
@@ -1301,7 +1288,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all blocks)
     "fouls": {
         "type": "SMALLINT",
         "tables": [
@@ -1334,12 +1321,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
-    # ------------------------------------------------------------------
-    # HUSTLE
-    # ------------------------------------------------------------------
+    },  # Support PBP (add up all PF)
     "deflections": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "team_seasons",
             "player_seasons",
@@ -1372,7 +1356,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         },
     },
     "cont_d_fga": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "team_seasons",
             "player_seasons",
@@ -1404,11 +1388,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             },
         },
     },
-    # ------------------------------------------------------------------
-    # POSSESSIONS
-    # ------------------------------------------------------------------
     "poss": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "team_seasons",
             "player_seasons",
@@ -1447,10 +1428,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
-    # ------------------------------------------------------------------
-    # PBP STATS  (play-by-play — sources TBD)
-    # ------------------------------------------------------------------
+    },  # Support PBP (add up all events where team had ball; follows a won tip off, defensive rebound, opposing team turnover, start of half/quarter with ball, etc... we can discuss this one further)
     "o_fouls_drawn": {
         "type": "SMALLINT",
         "tables": [
@@ -1466,9 +1444,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "nullable": True,
         "default": None,
         "dataset_mapping": None,
-    },
+    },  # Support PBP (players: add up all events where offense committed foul on you (charge, illegal screen, etc); teams: add up all events where opposing offense committed foul... is this supported? does pbp track which players the fouls are committed against?)
     "assist_points": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "team_seasons",
             "player_seasons",
@@ -1482,7 +1460,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "nullable": True,
         "default": None,
         "dataset_mapping": None,
-    },
+    },  # Support PBP (add up point value of all assists)
     "poss_ending_ft_trips": {
         "type": "SMALLINT",
         "tables": [
@@ -1498,7 +1476,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "nullable": True,
         "default": None,
         "dataset_mapping": None,
-    },
+    },  # Support PBP (add up all non-and-one free throw trips that are followed by live possession or a change of possession... if that makes sense... we can disuss this one futher)
     "o_poss_secs": {
         "type": "SMALLINT",
         "tables": [
@@ -1514,7 +1492,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "nullable": True,
         "default": None,
         "dataset_mapping": None,
-    },
+    },  # Support PBP (add up all secs of offensive possessions)
     "d_poss_secs": {
         "type": "SMALLINT",
         "tables": [
@@ -1530,10 +1508,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "nullable": True,
         "default": None,
         "dataset_mapping": None,
-    },
-    # ------------------------------------------------------------------
-    # OPPONENT STATS  (team)
-    # ------------------------------------------------------------------
+    },  # Support PBP (add up all secs of defensive possessions)
     "opp_fg3m": {
         "type": "SMALLINT",
         "tables": [
@@ -1560,9 +1535,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all opponent FG3M)
     "opp_fg3a": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "team_seasons",
             "player_seasons",
@@ -1587,9 +1562,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all opponent FG3A)
     "opp_ftm": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "team_seasons",
             "player_seasons",
@@ -1614,9 +1589,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all opponent FTM)
     "opp_fta": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "team_seasons",
             "player_seasons",
@@ -1641,9 +1616,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all opponent FTA)
     "opp_o_rebs": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "team_seasons",
             "player_seasons",
@@ -1668,9 +1643,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all opponent OREB)
     "opp_d_rebs": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "team_seasons",
             "player_seasons",
@@ -1695,9 +1670,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all opponent DREB)
     "opp_turnovers": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "team_seasons",
             "player_seasons",
@@ -1722,7 +1697,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all opponent TOV)
     "opp_steals": {
         "type": "SMALLINT",
         "tables": [
@@ -1749,7 +1724,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all opponent STL)
     "opp_blocks": {
         "type": "SMALLINT",
         "tables": [
@@ -1776,7 +1751,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all opponent BLK)
     "opp_fouls": {
         "type": "SMALLINT",
         "tables": [
@@ -1803,9 +1778,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all opponent PF)
     "opp_fg2m": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "team_seasons",
             "player_seasons",
@@ -1840,9 +1815,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all opponent FG2A)
     "opp_fg2a": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "team_seasons",
             "player_seasons",
@@ -1877,7 +1852,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all opponent FG3A)
     "opp_poss": {
         "type": "SMALLINT",
         "tables": [
@@ -1893,7 +1868,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "nullable": True,
         "default": None,
         "dataset_mapping": None,
-    },
+    },  # Support PBP (add up all opponent possessions)
     "opp_o_fouls_drawn": {
         "type": "SMALLINT",
         "tables": [
@@ -1909,7 +1884,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "nullable": True,
         "default": None,
         "dataset_mapping": None,
-    },
+    },  # Support PBP (add up all opponent offensivefouls drawn)
     "opp_poss_ending_ft_trips": {
         "type": "SMALLINT",
         "tables": [
@@ -1925,10 +1900,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "nullable": True,
         "default": None,
         "dataset_mapping": None,
-    },
-    # ------------------------------------------------------------------
-    # ON-COURT STATS  (player)
-    # ------------------------------------------------------------------
+    },  # Support PBP (add up all opponent possession ending FT trips)
     "on_fg3m": {
         "type": "SMALLINT",
         "tables": [
@@ -1951,9 +1923,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all team FG3M while player on the floor)
     "on_fg3a": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "player_seasons",
             "player_games",
@@ -1974,9 +1946,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all team FG3A while player on the floor)
     "on_ftm": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "player_seasons",
             "player_games",
@@ -1997,9 +1969,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all team FTM while player on the floor)
     "on_fta": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "player_seasons",
             "player_games",
@@ -2020,9 +1992,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all team FTA while player on the floor)
     "on_o_rebs": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "player_seasons",
             "player_games",
@@ -2043,9 +2015,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all team OREB while player on the floor)
     "on_d_rebs": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "player_seasons",
             "player_games",
@@ -2066,9 +2038,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all team DREB while player on the floor)
     "on_turnovers": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "player_seasons",
             "player_games",
@@ -2089,7 +2061,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all team TOV)
     "on_steals": {
         "type": "SMALLINT",
         "tables": [
@@ -2112,7 +2084,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all team STL while player on the floor)
     "on_blocks": {
         "type": "SMALLINT",
         "tables": [
@@ -2135,7 +2107,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all team BLK while player on the floor)
     "on_fouls": {
         "type": "SMALLINT",
         "tables": [
@@ -2158,9 +2130,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all team PF while player on the floor)
     "on_fg2m": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "player_seasons",
             "player_games",
@@ -2191,9 +2163,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all team FG2M while player on the floor)
     "on_fg2a": {
-        "type": "INTEGER",
+        "type": "SMALLINT",
         "tables": [
             "player_seasons",
             "player_games",
@@ -2224,7 +2196,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
-    },
+    },  # Support PBP (add up all team FG2A while player on the floor)
     "on_o_fouls_drawn": {
         "type": "SMALLINT",
         "tables": [
@@ -2236,7 +2208,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "nullable": True,
         "default": None,
         "dataset_mapping": None,
-    },
+    },  # Support PBP (add up all team offensive fouls drawn while player on the floor)
     "on_poss_ending_ft_trips": {
         "type": "SMALLINT",
         "tables": [
@@ -2248,29 +2220,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "nullable": True,
         "default": None,
         "dataset_mapping": None,
-    },
-    # ------------------------------------------------------------------
-    # ROSTER COLUMNS
-    # ------------------------------------------------------------------
-    "jersey_num": {
-        "type": "TEXT",
-        "tables": ["teams_players", "teams_players_staging"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "teams_players": {
-                        "teams_players_rosters": {"field": "NUM"},
-                        "player_profiles": {"field": "JERSEY_NUMBER"},
-                    },
-                },
-            },
-        },
-    },
-    # ------------------------------------------------------------------
-    # OPERATIONAL  (coverage / tracking)
-    # ------------------------------------------------------------------
+    },  # Support PBP (add up all team possession ending FT trips while player on the floor)
     "dataset": {
         "type": "TEXT",
         "tables": ["season_coverages"],
@@ -2288,13 +2238,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     "completed_at": {
         "type": "TIMESTAMP",
         "tables": ["season_coverages"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "sovereign_country": {
-        "type": "TEXT",
-        "tables": ["countries"],
         "nullable": True,
         "default": None,
         "dataset_mapping": None,

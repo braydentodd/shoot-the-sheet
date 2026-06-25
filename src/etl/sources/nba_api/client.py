@@ -330,28 +330,142 @@ def _apply_row_filters(
 
 
 def _normalize_pbp_response(raw: Dict[str, Any]) -> Dict[str, Any]:
-    """Convert a playbyplayv3 response to standard resultSets format.
+    """Convert a playbyplayv3 response to canonical PBP events.
 
-    Extracts the ``actions`` array from the nested v3 structure and
-    returns it as a single ``PlayByPlay`` result set.
+    Parses ``description`` strings to extract structured data:
+    assist_player_id, rebound_type, foul_type, steal/block attribution.
     """
+    import re
+
     game = raw.get("game", {})
     if not isinstance(game, dict):
         return raw
     actions = game.get("actions", [])
     if not actions:
         return {"resultSets": []}
+
+    # Build player name → player_id lookup for assist parsing
+    name_map: Dict[str, int] = {}
+    for a in actions:
+        pid = a.get("personId")
+        fname = (a.get("playerName") or "").split()[0] if a.get("playerName") else ""
+        lname = a.get("playerNameI", "").split(". ")[-1] if a.get("playerNameI") else ""
+        if pid and fname:
+            name_map[fname.lower()] = pid
+        if pid and lname:
+            name_map[lname.lower()] = pid
+
+    events: List[Dict[str, Any]] = []
+    for a in actions:
+        action_type = a.get("actionType", "")
+        desc = a.get("description", "")
+        sub_type = a.get("subType", "")
+        person_id = a.get("personId")
+        team_id = a.get("teamId")
+        clock = a.get("clock", "PT00M00.00S")
+
+        event: Dict[str, Any] = {
+            "action_type": action_type,
+            "period": a.get("period"),
+            "clock": clock,
+            "clock_seconds": _parse_clock(clock),
+            "team_id": team_id if team_id else None,
+            "player_id": person_id if person_id else None,
+            "shot_made": a.get("shotResult") == "Made" if a.get("shotResult") else None,
+            "shot_value": a.get("shotValue"),
+            "is_field_goal": a.get("isFieldGoal"),
+            "is_free_throw": 1 if action_type == "Free Throw" else None,
+            "assist_player_id": None,
+            "rebound_type": None,
+            "foul_type": None,
+            "turnover_type": None,
+            "block_player_id": None,
+            "steal_player_id": None,
+            "substitution_in": None,
+            "substitution_out": None,
+            "description": desc,
+        }
+
+        # --- Parse description for structured data ---
+
+        # Assist: "(Russell 1 AST)" → find Russell's player_id
+        ast_match = re.search(r"\(([^)]+)\s+\d+\s+AST\)", desc)
+        if ast_match:
+            name = ast_match.group(1).lower()
+            event["assist_player_id"] = name_map.get(name)
+
+        # Rebound: subType like "Off:1 Def:0" or "Unknown"
+        if action_type == "Rebound":
+            if "off" in str(sub_type).lower():
+                event["rebound_type"] = "offensive"
+            elif "def" in str(sub_type).lower():
+                event["rebound_type"] = "defensive"
+            # Description fallback: "REBOUND (Off:1 Def:0)"
+            reb_match = re.search(r"REBOUND\s*\((Off|Def)", desc)
+            if reb_match:
+                event["rebound_type"] = (
+                    "offensive" if reb_match.group(1) == "Off" else "defensive"
+                )
+
+        # Foul type
+        if action_type == "Foul":
+            if "offensive" in str(sub_type).lower() or "offensive" in desc.lower():
+                event["foul_type"] = "offensive"
+            elif "shooting" in str(sub_type).lower():
+                event["foul_type"] = "shooting"
+            elif "technical" in str(sub_type).lower():
+                event["foul_type"] = "technical"
+            else:
+                event["foul_type"] = "personal"
+
+        # Turnover type
+        if action_type == "Turnover":
+            event["turnover_type"] = (
+                sub_type.lower().replace(" ", "_") if sub_type else None
+            )
+            # Steal on turnover: "Steal" in description or subType
+            if "steal" in desc.lower():
+                # Try to identify the stealer from description
+                steal_match = re.search(r"STEAL\s+\(\d+\s+STL\)", desc)
+
+        # Block: description contains "BLOCK"
+        if action_type in ("Missed Shot",) and "BLOCK" in desc:
+            event["action_type"] = "Block"
+            # Try to find blocker from description: "Davis BLOCK (1 BLK)"
+            block_match = re.search(r"(\w+)\s+BLOCK", desc)
+            if block_match:
+                event["block_player_id"] = name_map.get(block_match.group(1).lower())
+
+        # Substitution
+        if action_type == "Substitution":
+            sub_match = re.search(r"SUB:\s*(\w+)\s+FOR\s+(\w+)", desc)
+            if sub_match:
+                event["substitution_in"] = name_map.get(sub_match.group(1).lower())
+                event["substitution_out"] = name_map.get(sub_match.group(2).lower())
+
+        events.append(event)
+
     return {
         "resultSets": [
             {
                 "name": "PlayByPlay",
-                "headers": sorted(actions[0].keys()),
+                "headers": sorted(events[0].keys()) if events else [],
                 "rowSet": [
-                    [a.get(h) for h in sorted(actions[0].keys())] for a in actions
+                    [e.get(h) for h in sorted(events[0].keys())] for e in events
                 ],
             }
         ]
     }
+
+
+def _parse_clock(clock_str: str) -> float:
+    """Convert 'PT11M42.00S' → seconds elapsed in period (702.0)."""
+    import re
+
+    m = re.match(r"PT(\d+)M([\d.]+)S", clock_str or "")
+    if not m:
+        return 0.0
+    return int(m.group(1)) * 60 + float(m.group(2))
 
 
 # ============================================================================

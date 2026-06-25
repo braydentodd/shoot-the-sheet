@@ -1,204 +1,380 @@
 """
-Shoot the Sheet — Source-Agnostic PBP Parser
+Shoot the Sheet — PBP Parser  (config-driven, source-agnostic)
 
-Takes a list of play-by-play events in canonical form (dicts with
-``actionType``, ``personId``, ``teamId``, ``subType``, etc.) and computes
-derived per-player and per-team statistics.
+Reads ``pbp.py`` for accumulation rules and ``db_columns.py`` to discover
+which stats to compute.  Add a column to ``db_columns.py`` → parser picks
+it up automatically.  Add a source → add ``SOURCE_NORMALIZERS`` entry.
 
-Every computation is a pure function registered in ``PBP_METRICS``.
-Adding a new metric means writing a function + one line in the registry.
-
-Source-specific normalizers (e.g. in ``src/etl/sources/nba_api/client.py``)
-convert raw API responses into this canonical event format.  The parser
-itself has zero knowledge of any particular data source.
+One pass through events produces:
+    {home_team_id, away_team_id, players: {id: {stat: val}}, teams: {id: {stat: val}}, segments: [...]}
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict, List
+from typing import Any, Dict, List, Set
+
+from src.core.definitions.db_columns import DB_COLUMNS
+from src.etl.definitions.pbp import (
+    ACCUM_RULES,
+    DERIVED,
+    FT_TRIP_END_SUBTYPES,
+    OPPONENT_MIRROR_EXCLUDE,
+    POSSESSION_END,
+)
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Canonical event type (output of a source normalizer)
+# Types
 # ---------------------------------------------------------------------------
 
 PbpEvent = Dict[str, Any]
 
-# ---------------------------------------------------------------------------
-# Metric computer type
-# ---------------------------------------------------------------------------
-
-MetricFn = Callable[[List[PbpEvent]], Dict[int, Any]]
 
 # ---------------------------------------------------------------------------
-# Metric registry — add new metrics here
+# Stat discovery — driven by db_columns.py
 # ---------------------------------------------------------------------------
 
 
-def _compute_possessions(events: List[PbpEvent]) -> Dict[int, int]:
-    """Count possessions per team from PBP events.
+def _discover_pbp_stats() -> Dict[str, Set[str]]:
+    """Find all stats that any column references via ``pbp_stats`` pipeline."""
+    player: Set[str] = set()
+    team: Set[str] = set()
+    on_court: Set[str] = set()
 
-    A possession ends on: made shot, defensive rebound, turnover,
-    end of period.  Free throws that end a possession are included.
-    """
-    team_poss: Dict[int, int] = {}
-    current_poss_team: int | None = None
+    for col_name, col_meta in DB_COLUMNS.items():
+        dm = col_meta.get("dataset_mapping") or {}
+        for league_sources in dm.values():
+            if not isinstance(league_sources, dict):
+                continue
+            for identity_sources in league_sources.values():
+                if not isinstance(identity_sources, dict):
+                    continue
+                for target, datasets in identity_sources.items():
+                    for ds_name, ds_cfg in datasets.items():
+                        if ds_name != "pbp_stats":
+                            continue
+                        field = ds_cfg.get("pipeline", {}).get("field")
+                        if not field:
+                            continue
+                        if target in ("player_games",):
+                            player.add(field)
+                        elif target in ("team_games",):
+                            team.add(field)
+                        # on_* stats come from on_court accumulation in player_games
+                        if field.startswith("on_"):
+                            on_court.add(field)
 
-    for e in events:
-        action = e.get("actionType", "")
-        team_id = e.get("teamId", 0)
-
-        if action == "period":
-            # New period starts — first possession goes to the period's team
-            current_poss_team = team_id
-
-        elif action == "Jump Ball":
-            current_poss_team = team_id
-
-        elif action in ("Made Shot",):
-            if current_poss_team is not None:
-                team_poss[current_poss_team] = team_poss.get(current_poss_team, 0) + 1
-            # Possession changes — the other team gets the next one
-            current_poss_team = None  # determined by who gets the rebound
-
-        elif action == "Rebound":
-            sub = e.get("subType", "")
-            if sub and "Def" in str(sub):
-                # Defensive rebound — this team now has possession
-                current_poss_team = team_id
-
-        elif action == "Turnover":
-            if current_poss_team is not None:
-                team_poss[current_poss_team] = team_poss.get(current_poss_team, 0) + 1
-            # Other team gets possession
-            current_poss_team = None
-
-        elif action == "Free Throw":
-            sub = e.get("subType", "")
-            shot_result = e.get("shotResult", "")
-            # Last free throw in a trip ends the possession
-            if "2 of 2" in str(sub) or "3 of 3" in str(sub) or "1 of 1" in str(sub):
-                if current_poss_team is not None:
-                    team_poss[current_poss_team] = (
-                        team_poss.get(current_poss_team, 0) + 1
-                    )
-                if shot_result == "Made":
-                    current_poss_team = None  # other team inbounds
-                else:
-                    current_poss_team = None  # rebound determines
-
-        elif action == "Timeout":
-            pass  # doesn't change possession
-
-        elif action == "Substitution":
-            pass  # doesn't change possession
-
-        elif action == "Violation":
-            pass  # handled by the resulting change of possession
-
-        elif action == "Foul":
-            pass  # possession may or may not change
-
-        elif action == "Missed Shot":
-            pass  # possession determined by rebound
-
-    return team_poss
+    return {"PLAYER": player, "TEAM": team, "ON_COURT": on_court}
 
 
-def _compute_o_fouls_drawn(events: List[PbpEvent]) -> Dict[int, int]:
-    """Count offensive fouls drawn per player."""
-    drawn: Dict[int, int] = {}
-    for e in events:
-        if e.get("actionType") != "Foul":
-            continue
-        sub = e.get("subType", "")
-        if "Offensive" not in str(sub):
-            continue
-        # The player who was fouled (drew the offensive foul) isn't directly
-        # listed.  Offensive fouls are on the offense, so the defense draws them.
-        # We approximate by crediting the opposing team's player on the floor.
-        # For now, return empty — this needs lineup context.
-    return drawn
+# Cached at module load — columns don't change at runtime.
+_PBP_STATS: Dict[str, Set[str]] = _discover_pbp_stats()
 
 
-def _compute_assist_points(events: List[PbpEvent]) -> Dict[int, int]:
-    """Sum points created via assists per player.
+# ---------------------------------------------------------------------------
+# Value resolver — converts special tokens to integers
+# ---------------------------------------------------------------------------
 
-    Parses the ``description`` field for patterns like "(Russell 1 AST)".
-    """
+
+def _resolve_value(token: Any, event: PbpEvent) -> int:
+    """Convert a rule's ``value`` to an integer using the event context."""
+    if isinstance(token, int):
+        return token
+    if token == "shot_value_2":
+        return 1 if event.get("shot_value") == 2 else 0
+    if token == "shot_value_3":
+        return 1 if event.get("shot_value") == 3 else 0
+    if token == "shot_value":
+        return int(event.get("shot_value") or 0)
+    if token == "shot_made_1":
+        return 1 if event.get("shot_made") else 0
+    if token == "rebound_offensive":
+        return 1 if event.get("rebound_type") == "offensive" else 0
+    if token == "rebound_defensive":
+        return 1 if event.get("rebound_type") == "defensive" else 0
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _parse_clock(clock_str: str) -> float:
     import re
 
-    assist_pts: Dict[int, int] = {}
-    # Build a personId → playerName mapping from the events
-    names: Dict[int, str] = {}
-    for e in events:
-        pid = e.get("personId")
-        name = e.get("playerName", "")
-        if pid and name and pid not in names:
-            names[pid] = name.split()[0]  # first name only for matching
-
-    for e in events:
-        if e.get("actionType") not in ("Made Shot",):
-            continue
-        if e.get("isFieldGoal") != 1:
-            continue
-        desc = e.get("description", "")
-        pts = e.get("shotValue", 0)
-        # Find "(Name N AST)" pattern
-        match = re.search(r"\((\w+)\s+\d+\s+AST\)", desc)
-        if match:
-            first_name = match.group(1)
-            for pid, fname in names.items():
-                if fname == first_name:
-                    assist_pts[pid] = assist_pts.get(pid, 0) + int(pts)
-                    break
-    return assist_pts
+    m = re.match(r"PT(\d+)M([\d.]+)S", clock_str or "")
+    if not m:
+        return 0.0
+    return int(m.group(1)) * 60 + float(m.group(2))
 
 
-PBP_METRICS: Dict[str, MetricFn] = {
-    "assist_points": _compute_assist_points,
-    # Team-level metrics (return teamId keys — need target-aware routing):
-    # "possessions": _compute_possessions,
-    # Player-level metrics (need lineup context for attribution):
-    # "o_fouls_drawn": _compute_o_fouls_drawn,
-}
+def _init_player_stats() -> Dict[str, Any]:
+    return {s: 0 for s in _PBP_STATS["PLAYER"]}
+
+
+def _init_team_stats() -> Dict[str, Any]:
+    base = {s: 0 for s in _PBP_STATS["TEAM"]}
+    # Also add opp_ variants for everything except excluded
+    for s in _PBP_STATS["TEAM"]:
+        if s not in OPPONENT_MIRROR_EXCLUDE:
+            base[f"opp_{s}"] = 0
+    return base
+
+
+def _init_on_court_stats() -> Dict[str, Any]:
+    return {s: 0 for s in _PBP_STATS["ON_COURT"]}
 
 
 # ---------------------------------------------------------------------------
-# Public API
+# Parser
 # ---------------------------------------------------------------------------
 
 
-def parse_pbp(
-    events: List[PbpEvent],
-    metrics: List[str],
-) -> Dict[int, Dict[str, Any]]:
-    """Compute per-player derived stats from PBP events.
+def parse_pbp(events: List[PbpEvent]) -> Dict[str, Any]:
+    """Parse canonical PBP events into complete player/team/segment stats.
 
-    Args:
-        events: Canonical PBP events from a single game.
-        metrics: Names of metrics to compute (must be keys in ``PBP_METRICS``).
+    Returns::
 
-    Returns:
-        ``{personId: {metric_name: value, ...}, ...}``
+        {
+            "home_team_id": 1610612743,
+            "away_team_id": 1610612747,
+            "players":  {player_id: {fg2m: 5, assist_points: 10, ...}, ...},
+            "teams":    {team_id:   {fg3m: 10, opp_fg3m: 8, poss: 95, ...}, ...},
+            "segments": [{period, start_clock, end_clock, duration_sec,
+                          home_players: [...], away_players: [...],
+                          home_stats: {...}, away_stats: {...}}, ...],
+        }
+
+    Opponent stats (``opp_*``) are auto-mirrored from the other team after
+    all events are processed.  No manual DERIVED entries needed.
     """
-    if not events or not metrics:
-        return {}
+    if not events:
+        return {
+            "home_team_id": None,
+            "away_team_id": None,
+            "players": {},
+            "teams": {},
+            "segments": [],
+        }
 
-    result: Dict[int, Dict[str, Any]] = {}
+    # State
+    players: Dict[int, Dict[str, Any]] = {}
+    teams: Dict[int, Dict[str, Any]] = {}
+    segments: List[Dict[str, Any]] = []
 
-    for metric_name in metrics:
-        fn = PBP_METRICS.get(metric_name)
-        if fn is None:
-            logger.warning("Unknown PBP metric: %s", metric_name)
+    active: Dict[int, set] = {}  # team_id → {player_ids on floor}
+    home_team_id: int | None = None
+    away_team_id: int | None = None
+
+    current_poss_team: int | None = None
+    prev_clock: float = 0.0
+    game_started: bool = False
+
+    seg_start_clock: float = 0.0
+    seg_stats: Dict[int, dict] = {}
+
+    def _get_or_create_player(pid: int) -> Dict[str, Any]:
+        if pid not in players:
+            players[pid] = _init_player_stats()
+        return players[pid]
+
+    def _get_or_create_team(tid: int) -> Dict[str, Any]:
+        if tid not in teams:
+            teams[tid] = _init_team_stats()
+        return teams[tid]
+
+    def _end_segment(clock_sec: float):
+        nonlocal seg_start_clock
+        if not active or seg_start_clock == clock_sec:
+            return
+        duration = seg_start_clock - clock_sec
+        if duration <= 0:
+            seg_start_clock = clock_sec
+            return
+        home_pids = sorted(active.get(home_team_id, set()))
+        away_pids = sorted(active.get(away_team_id, set()))
+        if len(home_pids) != 5 or len(away_pids) != 5:
+            seg_start_clock = clock_sec
+            return
+        # Merge with previous segment if same 10 players
+        if (
+            segments
+            and segments[-1]["home_players"] == home_pids
+            and segments[-1]["away_players"] == away_pids
+        ):
+            segments[-1]["duration_sec"] += duration
+            segments[-1]["end_clock"] = clock_sec
+        else:
+            segments.append(
+                {
+                    "period": events[0].get("period", 1),
+                    "start_clock": seg_start_clock,
+                    "end_clock": clock_sec,
+                    "duration_sec": duration,
+                    "home_players": home_pids,
+                    "away_players": away_pids,
+                    "home_stats": seg_stats.get(home_team_id, {}),
+                    "away_stats": seg_stats.get(away_team_id, {}),
+                }
+            )
+        seg_stats.clear()
+        seg_start_clock = clock_sec
+
+    def _apply_accum(event: PbpEvent, target: str, stat: str, value: int):
+        tid = event.get("team_id")
+        pid = event.get("player_id")
+        aid = event.get("assist_player_id")
+
+        if target == "player" and pid:
+            _get_or_create_player(pid)[stat] = (
+                _get_or_create_player(pid).get(stat, 0) + value
+            )
+        elif target == "assister" and aid:
+            _get_or_create_player(aid)[stat] = (
+                _get_or_create_player(aid).get(stat, 0) + value
+            )
+        elif target == "team" and tid:
+            _get_or_create_team(tid)[stat] = (
+                _get_or_create_team(tid).get(stat, 0) + value
+            )
+        elif target == "on_court" and tid:
+            for p in active.get(tid, set()):
+                on_key = f"on_{stat}" if not stat.startswith("on_") else stat
+                if on_key in _PBP_STATS["ON_COURT"]:
+                    _get_or_create_player(p)[on_key] = (
+                        _get_or_create_player(p).get(on_key, 0) + value
+                    )
+        elif target == "defending_team":
+            opp = next((t for t in active if t != tid), None)
+            if opp:
+                _get_or_create_team(opp)[stat] = (
+                    _get_or_create_team(opp).get(stat, 0) + value
+                )
+        elif target == "defending_on_court":
+            opp = next((t for t in active if t != tid), None)
+            if opp:
+                for p in active.get(opp, set()):
+                    on_key = f"on_{stat}" if not stat.startswith("on_") else stat
+                    if on_key in _PBP_STATS["ON_COURT"]:
+                        _get_or_create_player(p)[on_key] = (
+                            _get_or_create_player(p).get(on_key, 0) + value
+                        )
+
+    # --- Main event loop ---
+    for event in events:
+        action = event.get("action_type", "")
+        tid = event.get("team_id")
+        clock_str = event.get("clock", "PT00M00.00S")
+        clock_sec = _parse_clock(clock_str)
+
+        # Identify home/away from first event with a team
+        if home_team_id is None and tid:
+            home_team_id = tid
+        if away_team_id is None and tid and tid != home_team_id:
+            away_team_id = tid
+
+        # Period boundary
+        if action == "Period":
+            if not game_started:
+                game_started = True
+                prev_clock = clock_sec
+                seg_start_clock = clock_sec
+                continue
+            _end_segment(clock_sec)
+            active.clear()
+            seg_start_clock = clock_sec
+            prev_clock = clock_sec
             continue
-        try:
-            metric_values = fn(events)
-            for pid, value in metric_values.items():
-                result.setdefault(pid, {})[metric_name] = value
-        except Exception:
-            logger.exception("PBP metric %s failed", metric_name)
 
-    return result
+        if not game_started:
+            continue
+
+        # Time accumulation
+        if prev_clock > clock_sec:
+            elapsed = prev_clock - clock_sec
+            for pids in active.values():
+                for pid in pids:
+                    p = _get_or_create_player(pid)
+                    p["secs"] = p.get("secs", 0.0) + elapsed
+            if current_poss_team is not None:
+                tm = _get_or_create_team(current_poss_team)
+                tm["o_poss_secs"] = tm.get("o_poss_secs", 0.0) + elapsed
+            opp = next((t for t in active if t != current_poss_team), None)
+            if opp is not None:
+                tm2 = _get_or_create_team(opp)
+                tm2["d_poss_secs"] = tm2.get("d_poss_secs", 0.0) + elapsed
+        prev_clock = clock_sec
+
+        # Possession tracking
+        if action == "JumpBall":
+            current_poss_team = tid
+        elif action == "MadeShot":
+            if current_poss_team is not None and current_poss_team == tid:
+                tm = _get_or_create_team(tid)
+                tm["poss"] = tm.get("poss", 0) + 1
+            current_poss_team = None
+        elif action == "Rebound" and event.get("rebound_type") == "defensive":
+            current_poss_team = tid
+        elif action == "Turnover":
+            if current_poss_team is not None and current_poss_team == tid:
+                tm = _get_or_create_team(tid)
+                tm["poss"] = tm.get("poss", 0) + 1
+            current_poss_team = None
+        elif action == "FreeThrow":
+            # Check if this is the last FT of a trip
+            from src.etl.definitions.pbp import FT_TRIP_END_SUBTYPES
+
+            sub = event.get("sub_type", "")
+            if sub in FT_TRIP_END_SUBTYPES:
+                if current_poss_team is not None:
+                    tm = _get_or_create_team(current_poss_team)
+                    tm["poss"] = tm.get("poss", 0) + 1
+                    tm["poss_ending_ft_trips"] = tm.get("poss_ending_ft_trips", 0) + 1
+                current_poss_team = None
+
+        # Apply ACCUM_RULES for this action_type
+        rules = ACCUM_RULES.get(action, [])
+        for rule in rules:
+            value = _resolve_value(rule["value"], event)
+            if value:
+                _apply_accum(event, rule["target"], rule["stat"], value)
+
+        # Substitution
+        if action == "Substitution":
+            sub_in = event.get("substitution_in")
+            sub_out = event.get("substitution_out")
+            if sub_in and sub_out and tid:
+                _end_segment(clock_sec)
+                active.setdefault(tid, set()).discard(sub_out)
+                active.setdefault(tid, set()).add(sub_in)
+                seg_start_clock = clock_sec
+
+    # Finalize last segment
+    if events:
+        last_clock = _parse_clock(events[-1].get("clock", "PT00M00.00S"))
+        _end_segment(last_clock)
+
+    # --- Opponent auto-mirror ---
+    if home_team_id and away_team_id:
+        ht = teams.get(home_team_id, {})
+        at = teams.get(away_team_id, {})
+        for stat in _PBP_STATS["TEAM"]:
+            if stat in OPPONENT_MIRROR_EXCLUDE:
+                continue
+            opp_key = f"opp_{stat}"
+            if opp_key in _init_team_stats():
+                if home_team_id in teams:
+                    teams[home_team_id][opp_key] = at.get(stat, 0)
+                if away_team_id in teams:
+                    teams[away_team_id][opp_key] = ht.get(stat, 0)
+
+    return {
+        "home_team_id": home_team_id,
+        "away_team_id": away_team_id,
+        "players": players,
+        "teams": teams,
+        "segments": segments,
+    }
