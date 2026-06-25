@@ -514,7 +514,15 @@ TABLES: Dict[str, TableDef] = {
                 "on_delete": "SET NULL",
             },
         ],
-        "unique_constraints": [["source_game_id"]],
+        "unique_constraints": [
+            [
+                "date",
+                "home_team_id",
+                "away_team_id",
+                "home_team_points",
+                "away_team_points",
+            ],
+        ],
         "indexes": [
             {"name": "date_idx", "columns": ["date"]},
         ],

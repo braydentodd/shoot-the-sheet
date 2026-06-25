@@ -243,6 +243,99 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "default": None,
         "dataset_mapping": None,
     },
+    "ext_home_team_id": {
+        "type": "TEXT",
+        "tables": ["games_staging"],
+        "nullable": False,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "games": {
+                        "team_game_stats": {"field": "TEAM_ID"},
+                    },
+                },
+            },
+        },
+    },
+    "ext_away_team_id": {
+        "type": "TEXT",
+        "tables": ["games_staging"],
+        "nullable": False,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "games": {
+                        "team_game_stats": {"field": "TEAM_ID"},
+                    },
+                },
+            },
+        },
+    },
+    "home_team_id": {
+        "type": "BIGINT",
+        "tables": ["games"],
+        "nullable": False,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "away_team_id": {
+        "type": "BIGINT",
+        "tables": ["games"],
+        "nullable": False,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "home_team_points": {
+        "type": "SMALLINT",
+        "tables": ["games", "games_staging"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "games": {
+                        "team_game_stats": {"field": "PTS"},
+                    },
+                },
+            },
+        },
+    },
+    "away_team_points": {
+        "type": "SMALLINT",
+        "tables": ["games", "games_staging"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "games": {
+                        "team_game_stats": {"field": "PTS"},
+                    },
+                },
+            },
+        },
+    },
+    "ot": {
+        "type": "BOOLEAN",
+        "tables": ["games", "games_staging"],
+        "nullable": False,
+        "default": False,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "games": {
+                        "team_game_stats": {
+                            "field": "MIN",
+                            "transform": "gt",
+                            "params": {"threshold": 240},
+                        },
+                    },
+                },
+            },
+        },
+    },
     # ------------------------------------------------------------------
     # ENTITY INFORMATION  (league / team / player / country profile data)
     # ------------------------------------------------------------------
@@ -526,7 +619,21 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         ],
         "nullable": False,
         "default": None,
-        "dataset_mapping": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "games": {
+                        "team_game_stats": {"field": "GAME_DATE"},
+                    },
+                    "player_games": {
+                        "player_game_stats": {"field": "GAME_DATE"},
+                    },
+                    "team_games": {
+                        "team_game_stats": {"field": "GAME_DATE"},
+                    },
+                },
+            },
+        },
     },
     "games": {
         "type": "SMALLINT",
@@ -604,7 +711,26 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         ],
         "nullable": True,
         "default": None,
-        "dataset_mapping": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_games": {
+                        "player_game_stats": {
+                            "field": "WL",
+                            "transform": "eq",
+                            "params": {"threshold": "W"},
+                        },
+                    },
+                    "team_games": {
+                        "team_game_stats": {
+                            "field": "WL",
+                            "transform": "eq",
+                            "params": {"threshold": "W"},
+                        },
+                    },
+                },
+            },
+        },
     },
     "wins": {
         "type": "SMALLINT",

@@ -401,20 +401,26 @@ def _discover_entities(
 
 
 # ============================================================================
-# maintain_season_coverages  (backfill)
+# maintain_seasons  (active-type current + coverage backfill)
 # ============================================================================
 
 
-def _maintain_season_coverages(
+def _maintain_seasons(
     league_code: str,
+    season: str,
     season_range: List[str],
     identity_code: str,
     source_code: str,
     failed: List[Dict[str, Any]],
 ) -> int:
-    """Ensure every retained season x every season type is covered.
+    """Fetch season-level stats in two passes.
 
-    Always runs.  Coverage tracking gates re-fetching.
+    Part A — Active types x current season: always fetch if the season
+    detector identified active types (no coverage check — current season
+    data may have changed).
+
+    Part B — Coverage backfill: iterate every season in *season_range*
+    for every declared season type.  Coverage tracking gates re-fetching.
     """
     from src.core.lib.leagues_resolver import (
         get_all_canonical_season_types,
@@ -423,41 +429,78 @@ def _maintain_season_coverages(
     from src.etl.lib.coverage_tracker import is_group_coverage_current
 
     total_rows = 0
-    dataset_names = _get_datasets_by_phase("maintain_current_seasons").get(
-        identity_code, []
-    )
+    dataset_names = _get_datasets_by_phase("maintain_seasons").get(identity_code, [])
     if not dataset_names:
         return 0
 
     team_ids = _load_team_ids(league_code)
     all_season_types = get_all_canonical_season_types(league_code)
-
     stats_targets = ["player_seasons", "team_seasons"]
+    active_types = _active_types_cache.get(league_code, [])
 
-    for dataset_name in dataset_names:
-        for season_label in season_range:
-            for st_key in all_season_types:
-                if not is_season_type_valid_for(league_code, st_key, season_label):
-                    continue
-
-                season_type_name = get_source_season_type_code(
-                    source_code, league_code, st_key
-                )
-
+    # ── Part A: active types x current season (no coverage check) ──────────
+    if active_types:
+        logger.info(
+            phase_marker(
+                "maintain_seasons",
+                f"active types={active_types} season={season}",
+            )
+        )
+        for st_key in active_types:
+            if not is_season_type_valid_for(league_code, st_key, season):
+                continue
+            season_type_name = get_source_season_type_code(
+                source_code, league_code, st_key
+            )
+            for dataset_name in dataset_names:
                 for target in stats_targets:
-                    table_name = target
                     groups = build_call_groups(
                         target,
-                        season_label,
+                        season,
                         identity_code,
                         dataset=dataset_name,
-                        table_name=table_name,
+                        table_name=target,
                         league_code=league_code,
                         in_season=True,
                     )
                     if not groups:
                         continue
+                    total_rows += _execute_stats_groups(
+                        league_code=league_code,
+                        target=target,
+                        season_label=season,
+                        st_key=st_key,
+                        season_type_name=season_type_name,
+                        identity_code=identity_code,
+                        source_code=source_code,
+                        dataset=dataset_name,
+                        filtered_groups=groups,
+                        team_ids=team_ids,
+                        failed=failed,
+                        use_coverage=True,
+                    )
 
+    # ── Part B: coverage backfill (all seasons x all types) ────────────────
+    for dataset_name in dataset_names:
+        for season_label in season_range:
+            for st_key in all_season_types:
+                if not is_season_type_valid_for(league_code, st_key, season_label):
+                    continue
+                season_type_name = get_source_season_type_code(
+                    source_code, league_code, st_key
+                )
+                for target in stats_targets:
+                    groups = build_call_groups(
+                        target,
+                        season_label,
+                        identity_code,
+                        dataset=dataset_name,
+                        table_name=target,
+                        league_code=league_code,
+                        in_season=True,
+                    )
+                    if not groups:
+                        continue
                     with db_connection() as conn:
                         filtered_groups = [
                             g
@@ -472,10 +515,8 @@ def _maintain_season_coverages(
                                 g,
                             )
                         ]
-
                     if not filtered_groups:
                         continue
-
                     total_rows += _execute_stats_groups(
                         league_code=league_code,
                         target=target,
@@ -495,96 +536,25 @@ def _maintain_season_coverages(
 
 
 # ============================================================================
-# maintain_current_games  (current season game-level refresh)
+# maintain_games  (active-type current + coverage backfill)
 # ============================================================================
 
 
-def _maintain_current_games(
+def _maintain_games(
     league_code: str,
     season: str,
-    identity_code: str,
-    source_code: str,
-    active_types: List[str],
-    failed: List[Dict[str, Any]],
-) -> int:
-    """Refresh game-level stats for the CURRENT season and ACTIVE season types."""
-    from src.core.lib.leagues_resolver import is_season_type_valid_for
-
-    total_rows = 0
-    dataset_names = _get_datasets_by_phase("maintain_current_games").get(
-        identity_code, []
-    )
-    if not dataset_names:
-        return 0
-
-    game_targets = ["player_games", "team_games"]
-
-    for st_key in active_types:
-        if not is_season_type_valid_for(league_code, st_key, season):
-            continue
-
-        season_type_name = get_source_season_type_code(source_code, league_code, st_key)
-
-        for dataset_name in dataset_names:
-            for target in game_targets:
-                table_name = target
-                groups = build_call_groups(
-                    target,
-                    season,
-                    identity_code,
-                    dataset=dataset_name,
-                    table_name=table_name,
-                    league_code=league_code,
-                    in_season=True,
-                )
-                if not groups:
-                    ds_cfg = DATASETS.get(identity_code, {}).get(dataset_name, {})
-                    if ds_cfg.get("discovery_tables"):
-                        groups = [
-                            {
-                                "dataset": dataset_name,
-                                "params": {},
-                                "tier": ds_cfg.get("execution_tier", "per_league"),
-                                "columns": {},
-                            }
-                        ]
-                    else:
-                        continue
-
-                total_rows += _execute_stats_groups(
-                    league_code=league_code,
-                    target=target,
-                    season_label=season,
-                    st_key=st_key,
-                    season_type_name=season_type_name,
-                    identity_code=identity_code,
-                    source_code=source_code,
-                    dataset=dataset_name,
-                    filtered_groups=groups,
-                    team_ids={},
-                    failed=failed,
-                    use_coverage=True,
-                )
-
-    return total_rows
-
-
-# ============================================================================
-# maintain_game_coverages  (game-level coverage backfill)
-# ============================================================================
-
-
-def _maintain_game_coverages(
-    league_code: str,
     season_range: List[str],
     identity_code: str,
     source_code: str,
     failed: List[Dict[str, Any]],
 ) -> int:
-    """Ensure every retained season x season type has game-level coverage.
+    """Fetch game-level stats in two passes.
 
-    Same pattern as _maintain_season_coverages but operates at game granularity
-    via the game_coverages table.
+    Part A — Active types x current season: always fetch if the season
+    detector identified active types.
+
+    Part B — Coverage backfill: iterate every season in *season_range*
+    for every declared season type.  Coverage tracking gates re-fetching.
     """
     from src.core.lib.leagues_resolver import (
         get_all_canonical_season_types,
@@ -593,39 +563,88 @@ def _maintain_game_coverages(
     from src.etl.lib.coverage_tracker import is_game_coverage_current
 
     total_rows = 0
-    dataset_names = _get_datasets_by_phase("maintain_current_games").get(
-        identity_code, []
-    )
+    dataset_names = _get_datasets_by_phase("maintain_games").get(identity_code, [])
     if not dataset_names:
         return 0
 
     all_season_types = get_all_canonical_season_types(league_code)
     game_targets = ["player_games", "team_games"]
+    active_types = _active_types_cache.get(league_code, [])
 
+    # ── Part A: active types x current season (no coverage check) ──────────
+    if active_types:
+        logger.info(
+            phase_marker(
+                "maintain_games",
+                f"active types={active_types} season={season}",
+            )
+        )
+        for st_key in active_types:
+            if not is_season_type_valid_for(league_code, st_key, season):
+                continue
+            season_type_name = get_source_season_type_code(
+                source_code, league_code, st_key
+            )
+            for dataset_name in dataset_names:
+                for target in game_targets:
+                    groups = build_call_groups(
+                        target,
+                        season,
+                        identity_code,
+                        dataset=dataset_name,
+                        table_name=target,
+                        league_code=league_code,
+                        in_season=True,
+                    )
+                    if not groups:
+                        ds_cfg = DATASETS.get(identity_code, {}).get(dataset_name, {})
+                        if ds_cfg.get("discovery_tables"):
+                            groups = [
+                                {
+                                    "dataset": dataset_name,
+                                    "params": {},
+                                    "tier": ds_cfg.get("execution_tier", "per_league"),
+                                    "columns": {},
+                                }
+                            ]
+                        else:
+                            continue
+                    total_rows += _execute_stats_groups(
+                        league_code=league_code,
+                        target=target,
+                        season_label=season,
+                        st_key=st_key,
+                        season_type_name=season_type_name,
+                        identity_code=identity_code,
+                        source_code=source_code,
+                        dataset=dataset_name,
+                        filtered_groups=groups,
+                        team_ids={},
+                        failed=failed,
+                        use_coverage=True,
+                    )
+
+    # ── Part B: coverage backfill (all seasons x all types) ────────────────
     for dataset_name in dataset_names:
         for season_label in season_range:
             for st_key in all_season_types:
                 if not is_season_type_valid_for(league_code, st_key, season_label):
                     continue
-
                 season_type_name = get_source_season_type_code(
                     source_code, league_code, st_key
                 )
-
                 for target in game_targets:
-                    table_name = target
                     groups = build_call_groups(
                         target,
                         season_label,
                         identity_code,
                         dataset=dataset_name,
-                        table_name=table_name,
+                        table_name=target,
                         league_code=league_code,
                         in_season=True,
                     )
                     if not groups:
                         continue
-
                     with db_connection() as conn:
                         filtered_groups = [
                             g
@@ -640,10 +659,8 @@ def _maintain_game_coverages(
                                 g,
                             )
                         ]
-
                     if not filtered_groups:
                         continue
-
                     total_rows += _execute_stats_groups(
                         league_code=league_code,
                         target=target,
@@ -658,71 +675,6 @@ def _maintain_game_coverages(
                         failed=failed,
                         use_coverage=True,
                     )
-
-    return total_rows
-
-
-# ============================================================================
-# maintain_current_seasons  (current season refresh)
-# ============================================================================
-
-
-def _maintain_current_seasons(
-    league_code: str,
-    season: str,
-    identity_code: str,
-    source_code: str,
-    active_types: List[str],
-    failed: List[Dict[str, Any]],
-) -> int:
-    """Refresh stats for the CURRENT season and ACTIVE season types only."""
-    from src.core.lib.leagues_resolver import is_season_type_valid_for
-
-    total_rows = 0
-    dataset_names = _get_datasets_by_phase("maintain_current_seasons").get(
-        identity_code, []
-    )
-    if not dataset_names:
-        return 0
-
-    team_ids = _load_team_ids(league_code)
-    stats_targets = ["player_seasons", "team_seasons"]
-
-    for st_key in active_types:
-        if not is_season_type_valid_for(league_code, st_key, season):
-            continue
-
-        season_type_name = get_source_season_type_code(source_code, league_code, st_key)
-
-        for dataset_name in dataset_names:
-            for target in stats_targets:
-                table_name = target
-                groups = build_call_groups(
-                    target,
-                    season,
-                    identity_code,
-                    dataset=dataset_name,
-                    table_name=table_name,
-                    league_code=league_code,
-                    in_season=True,
-                )
-                if not groups:
-                    continue
-
-                total_rows += _execute_stats_groups(
-                    league_code=league_code,
-                    target=target,
-                    season_label=season,
-                    st_key=st_key,
-                    season_type_name=season_type_name,
-                    identity_code=identity_code,
-                    source_code=source_code,
-                    dataset=dataset_name,
-                    filtered_groups=groups,
-                    team_ids=team_ids,
-                    failed=failed,
-                    use_coverage=True,
-                )
 
     return total_rows
 
@@ -1287,7 +1239,7 @@ def _promote_rosters(
     return total_upserted
 
 
-def _promote_stats(
+def _promote_seasons(
     league_code: str,
     failed: List[Dict[str, Any]],
 ) -> int:
@@ -1297,7 +1249,7 @@ def _promote_stats(
     via ``identities_players`` / ``identities_teams``.  Shared stat
     columns are promoted by direct name match from db_columns.
     """
-    logger.info(phase_marker("promote_stats"))
+    logger.info(phase_marker("promote_seasons"))
     total_upserted = 0
 
     for entity in ("player", "team"):
@@ -1389,6 +1341,111 @@ def _promote_stats(
                 total_upserted += upserted
                 if upserted:
                     logger.info("Promoted %d rows to %s", upserted, core_table)
+        conn.commit()
+
+    return total_upserted
+
+
+def _promote_games(
+    league_code: str,
+    failed: List[Dict[str, Any]],
+) -> int:
+    """Promote game staging rows to core game tables.
+
+    Pre-assigns game_ids from the game sequence, resolves team FKs via
+    identities_teams, and upserts into core.games, core.player_games,
+    and core.team_games.
+    """
+    logger.info(phase_marker("promote_games"))
+    total_upserted = 0
+
+    with db_connection() as conn:
+        with conn.cursor() as cur:
+            # 1) Promote to core.games — resolve team FKs via identities,
+            #    natural key prevents duplicates.
+            cur.execute(
+                """
+                INSERT INTO core.games (game_id, league_code, date,
+                       home_team_id, away_team_id,
+                       home_team_points, away_team_points, ot)
+                SELECT nextval('core.game_id_seq'), gs.league_code, gs.date,
+                       home_ie.team_id, away_ie.team_id,
+                       gs.home_team_points, gs.away_team_points, gs.ot
+                  FROM staging.games_staging gs
+                  JOIN core.identities_teams home_ie
+                    ON gs.identity = home_ie.identity
+                   AND gs.ext_home_team_id = home_ie.ext_id
+                  JOIN core.identities_teams away_ie
+                    ON gs.identity = away_ie.identity
+                   AND gs.ext_away_team_id = away_ie.ext_id
+                ON CONFLICT (date, home_team_id, away_team_id,
+                             home_team_points, away_team_points)
+                DO NOTHING
+                """
+            )
+            upserted = cur.rowcount
+            total_upserted += upserted
+            if upserted:
+                logger.info("Promoted %d rows to core.games", upserted)
+
+            # 2) Promote player_games — join through games_staging → core.games
+            cur.execute(
+                """
+                INSERT INTO core.player_games (league_code, game_id,
+                       player_id, team_id, date)
+                SELECT pgs.league_code, g.game_id,
+                       player_ie.player_id, team_ie.team_id,
+                       pgs.date
+                  FROM staging.player_games_staging pgs
+                  JOIN staging.games_staging gs
+                    ON pgs.identity = gs.identity
+                   AND pgs.ext_game_id = gs.ext_game_id
+                  JOIN core.games g
+                    ON g.date = gs.date
+                   AND g.home_team_points = gs.home_team_points
+                   AND g.away_team_points = gs.away_team_points
+                  JOIN core.identities_players player_ie
+                    ON pgs.identity = player_ie.identity
+                   AND pgs.ext_player_id = player_ie.ext_id
+                  JOIN core.identities_teams team_ie
+                    ON pgs.identity = team_ie.identity
+                   AND pgs.ext_team_id = team_ie.ext_id
+                ON CONFLICT (league_code, game_id, player_id, team_id)
+                DO NOTHING
+                """
+            )
+            upserted = cur.rowcount
+            total_upserted += upserted
+            if upserted:
+                logger.info("Promoted %d rows to core.player_games", upserted)
+
+            # 3) Promote team_games
+            cur.execute(
+                """
+                INSERT INTO core.team_games (league_code, game_id,
+                       team_id, date)
+                SELECT tgs.league_code, g.game_id,
+                       team_ie.team_id, tgs.date
+                  FROM staging.team_games_staging tgs
+                  JOIN staging.games_staging gs
+                    ON tgs.identity = gs.identity
+                   AND tgs.ext_game_id = gs.ext_game_id
+                  JOIN core.games g
+                    ON g.date = gs.date
+                   AND g.home_team_points = gs.home_team_points
+                   AND g.away_team_points = gs.away_team_points
+                  JOIN core.identities_teams team_ie
+                    ON tgs.identity = team_ie.identity
+                   AND tgs.ext_team_id = team_ie.ext_id
+                ON CONFLICT (league_code, game_id, team_id)
+                DO NOTHING
+                """
+            )
+            upserted = cur.rowcount
+            total_upserted += upserted
+            if upserted:
+                logger.info("Promoted %d rows to core.team_games", upserted)
+
         conn.commit()
 
     return total_upserted
@@ -1623,6 +1680,7 @@ def _phase_maintain_teams_players(ctx: dict) -> int:
 
 def _phase_maintain_games(ctx: dict) -> int:
     league_code = ctx["league_code"]
+    season = ctx["season"]
     season_range = ctx["season_range"]
     failed = ctx["failed"]
     total_rows = 0
@@ -1635,13 +1693,14 @@ def _phase_maintain_games(ctx: dict) -> int:
         if league_code not in SOURCES[source_code].get("leagues", {}):
             continue
         total_rows += _maintain_games(
-            league_code, season_range, identity_code, source_code, failed
+            league_code, season, season_range, identity_code, source_code, failed
         )
     return total_rows
 
 
 def _phase_maintain_seasons(ctx: dict) -> int:
     league_code = ctx["league_code"]
+    season = ctx["season"]
     season_range = ctx["season_range"]
     failed = ctx["failed"]
     total_rows = 0
@@ -1656,7 +1715,7 @@ def _phase_maintain_seasons(ctx: dict) -> int:
         if league_code not in SOURCES[source_code].get("leagues", {}):
             continue
         total_rows += _maintain_seasons(
-            league_code, season_range, identity_code, source_code, failed
+            league_code, season, season_range, identity_code, source_code, failed
         )
     return total_rows
 
@@ -1708,8 +1767,12 @@ def _phase_promote_rosters(ctx: dict) -> int:
     return _promote_rosters(ctx["league_code"], ctx["failed"])
 
 
-def _phase_promote_stats(ctx: dict) -> int:
-    return _promote_stats(ctx["league_code"], ctx["failed"])
+def _phase_promote_seasons(ctx: dict) -> int:
+    return _promote_seasons(ctx["league_code"], ctx["failed"])
+
+
+def _phase_promote_games(ctx: dict) -> int:
+    return _promote_games(ctx["league_code"], ctx["failed"])
 
 
 def _phase_cascade_delete_reviewed(ctx: dict) -> int:

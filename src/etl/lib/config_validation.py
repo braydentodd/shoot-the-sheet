@@ -35,6 +35,12 @@ VALID_TRANSFORMS = {
     "format_season",
     "normalize_name",
     "match_country",
+    "eq",
+    "neq",
+    "gt",
+    "gte",
+    "lt",
+    "lte",
 }
 
 

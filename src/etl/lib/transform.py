@@ -202,6 +202,57 @@ def match_country(name: Any) -> Union[str, None]:
     return None
 
 
+def eq(value: Any, threshold: Any = None) -> Union[bool, None]:
+    """Return True if *value* equals *threshold*. None-safe: None → None."""
+    if value is None or (
+        isinstance(value, str) and value.strip().lower() in ("", "nan", "none")
+    ):
+        return None
+    return str(value).strip() == str(threshold).strip()
+
+
+def neq(value: Any, threshold: Any = None) -> Union[bool, None]:
+    """Return True if *value* does not equal *threshold*. None-safe."""
+    result = eq(value, threshold=threshold)
+    return None if result is None else not result
+
+
+def gt(value: Any, threshold: Any = None) -> Union[bool, None]:
+    """Return True if *value* > *threshold*. None-safe: None → None."""
+    if value is None or (
+        isinstance(value, str) and value.strip().lower() in ("", "nan", "none")
+    ):
+        return None
+    try:
+        return float(value) > float(threshold)
+    except (ValueError, TypeError):
+        return None
+
+
+def gte(value: Any, threshold: Any = None) -> Union[bool, None]:
+    """Return True if *value* >= *threshold*. None-safe."""
+    if value is None or (
+        isinstance(value, str) and value.strip().lower() in ("", "nan", "none")
+    ):
+        return None
+    try:
+        return float(value) >= float(threshold)
+    except (ValueError, TypeError):
+        return None
+
+
+def lt(value: Any, threshold: Any = None) -> Union[bool, None]:
+    """Return True if *value* < *threshold*. None-safe."""
+    result = gte(value, threshold=threshold)
+    return None if result is None else not result
+
+
+def lte(value: Any, threshold: Any = None) -> Union[bool, None]:
+    """Return True if *value* <= *threshold*. None-safe."""
+    result = gt(value, threshold=threshold)
+    return None if result is None else not result
+
+
 # ============================================================================
 # TRANSFORM DISPATCH
 # ============================================================================
@@ -215,18 +266,31 @@ TRANSFORMS: Dict[str, Callable] = {
     "format_season": format_season,
     "normalize_name": _normalize_name,
     "match_country": match_country,
+    "eq": eq,
+    "neq": neq,
+    "gt": gt,
+    "gte": gte,
+    "lt": lt,
+    "lte": lte,
 }
 
 
-def apply_transform(value: Any, transform_name: str, scale: int = 1) -> Any:
+def apply_transform(
+    value: Any,
+    transform_name: str,
+    scale: int = 1,
+    params: Union[Dict[str, Any], None] = None,
+) -> Any:
     """Apply a named transform to a value.
 
-    For safe_int the *scale* argument is forwarded; all other transforms
-    ignore it.
+    *scale* is forwarded to ``safe_int``.  *params* is forwarded as
+    keyword arguments to the transform function when provided.
     """
     func = TRANSFORMS.get(transform_name)
     if func is None:
         raise ValueError(f"Unknown transform: {transform_name}")
+    if params:
+        return func(value, **params)
     if transform_name == "safe_int":
         return func(value, scale=scale)
     return func(value)

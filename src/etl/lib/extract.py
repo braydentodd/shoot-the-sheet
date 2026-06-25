@@ -54,8 +54,9 @@ def extract_field(
 
     transform_name = source.get("transform", "safe_int")
     scale = source.get("scale", 1)
+    params = source.get("params")
 
-    return apply_transform(raw_value, transform_name, scale)
+    return apply_transform(raw_value, transform_name, scale, params)
 
 
 def extract_derived_field(
@@ -84,7 +85,7 @@ def extract_derived_field(
         if not value.strip():
             return None
         transform_name = source.get("transform", "safe_str")
-        return apply_transform(value, transform_name)
+        return apply_transform(value, transform_name, params=source.get("params"))
 
     # Numeric math
     math_expr = derived.get("math")
@@ -119,7 +120,7 @@ def extract_derived_field(
 
     transform_name = source.get("transform", "safe_int")
     scale = source.get("scale", 1)
-    return apply_transform(value, transform_name, scale)
+    return apply_transform(value, transform_name, scale, source.get("params"))
 
 
 # ============================================================================
@@ -260,7 +261,7 @@ def extract_value_from_raw_dict(
             return None
         transform_name = source.get("transform", "safe_int")
         scale = source.get("scale", 1)
-        return apply_transform(value, transform_name, scale)
+        return apply_transform(value, transform_name, scale, source.get("params"))
 
     field = source.get("field")
     if not field:
@@ -270,7 +271,7 @@ def extract_value_from_raw_dict(
         return None
     transform_name = source.get("transform", "safe_int")
     scale = source.get("scale", 1)
-    return apply_transform(raw_value, transform_name, scale)
+    return apply_transform(raw_value, transform_name, scale, source.get("params"))
 
 
 def extract_raw_rows(
