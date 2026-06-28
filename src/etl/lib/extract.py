@@ -189,6 +189,11 @@ def extract_columns_from_result(
                 if "pipeline" in source:
                     continue
 
+                # Per-column domain routing: skip resultSets not matching the column's domain
+                col_domain = source.get("domain")
+                if col_domain and rs["name"] != col_domain:
+                    continue
+
                 if source.get("derived"):
                     val = extract_derived_field(row, headers, source)
                 else:

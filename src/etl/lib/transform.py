@@ -23,7 +23,6 @@ from src.etl.definitions.normalization import (
 
 logger = logging.getLogger(__name__)
 
-
 # ============================================================================
 # TYPE CONVERTERS
 # ============================================================================
@@ -363,6 +362,7 @@ def execute_pipeline(
             data = _op_aggregate(data, op)
         elif op_type == "math":
             data = _op_math(data, op)
+
         else:
             raise ValueError(f"Unknown pipeline operation: {op_type}")
 

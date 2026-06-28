@@ -180,7 +180,7 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "min_season": "1996-97",
             "execution_tier": "per_game",
             "source": "nba_api",
-            "phase": "maintain_games",
+            "phase": "maintain_pbp",
             "coverage": "normal",
             "row_filters": None,
             "discovery_tables": [

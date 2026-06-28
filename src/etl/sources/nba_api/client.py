@@ -147,22 +147,6 @@ def create_api_call(
 # ============================================================================
 
 
-def with_retry(
-    func: Callable, rate_limiter: Any, max_retries: Union[int, None] = None
-) -> Any:
-    """Execute *func* with exponential back-off on failure using rate limiter.
-
-    Args:
-        func: Zero-arg callable to execute.
-        rate_limiter: RateLimiter instance.
-        max_retries: Override default max_retries from rate limiter config.
-
-    Returns:
-        The first successful result or re-raises the last exception.
-    """
-    return rate_limiter.with_retry(func, max_retries)
-
-
 # ============================================================================
 # PARAMETER BUILDER
 # ============================================================================
@@ -445,17 +429,10 @@ def _normalize_pbp_response(raw: Dict[str, Any]) -> Dict[str, Any]:
 
         events.append(event)
 
-    return {
-        "resultSets": [
-            {
-                "name": "PlayByPlay",
-                "headers": sorted(events[0].keys()) if events else [],
-                "rowSet": [
-                    [e.get(h) for h in sorted(events[0].keys())] for e in events
-                ],
-            }
-        ]
-    }
+    # Parse canonical events → domain resultSets
+    from src.etl.lib.pbp_parser import parse_pbp
+
+    return parse_pbp(events)
 
 
 def _parse_clock(clock_str: str) -> float:
@@ -506,7 +483,7 @@ def make_fetcher(
         api_call = create_api_call(
             DatasetClass, full_params, dataset_name=dataset, rate_limiter=rate_limiter
         )
-        result = with_retry(api_call, rate_limiter)
+        result = rate_limiter.with_retry(api_call)
         if result is not None:
             if class_name == "playbyplayv3":
                 result = _normalize_pbp_response(result)
@@ -567,7 +544,7 @@ def detect_recent_games(
             dataset_name=dataset_name,
             rate_limiter=rate_limiter,
         )
-        return with_retry(api_call, rate_limiter, max_retries=1)
+        return rate_limiter.with_retry(api_call, max_retries=1)
     except Exception as exc:
         logger.warning(
             "Season detector %s call failed for %s/%s (lookback=%dd): %s",

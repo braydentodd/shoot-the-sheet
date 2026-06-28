@@ -28,8 +28,9 @@ PIPELINE: Dict[str, List[str]] = {
     "per_identity": [
         "maintain_leagues_teams",
         "maintain_teams_players",
-        "maintain_games",
         "maintain_seasons",
+        "maintain_games",
+        "maintain_pbp",
         "maintain_profiles",
     ],
     "execution_end": [

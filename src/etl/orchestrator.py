@@ -1805,6 +1805,78 @@ def _phase_prune_game_coverages(ctx: dict) -> int:
     return prune_game_coverages(ctx["league_code"])
 
 
+
+def _maintain_pbp(
+    league_code: str,
+    season: str,
+    season_range: List[str],
+    identity_code: str,
+    source_code: str,
+    failed: List[Dict[str, Any]],
+) -> int:
+    """Parse PBP for current-season games and backfill coverage gaps.
+
+    PBP is different from other stats: a single API call per game produces
+    ALL PBP-derived columns.  The normalizer in client.py handles the
+    parse → domain resultSets conversion automatically.
+    """
+    from src.core.lib.leagues_resolver import is_season_type_valid_for
+
+    total_rows = 0
+    dataset_names = _get_datasets_by_phase("maintain_pbp").get(identity_code, [])
+    if not dataset_names:
+        return 0
+
+    active_types = _active_types_cache.get(league_code)
+    if active_types is None:
+        active_types = _detect_season_activity(league_code, season)
+        _active_types_cache[league_code] = active_types
+
+    pbp_targets = ["player_games", "team_games"]
+
+    for dataset_name in dataset_names:
+        if active_types:
+            for st_key in active_types:
+                if not is_season_type_valid_for(league_code, st_key, season):
+                    continue
+                season_type_name = get_source_season_type_code(source_code, league_code, st_key)
+                for target in pbp_targets:
+                    groups = build_call_groups(
+                        target, season, identity_code, dataset=dataset_name,
+                        table_name=target, league_code=league_code, in_season=True,
+                    )
+                    if not groups:
+                        continue
+                    total_rows += _execute_stats_groups(
+                        league_code=league_code, target=target, season_label=season,
+                        st_key=st_key, season_type_name=season_type_name,
+                        identity_code=identity_code, source_code=source_code,
+                        dataset=dataset_name, filtered_groups=groups,
+                        team_ids={}, failed=failed, use_coverage=True,
+                    )
+    return total_rows
+
+
+def _phase_maintain_pbp(ctx: dict) -> int:
+    league_code = ctx["league_code"]
+    season = ctx["season"]
+    season_range = ctx["season_range"]
+    failed = ctx["failed"]
+    total_rows = 0
+    logger.info(phase_marker("maintain_pbp"))
+    for identity_code in DATASETS:
+        ds = _get_datasets_by_phase("maintain_pbp").get(identity_code, [])
+        if not ds:
+            continue
+        source_code = DATASETS[identity_code][ds[0]]["source"]
+        if league_code not in SOURCES[source_code].get("leagues", {}):
+            continue
+        total_rows += _maintain_pbp(
+            league_code, season, season_range, identity_code, source_code, failed
+        )
+    return total_rows
+
+
 def _resolve_phase(name: str) -> Callable:
     """Return the handler function for *name* via naming convention.
 

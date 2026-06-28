@@ -262,11 +262,6 @@ DERIVED: Dict[str, Dict[str, Any]] = {
         "side": "offense",
         "level": "team",
     },
-    "d_poss_secs": {
-        "compute": "track_possession_time",
-        "side": "defense",
-        "level": "team",
-    },
     "poss_ending_ft_trips": {
         "compute": "count_ft_trip_possessions",
         "level": "team",
@@ -302,34 +297,4 @@ OPPONENT_MIRROR_EXCLUDE = frozenset(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def _collect_stats() -> Dict[str, List[str]]:
-    """Collect all stat names from ACCUM_RULES and DERIVED configs."""
-    player: set[str] = set()
-    team: set[str] = set()
-    on_court: set[str] = set()
 
-    for rules in ACCUM_RULES.values():
-        for rule in rules:
-            stat = rule["stat"]
-            target = rule["target"]
-            if target in ("player", "assister"):
-                player.add(stat)
-            elif target in ("team", "defending_team"):
-                team.add(stat)
-            elif target in ("on_court", "defending_on_court"):
-                on_court.add(f"on_{stat}")
-
-    for name, cfg in DERIVED.items():
-        if cfg.get("level") == "player":
-            player.add(name)
-        elif cfg.get("level") == "team":
-            team.add(name)
-
-    return {
-        "PLAYER": sorted(player),
-        "TEAM": sorted(team),
-        "ON_COURT": sorted(on_court),
-    }
-
-
-_STAT_REGISTRY: Dict[str, List[str]] = _collect_stats()

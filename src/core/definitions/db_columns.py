@@ -20,6 +20,7 @@ from typing import Any, Dict, List, TypedDict, Union
 
 class DatasetMappingDef(TypedDict, total=False):
     field: Union[str, None]
+    domain: Union[str, None]
     transform: Union[str, None]
     scale: Union[int, None]
     params: Union[Dict[str, Any], None]
@@ -347,6 +348,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                 },
             },
         },
+    },
+    "neutral_site": {
+        "type": "BOOLEAN",
+        "tables": ["games", "games_staging"],
+        "nullable": False,
+        "default": False,
+        "dataset_mapping": None,
     },
     "name": {
         "type": "TEXT",
@@ -695,6 +703,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "player_games": {
                         "player_game_stats": {"field": "MIN", "scale": 60},
+                        "pbp_stats": {"field": "SECS", "domain": "player"},
                     },
                     "team_seasons": {
                         "team_basic_stats": {"field": "MIN", "scale": 60},
@@ -792,6 +801,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                                 "fields": ["FGM", "FG3M"],
                             },
                         },
+                        "pbp_stats": {"field": "FG2M", "domain": "player"},
                     },
                     "team_seasons": {
                         "team_basic_stats": {
@@ -845,6 +855,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                                 "fields": ["FGA", "FG3A"],
                             },
                         },
+                        "pbp_stats": {"field": "FG2A", "domain": "player"},
                     },
                     "team_seasons": {
                         "team_basic_stats": {
@@ -888,6 +899,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "player_games": {
                         "player_game_stats": {"field": "FG3M"},
+                        "pbp_stats": {"field": "FG3M", "domain": "player"},
                     },
                     "team_seasons": {
                         "team_basic_stats": {"field": "FG3M"},
@@ -921,6 +933,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "player_games": {
                         "player_game_stats": {"field": "FG3A"},
+                        "pbp_stats": {"field": "FG3A", "domain": "player"},
                     },
                     "team_seasons": {
                         "team_basic_stats": {"field": "FG3A"},
@@ -954,6 +967,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "player_games": {
                         "player_game_stats": {"field": "FTM"},
+                        "pbp_stats": {"field": "FTM", "domain": "player"},
                     },
                     "team_seasons": {
                         "team_basic_stats": {"field": "FTM"},
@@ -987,6 +1001,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "player_games": {
                         "player_game_stats": {"field": "FTA"},
+                        "pbp_stats": {"field": "FTA", "domain": "player"},
                     },
                     "team_seasons": {
                         "team_basic_stats": {"field": "FTA"},
@@ -1020,6 +1035,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "player_games": {
                         "player_game_stats": {"field": "OREB"},
+                        "pbp_stats": {"field": "OREB", "domain": "player"},
                     },
                     "team_seasons": {
                         "team_basic_stats": {"field": "OREB"},
@@ -1053,6 +1069,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "player_games": {
                         "player_game_stats": {"field": "DREB"},
+                        "pbp_stats": {"field": "DREB", "domain": "player"},
                     },
                     "team_seasons": {
                         "team_basic_stats": {"field": "DREB"},
@@ -1086,6 +1103,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "player_games": {
                         "player_game_stats": {"field": "AST"},
+                        "pbp_stats": {"field": "AST", "domain": "player"},
                     },
                     "team_seasons": {
                         "team_basic_stats": {"field": "AST"},
@@ -1118,6 +1136,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         "player_passing_stats": {
                             "field": "POTENTIAL_AST",
                         },
+                    },
+                    "player_games": {
+                        "pbp_stats": {"field": "POT_AST", "domain": "player"},
                     },
                     "team_seasons": {
                         "team_passing_stats": {
@@ -1212,6 +1233,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "player_games": {
                         "player_game_stats": {"field": "TOV"},
+                        "pbp_stats": {"field": "TOV", "domain": "player"},
                     },
                     "team_seasons": {
                         "team_basic_stats": {"field": "TOV"},
@@ -1245,6 +1267,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "player_games": {
                         "player_game_stats": {"field": "STL"},
+                        "pbp_stats": {"field": "STL", "domain": "player"},
                     },
                     "team_seasons": {
                         "team_basic_stats": {"field": "STL"},
@@ -1278,6 +1301,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "player_games": {
                         "player_game_stats": {"field": "BLK"},
+                        "pbp_stats": {"field": "BLK", "domain": "player"},
                     },
                     "team_seasons": {
                         "team_basic_stats": {"field": "BLK"},
@@ -1311,6 +1335,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "player_games": {
                         "player_game_stats": {"field": "PF"},
+                        "pbp_stats": {"field": "PF", "domain": "player"},
                     },
                     "team_seasons": {
                         "team_basic_stats": {"field": "PF"},
@@ -1344,6 +1369,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "player_games": {
                         "player_game_stats": {"field": "DEFLECTIONS"},
+                        "pbp_stats": {"field": "DEFL", "domain": "player"},
                     },
                     "team_seasons": {
                         "team_hustle_stats": {"field": "DEFLECTIONS"},
@@ -1424,6 +1450,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         "team_game_stats": {
                             "field": "POSS",
                         },
+                        "pbp_stats": {"field": "POSS", "domain": "team"},
                     },
                 },
             },
@@ -1443,7 +1470,15 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         ],
         "nullable": True,
         "default": None,
-        "dataset_mapping": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_games": {
+                        "pbp_stats": {"field": "OFD", "domain": "player"},
+                    },
+                },
+            },
+        },
     },  # Support PBP (players: add up all events where offense committed foul on you (charge, illegal screen, etc); teams: add up all events where opposing offense committed foul... is this supported? does pbp track which players the fouls are committed against?)
     "assist_points": {
         "type": "SMALLINT",
@@ -1459,7 +1494,15 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         ],
         "nullable": True,
         "default": None,
-        "dataset_mapping": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_games": {
+                        "pbp_stats": {"field": "AST_PTS", "domain": "player"},
+                    },
+                },
+            },
+        },
     },  # Support PBP (add up point value of all assists)
     "poss_ending_ft_trips": {
         "type": "SMALLINT",
@@ -1475,7 +1518,15 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         ],
         "nullable": True,
         "default": None,
-        "dataset_mapping": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_games": {
+                        "pbp_stats": {"field": "PEFTT", "domain": "player"},
+                    },
+                },
+            },
+        },
     },  # Support PBP (add up all non-and-one free throw trips that are followed by live possession or a change of possession... if that makes sense... we can disuss this one futher)
     "o_poss_secs": {
         "type": "SMALLINT",
@@ -1491,7 +1542,15 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         ],
         "nullable": True,
         "default": None,
-        "dataset_mapping": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_games": {
+                        "pbp_stats": {"field": "O_POSS_SECS", "domain": "player"},
+                    },
+                },
+            },
+        },
     },  # Support PBP (add up all secs of offensive possessions)
     "d_poss_secs": {
         "type": "SMALLINT",
@@ -1507,8 +1566,19 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         ],
         "nullable": True,
         "default": None,
-        "dataset_mapping": None,
-    },  # Support PBP (add up all secs of defensive possessions)
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_games": {
+                        "pbp_stats": {"field": "O_POSS_SECS", "domain": "opp_player"},
+                    },
+                    "team_games": {
+                        "pbp_stats": {"field": "O_POSS_SECS", "domain": "opp_team"},
+                    },
+                },
+            },
+        },
+    },  # Support PBP (mirrored from o_poss_secs via opponent domain)
     "opp_fg3m": {
         "type": "SMALLINT",
         "tables": [
@@ -1531,6 +1601,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "team_games": {
                         "team_opp_stats": {"field": "OPP_FG3M"},
+                        "pbp_stats": {"field": "FG3M", "domain": "opp_team"},
                     },
                 },
             },
@@ -1558,6 +1629,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "team_games": {
                         "team_opp_stats": {"field": "OPP_FG3A"},
+                        "pbp_stats": {"field": "FG3A", "domain": "opp_team"},
                     },
                 },
             },
@@ -1585,6 +1657,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "team_games": {
                         "team_opp_stats": {"field": "OPP_FTM"},
+                        "pbp_stats": {"field": "FTM", "domain": "opp_team"},
                     },
                 },
             },
@@ -1612,6 +1685,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "team_games": {
                         "team_opp_stats": {"field": "OPP_FTA"},
+                        "pbp_stats": {"field": "FTA", "domain": "opp_team"},
                     },
                 },
             },
@@ -1639,6 +1713,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "team_games": {
                         "team_opp_stats": {"field": "OPP_OREB"},
+                        "pbp_stats": {"field": "OREB", "domain": "opp_team"},
                     },
                 },
             },
@@ -1666,6 +1741,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "team_games": {
                         "team_opp_stats": {"field": "OPP_DREB"},
+                        "pbp_stats": {"field": "DREB", "domain": "opp_team"},
                     },
                 },
             },
@@ -1693,6 +1769,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "team_games": {
                         "team_opp_stats": {"field": "OPP_TOV"},
+                        "pbp_stats": {"field": "TOV", "domain": "opp_team"},
                     },
                 },
             },
@@ -1720,6 +1797,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "team_games": {
                         "team_opp_stats": {"field": "OPP_STL"},
+                        "pbp_stats": {"field": "STL", "domain": "opp_team"},
                     },
                 },
             },
@@ -1747,6 +1825,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "team_games": {
                         "team_opp_stats": {"field": "OPP_BLK"},
+                        "pbp_stats": {"field": "BLK", "domain": "opp_team"},
                     },
                 },
             },
@@ -1774,6 +1853,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "team_games": {
                         "team_opp_stats": {"field": "OPP_PF"},
+                        "pbp_stats": {"field": "PF", "domain": "opp_team"},
                     },
                 },
             },
@@ -1811,6 +1891,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                                 "fields": ["OPP_FGM", "OPP_FG3M"],
                             },
                         },
+                        "pbp_stats": {"field": "FG2M", "domain": "opp_team"},
                     },
                 },
             },
@@ -1848,6 +1929,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                                 "fields": ["OPP_FGA", "OPP_FG3A"],
                             },
                         },
+                        "pbp_stats": {"field": "FG2A", "domain": "opp_team"},
                     },
                 },
             },
@@ -1867,7 +1949,15 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         ],
         "nullable": True,
         "default": None,
-        "dataset_mapping": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "team_games": {
+                        "pbp_stats": {"field": "POSS", "domain": "opp_team"},
+                    },
+                },
+            },
+        },
     },  # Support PBP (add up all opponent possessions)
     "opp_o_fouls_drawn": {
         "type": "SMALLINT",
@@ -1883,7 +1973,15 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         ],
         "nullable": True,
         "default": None,
-        "dataset_mapping": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "team_games": {
+                        "pbp_stats": {"field": "OFD", "domain": "opp_team"},
+                    },
+                },
+            },
+        },
     },  # Support PBP (add up all opponent offensivefouls drawn)
     "opp_poss_ending_ft_trips": {
         "type": "SMALLINT",
@@ -1899,7 +1997,15 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         ],
         "nullable": True,
         "default": None,
-        "dataset_mapping": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "team_games": {
+                        "pbp_stats": {"field": "PEFTT", "domain": "opp_team"},
+                    },
+                },
+            },
+        },
     },  # Support PBP (add up all opponent possession ending FT trips)
     "on_fg3m": {
         "type": "SMALLINT",
@@ -1919,6 +2025,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "player_games": {
                         "player_on_stats": {"field": "FG3M"},
+                        "pbp_stats": {"field": "FG3M", "domain": "on"},
                     },
                 },
             },
@@ -1942,6 +2049,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "player_games": {
                         "player_on_stats": {"field": "FG3A"},
+                        "pbp_stats": {"field": "FG3A", "domain": "on"},
                     },
                 },
             },
@@ -1965,6 +2073,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "player_games": {
                         "player_on_stats": {"field": "FTM"},
+                        "pbp_stats": {"field": "FTM", "domain": "on"},
                     },
                 },
             },
@@ -1988,6 +2097,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "player_games": {
                         "player_on_stats": {"field": "FTA"},
+                        "pbp_stats": {"field": "FTA", "domain": "on"},
                     },
                 },
             },
@@ -2011,6 +2121,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "player_games": {
                         "player_on_stats": {"field": "OREB"},
+                        "pbp_stats": {"field": "OREB", "domain": "on"},
                     },
                 },
             },
@@ -2034,6 +2145,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "player_games": {
                         "player_on_stats": {"field": "DREB"},
+                        "pbp_stats": {"field": "DREB", "domain": "on"},
                     },
                 },
             },
@@ -2057,6 +2169,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "player_games": {
                         "player_on_stats": {"field": "TOV"},
+                        "pbp_stats": {"field": "TOV", "domain": "on"},
                     },
                 },
             },
@@ -2080,6 +2193,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "player_games": {
                         "player_on_stats": {"field": "STL"},
+                        "pbp_stats": {"field": "STL", "domain": "on"},
                     },
                 },
             },
@@ -2103,6 +2217,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "player_games": {
                         "player_on_stats": {"field": "BLK"},
+                        "pbp_stats": {"field": "BLK", "domain": "on"},
                     },
                 },
             },
@@ -2126,6 +2241,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                     },
                     "player_games": {
                         "player_on_stats": {"field": "PF"},
+                        "pbp_stats": {"field": "PF", "domain": "on"},
                     },
                 },
             },
@@ -2159,6 +2275,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                                 "fields": ["FGM", "FG3M"],
                             },
                         },
+                        "pbp_stats": {"field": "FG2M", "domain": "on"},
                     },
                 },
             },
@@ -2192,6 +2309,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                                 "fields": ["FGA", "FG3A"],
                             },
                         },
+                        "pbp_stats": {"field": "FG2A", "domain": "on"},
                     },
                 },
             },
@@ -2207,7 +2325,15 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         ],
         "nullable": True,
         "default": None,
-        "dataset_mapping": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_games": {
+                        "pbp_stats": {"field": "OFD", "domain": "on"},
+                    },
+                },
+            },
+        },
     },  # Support PBP (add up all team offensive fouls drawn while player on the floor)
     "on_poss_ending_ft_trips": {
         "type": "SMALLINT",
@@ -2219,7 +2345,15 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         ],
         "nullable": True,
         "default": None,
-        "dataset_mapping": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_games": {
+                        "pbp_stats": {"field": "PEFTT", "domain": "on"},
+                    },
+                },
+            },
+        },
     },  # Support PBP (add up all team possession ending FT trips while player on the floor)
     "dataset": {
         "type": "TEXT",
