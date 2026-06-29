@@ -565,17 +565,14 @@ def write_staged_stats_rows(
     meta = TABLES[bare_name]
     pk_cols = list(meta.get("primary_key") or [])
 
-    # Inject ext_player_id / ext_team_id from source IDs before anything
-    # else so _ensure_staging_profiles can auto-discover missing entities.
-    if target.startswith("player"):
+    # Inject external entity IDs from source IDs so _ensure_staging_profiles
+    # can auto-discover missing entities.  Determines which column to populate
+    # by checking which ext_*_id columns exist in the staging table schema.
+    ext_id_cols = [c for c in pk_cols if c.startswith("ext_") and c.endswith("_id")]
+    for ext_col in ext_id_cols:
         for source_id, vals in rows.items():
-            if "ext_player_id" not in vals:
-                vals["ext_player_id"] = str(source_id)
-
-    if target.startswith("team"):
-        for source_id, vals in rows.items():
-            if "ext_team_id" not in vals:
-                vals["ext_team_id"] = str(source_id)
+            if ext_col not in vals:
+                vals[ext_col] = str(source_id)
 
     _ensure_staging_profiles(rows.values(), identity_code, league_code)
 

@@ -211,7 +211,6 @@ def _execute_multi_season_league_wide(
                     columns,
                     ctx.target,
                     ctx.entity_id_field,
-                    result_set_name=_get_result_set(dataset, ctx.source_code),
                     id_aliases=ctx.id_aliases,
                 )
                 for entity_id, row_data in rows.items():
@@ -252,36 +251,41 @@ def _execute_league_wide(
     ctx: ExecutionContext,
     failed: List[Dict[str, Any]],
     conn=None,
+    result: Union[Dict[str, Any], None] = None,
 ) -> int:
-    """One API call returns all entities -- extract, transform, write."""
-    ds_cfg = DATASETS.get(ctx.source_code, {}).get(dataset, {})
-    multi_season_config = (
-        {"aggregation": "most_recent_non_null"}
-        if ds_cfg.get("coverage") == "all_years"
-        else None
-    )
+    """One API call returns all entities -- extract, transform, write.
 
-    if multi_season_config:
-        return _execute_multi_season_league_wide(
-            dataset, params, columns, ctx, failed, multi_season_config, conn=conn
-        )
-
-    try:
-        result = ctx.api_fetcher(dataset, params)
-    except Exception as exc:
-        logger.error("League-wide %s failed: %s", dataset, exc)
-        failed.append({"dataset": dataset, "params": params, "error": str(exc)})
-        return 0
-
+    If *result* is provided, use it instead of calling the API.
+    """
     if result is None:
-        return 0
+        ds_cfg = DATASETS.get(ctx.source_code, {}).get(dataset, {})
+        multi_season_config = (
+            {"aggregation": "most_recent_non_null"}
+            if ds_cfg.get("coverage") == "all_years"
+            else None
+        )
+        if multi_season_config:
+            return _execute_multi_season_league_wide(
+                dataset, params, columns, ctx, failed, multi_season_config, conn=conn
+            )
+
+        try:
+            result = ctx.api_fetcher(dataset, params)
+        except Exception as exc:
+            logger.error("League-wide %s failed: %s", dataset, exc)
+            failed.append({"dataset": dataset, "params": params, "error": str(exc)})
+            return 0
+
+        if result is None:
+            return 0
+
+    ds_cfg = DATASETS.get(ctx.source_code, {}).get(dataset, {})
 
     rows = extract_columns_from_result(
         result,
         columns,
         ctx.target,
         ctx.entity_id_field,
-        result_set_name=_get_result_set(dataset, ctx.source_code),
         id_aliases=ctx.id_aliases,
     )
     logger.debug(
@@ -441,16 +445,6 @@ def _execute_pipeline_column(
     )
 
 
-def _get_result_set(dataset: str, source_code: str) -> Union[str, None]:
-    """Return the result_set name configured for a dataset, if any."""
-    return (
-        DATASETS.get(source_code, {})
-        .get(dataset, {})
-        .get("source_mapping", {})
-        .get("result_set")
-    )
-
-
 def _execute_per_entity(
     dataset: str,
     columns: Dict[str, Dict[str, Any]],
@@ -529,7 +523,6 @@ def _execute_per_entity(
             columns,
             ctx.target,
             ctx.entity_id_field,
-            result_set_name=_get_result_set(dataset, ctx.source_code),
             id_aliases=ctx.id_aliases,
         )
 
@@ -584,8 +577,12 @@ def execute_group(
     ctx: ExecutionContext,
     failed: List[Dict[str, Any]],
     conn=None,
+    result: Union[Dict[str, Any], None] = None,
 ) -> int:
-    """Execute a single call group and return rows written."""
+    """Execute a single call group and return rows written.
+
+    If *result* is provided, use it instead of calling the API.
+    """
     dataset = group["dataset"]
     params = group["params"]
     tier = group["tier"]
@@ -631,7 +628,9 @@ def execute_group(
                 col_name, source, ctx, failed, conn=conn
             )
     else:
-        written += _execute_league_wide(dataset, params, simple, ctx, failed, conn=conn)
+        written += _execute_league_wide(
+            dataset, params, simple, ctx, failed, conn=conn, result=result
+        )
         for col_name, source in pipelines.items():
             written += _execute_pipeline_column(
                 col_name, source, ctx, failed, conn=conn

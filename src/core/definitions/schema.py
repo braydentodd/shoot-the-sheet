@@ -420,6 +420,23 @@ TABLES: Dict[str, TableDef] = {
         "unique_constraints": None,
         "indexes": [{"name": "team_id_idx", "columns": ["team_id"]}],
     },
+    "identities_games": {
+        "schema": "core",
+        "primary_key": ["identity", "ext_id"],
+        "foreign_keys": [
+            {
+                "columns": ["game_id"],
+                "ref_schema": "core",
+                "ref_table": "games",
+                "ref_columns": ["game_id"],
+                "strategy": "profile_lookup",
+                "on_update": "CASCADE",
+                "on_delete": "CASCADE",
+            },
+        ],
+        "unique_constraints": None,
+        "indexes": [{"name": "game_id_idx", "columns": ["game_id"]}],
+    },
     # ------------------------------------------------------------------
     # CORE — stats tables
     # ------------------------------------------------------------------
@@ -715,35 +732,13 @@ TABLES: Dict[str, TableDef] = {
             {"name": "date_idx", "columns": ["date"]},
         ],
     },
-    "game_coverages": {
+    "coverage": {
         "schema": "core",
         "primary_key": [
             "identity",
             "league_code",
-            "ext_game_id",
-            "target",
-            "dataset",
-            "col_name",
-        ],
-        "foreign_keys": [
-            {
-                "columns": ["league_code"],
-                "ref_schema": "core",
-                "ref_table": "leagues",
-                "ref_columns": ["code"],
-                "strategy": "profile_lookup",
-                "on_update": "CASCADE",
-                "on_delete": "CASCADE",
-            },
-        ],
-        "unique_constraints": None,
-        "indexes": None,
-    },
-    "season_coverages": {
-        "schema": "core",
-        "primary_key": [
-            "identity",
-            "league_code",
+            "coverage_level",
+            "game_id",
             "target",
             "season",
             "season_type",
@@ -760,8 +755,19 @@ TABLES: Dict[str, TableDef] = {
                 "on_update": "CASCADE",
                 "on_delete": "CASCADE",
             },
+            {
+                "columns": ["game_id"],
+                "ref_schema": "core",
+                "ref_table": "games",
+                "ref_columns": ["game_id"],
+                "strategy": "profile_lookup",
+                "on_update": "CASCADE",
+                "on_delete": "SET DEFAULT",
+            },
         ],
         "unique_constraints": None,
-        "indexes": None,
+        "indexes": [
+            {"name": "covered_idx", "columns": ["covered"]},
+        ],
     },
 }

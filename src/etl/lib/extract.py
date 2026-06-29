@@ -133,10 +133,13 @@ def extract_columns_from_result(
     columns: Dict[str, Dict[str, Any]],
     target: str,
     entity_id_field: str,
-    result_set_name: Union[str, None] = None,
     id_aliases: Union[Dict[str, List[str]], None] = None,
 ) -> Dict[int, Dict[str, Any]]:
     """Extract all mapped columns from an API result for every entity.
+
+    Columns route to resultSets via their ``result_set`` field.  Columns
+    without a ``result_set`` are extracted from every resultSet that
+    contains the entity ID field.
 
     Args:
         api_result: Raw API JSON with ``resultSets``.
@@ -144,19 +147,13 @@ def extract_columns_from_result(
                  subset of SOURCES filtered for a specific dataset.
         target: Table routing target (e.g. ``'player_seasons'``, ``'team_games'``).
         entity_id_field: API header name for the entity ID (e.g. 'PLAYER_ID').
-        result_set_name: If given, only process this result set.
 
     Returns:
         ``{entity_id: {col_name: value, ...}, ...}``
     """
     all_entities: Dict[int, Dict[str, Any]] = {}
-    matched_result_set = False
 
     for rs in api_result.get("resultSets", []):
-        if result_set_name and rs["name"] != result_set_name:
-            continue
-        matched_result_set = True
-
         headers = rs["headers"]
 
         # Resolve entity ID field, falling back to source-provided aliases
@@ -189,9 +186,9 @@ def extract_columns_from_result(
                 if "pipeline" in source:
                     continue
 
-                # Per-column domain routing: skip resultSets not matching the column's domain
-                col_domain = source.get("domain")
-                if col_domain and rs["name"] != col_domain:
+                # Per-column result_set routing: skip resultSets not matching the column's result_set
+                col_result_set = source.get("result_set")
+                if col_result_set and rs["name"] != col_result_set:
                     continue
 
                 if source.get("derived"):
@@ -202,14 +199,6 @@ def extract_columns_from_result(
                 # Prefer non-None values across multiple result sets
                 if val is not None or col_name not in existing:
                     existing[col_name] = val
-
-    if result_set_name and not matched_result_set:
-        available = [rs.get("name") for rs in api_result.get("resultSets", [])]
-        logger.warning(
-            "Result set %r not found in API response; available: %s",
-            result_set_name,
-            available,
-        )
 
     return all_entities
 

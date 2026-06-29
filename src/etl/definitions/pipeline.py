@@ -24,17 +24,20 @@ PIPELINE: Dict[str, List[str]] = {
     ],
     "per_league": [
         "detect_season_activity",
+        "seed_season_coverage",
     ],
     "per_identity": [
         "maintain_leagues_teams",
         "maintain_teams_players",
-        "maintain_seasons",
+        "match_entities",
         "maintain_games",
+        "match_games",
+        "seed_game_coverage",
         "maintain_pbp",
+        "maintain_seasons",
         "maintain_profiles",
     ],
     "execution_end": [
-        "match_entities",
         "merge_staging",
         "promote_profiles",
         "promote_rosters",
@@ -44,8 +47,7 @@ PIPELINE: Dict[str, List[str]] = {
         "normalize_nulls_zeroes",
         "prune_stats_retention",
         "prune_entities",
-        "prune_season_coverages",
-        "prune_game_coverages",
+        "prune_coverage",
     ],
 }
 

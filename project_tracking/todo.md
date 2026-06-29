@@ -1,4 +1,5 @@
 Short term:
+- [ ] OT, home_team_id, away_team_id, home_team_points, away_team_points, neutral_site... games as a whole
 - [ ] implement shoot_the_sheet data source (with option of sheets or word source)
 - [ ] set up github actions / nomad?
 

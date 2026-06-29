@@ -12,7 +12,7 @@ import importlib
 import inspect
 import logging
 import warnings
-from typing import Any, Callable, Dict, Union
+from typing import Any, Callable, Dict, List, Union
 
 from src.core.definitions.leagues import LEAGUES
 from src.core.lib.rate_limiter import get_rate_limiter
@@ -157,7 +157,6 @@ def build_dataset_params(
     league_code: str,
     season_end_year: int,
     season_type_name: str,
-    entity: str,
     identity_code: str = "nba_id",
     extra_params: Union[Dict[str, Any], None] = None,
 ) -> Dict[str, Any]:
@@ -314,135 +313,230 @@ def _apply_row_filters(
 
 
 def _normalize_pbp_response(raw: Dict[str, Any]) -> Dict[str, Any]:
-    """Convert a playbyplayv3 response to canonical PBP events.
+    """Convert a playbyplayv3 response to standard PBP events and parse.
 
-    Parses ``description`` strings to extract structured data:
-    assist_player_id, rebound_type, foul_type, steal/block attribution.
+    Decomposes raw NBA actions into standard events (fg2_make, turnover,
+    sub_in, etc.) with cumulative seconds, then runs the source-agnostic
+    parser to produce domain resultSets.
     """
     import re
 
     game = raw.get("game", {})
     if not isinstance(game, dict):
         return raw
+    game_id = game.get("gameId", "")
     actions = game.get("actions", [])
     if not actions:
         return {"resultSets": []}
 
-    # Build player name → player_id lookup for assist parsing
+    # Extract home/away team IDs from game metadata
+    home_team_id = game.get("homeTeamId") or game.get("homeTeam", {}).get("teamId")
+    away_team_id = game.get("awayTeamId") or game.get("awayTeam", {}).get("teamId")
+
+    # Build player name -> player_id lookup for assist/block/steal parsing
     name_map: Dict[str, int] = {}
     for a in actions:
         pid = a.get("personId")
-        fname = (a.get("playerName") or "").split()[0] if a.get("playerName") else ""
-        lname = a.get("playerNameI", "").split(". ")[-1] if a.get("playerNameI") else ""
-        if pid and fname:
-            name_map[fname.lower()] = pid
-        if pid and lname:
-            name_map[lname.lower()] = pid
+        pname = a.get("playerName") or ""
+        pname_i = a.get("playerNameI") or ""
+        if pid:
+            if pname:
+                name_map[pname.lower()] = pid
+            if pname_i:
+                name_map[pname_i.split(". ")[-1].lower()] = pid
 
-    events: List[Dict[str, Any]] = []
+    std_events: List[Dict[str, Any]] = []
+    event_id = 0
+    current_period = 0
+
+    def _emit(ev_type: str, tid: int | None, pid: int | None, secs: float):
+        nonlocal event_id
+        event_id += 1
+        std_events.append(
+            {
+                "identity": "nba_id",
+                "game_id": game_id,
+                "secs": secs,
+                "event_id": event_id,
+                "team_id": tid,
+                "player_id": pid,
+                "event": ev_type,
+            }
+        )
+
     for a in actions:
         action_type = a.get("actionType", "")
-        desc = a.get("description", "")
-        sub_type = a.get("subType", "")
+        desc = a.get("description", "") or ""
+        sub_type = a.get("subType", "") or ""
         person_id = a.get("personId")
         team_id = a.get("teamId")
-        clock = a.get("clock", "PT00M00.00S")
+        period = a.get("period") or 0
+        shot_result = a.get("shotResult")
+        shot_value = a.get("shotValue")
 
-        event: Dict[str, Any] = {
-            "action_type": action_type,
-            "period": a.get("period"),
-            "clock": clock,
-            "clock_seconds": _parse_clock(clock),
-            "team_id": team_id if team_id else None,
-            "player_id": person_id if person_id else None,
-            "shot_made": a.get("shotResult") == "Made" if a.get("shotResult") else None,
-            "shot_value": a.get("shotValue"),
-            "is_field_goal": a.get("isFieldGoal"),
-            "is_free_throw": 1 if action_type == "Free Throw" else None,
-            "assist_player_id": None,
-            "rebound_type": None,
-            "foul_type": None,
-            "turnover_type": None,
-            "block_player_id": None,
-            "steal_player_id": None,
-            "substitution_in": None,
-            "substitution_out": None,
-            "description": desc,
-        }
+        # Cumulative seconds
+        clock_str = a.get("clock", "PT00M00.00S")
+        secs = _parse_clock(clock_str, period)
 
-        # --- Parse description for structured data ---
-
-        # Assist: "(Russell 1 AST)" → find Russell's player_id
-        ast_match = re.search(r"\(([^)]+)\s+\d+\s+AST\)", desc)
-        if ast_match:
-            name = ast_match.group(1).lower()
-            event["assist_player_id"] = name_map.get(name)
-
-        # Rebound: subType like "Off:1 Def:0" or "Unknown"
-        if action_type == "Rebound":
-            if "off" in str(sub_type).lower():
-                event["rebound_type"] = "offensive"
-            elif "def" in str(sub_type).lower():
-                event["rebound_type"] = "defensive"
-            # Description fallback: "REBOUND (Off:1 Def:0)"
-            reb_match = re.search(r"REBOUND\s*\((Off|Def)", desc)
-            if reb_match:
-                event["rebound_type"] = (
-                    "offensive" if reb_match.group(1) == "Off" else "defensive"
-                )
-
-        # Foul type
-        if action_type == "Foul":
-            if "offensive" in str(sub_type).lower() or "offensive" in desc.lower():
-                event["foul_type"] = "offensive"
-            elif "shooting" in str(sub_type).lower():
-                event["foul_type"] = "shooting"
-            elif "technical" in str(sub_type).lower():
-                event["foul_type"] = "technical"
+        # --- Period boundaries ---
+        if period != current_period:
+            if current_period > 0:
+                _emit("period_end", None, None, secs)
+            if period <= 4:
+                _emit("period_start", None, None, secs)
+                _emit("new_poss", None, None, secs)  # period start = new possession
             else:
-                event["foul_type"] = "personal"
+                _emit("overtime_start", None, None, secs)
+                _emit("new_poss", None, None, secs)
+            current_period = period
 
-        # Turnover type
-        if action_type == "Turnover":
-            event["turnover_type"] = (
-                sub_type.lower().replace(" ", "_") if sub_type else None
-            )
-            # Steal on turnover: "Steal" in description or subType
-            if "steal" in desc.lower():
-                # Try to identify the stealer from description
-                steal_match = re.search(r"STEAL\s+\(\d+\s+STL\)", desc)
+        # --- Decompose action into standard events ---
 
-        # Block: description contains "BLOCK"
-        if action_type in ("Missed Shot",) and "BLOCK" in desc:
-            event["action_type"] = "Block"
-            # Try to find blocker from description: "Davis BLOCK (1 BLK)"
-            block_match = re.search(r"(\w+)\s+BLOCK", desc)
-            if block_match:
-                event["block_player_id"] = name_map.get(block_match.group(1).lower())
+        if action_type == "Made Shot":
+            is_three = shot_value == 3
+            _emit("fg3_make" if is_three else "fg2_make", team_id, person_id, secs)
 
-        # Substitution
-        if action_type == "Substitution":
-            sub_match = re.search(r"SUB:\s*(\w+)\s+FOR\s+(\w+)", desc)
+            # Assist
+            ast_match = re.search(r"\(([^)]+)\s+\d+\s+AST\)", desc)
+            if ast_match:
+                ast_name = ast_match.group(1).lower()
+                ast_pid = name_map.get(ast_name)
+                if ast_pid:
+                    assist_type = "fg3_assist" if is_three else "fg2_assist"
+                    _emit(assist_type, team_id, ast_pid, secs)
+
+        elif action_type == "Missed Shot":
+            is_three = shot_value == 3
+            _emit("fg3_miss" if is_three else "fg2_miss", team_id, person_id, secs)
+
+            # Block: "BLOCK" in description
+            if "BLOCK" in desc:
+                block_match = re.search(r"(\w+)\s+BLOCK", desc)
+                if block_match:
+                    blocker_pid = name_map.get(block_match.group(1).lower())
+                    # Block is credited to the defender's team
+                    _emit("block", None, blocker_pid, secs)
+                else:
+                    _emit("block", None, person_id, secs)
+
+        elif action_type == "Free Throw":
+            made = shot_result == "Made"
+            _emit("ft_make" if made else "ft_miss", team_id, person_id, secs)
+
+        elif action_type == "Rebound":
+            is_off = "off" in sub_type.lower() or "Off" in desc
+            if is_off:
+                _emit("o_reb", team_id, person_id, secs)
+            else:
+                _emit("d_reb", team_id, person_id, secs)
+                _emit("new_poss", team_id, None, secs)
+
+        elif action_type == "Turnover":
+            _emit("turnover", team_id, person_id, secs)
+            _emit("new_poss", None, None, secs)
+
+            # Steal on turnover
+            if "steal" in desc.lower() or "Steal" in sub_type:
+                steal_match = re.search(r"STEAL\s*\((\d+)\s+STL\)", desc)
+                if steal_match:
+                    _emit("steal", None, person_id, secs)
+
+        elif action_type == "Foul":
+            _emit("foul_commit", team_id, person_id, secs)
+
+            if "offensive" in sub_type.lower() or "offensive" in desc.lower():
+                _emit("foul_draw_tov", team_id, person_id, secs)
+                _emit("new_poss", None, None, secs)
+            elif "shooting" in sub_type.lower():
+                sv = shot_value or 2
+                if sv == 3:
+                    _emit("foul_draw_3_ft", team_id, person_id, secs)
+                elif sv == 2:
+                    _emit("foul_draw_2_ft", team_id, person_id, secs)
+                else:
+                    _emit("foul_draw_1_ft", team_id, person_id, secs)
+            else:
+                _emit("foul_draw_no_ft", team_id, person_id, secs)
+
+        elif action_type == "Substitution":
+            sub_match = re.search(r"SUB:\s*(\S+)\s+FOR\s+(\S+)", desc)
             if sub_match:
-                event["substitution_in"] = name_map.get(sub_match.group(1).lower())
-                event["substitution_out"] = name_map.get(sub_match.group(2).lower())
+                in_name = sub_match.group(1).lower()
+                out_name = sub_match.group(2).lower()
+                in_pid = name_map.get(in_name)
+                out_pid = name_map.get(out_name)
+                if out_pid:
+                    _emit("sub_out", team_id, out_pid, secs)
+                if in_pid:
+                    _emit("sub_in", team_id, in_pid, secs)
 
-        events.append(event)
+        elif action_type == "Jump Ball":
+            if "win" in desc.lower():
+                _emit("jump_ball_win", team_id, person_id, secs)
+            else:
+                _emit("jump_ball_lose", team_id, person_id, secs)
+                _emit("jump_ball_win", None, None, secs)
+            _emit("new_poss", team_id, None, secs)
 
-    # Parse canonical events → domain resultSets
-    from src.etl.lib.pbp_parser import parse_pbp
+        elif action_type == "Steal":
+            _emit("steal", team_id, person_id, secs)
+            _emit("new_poss", team_id, None, secs)
 
-    return parse_pbp(events)
+        elif action_type == "Block":
+            _emit("block", team_id, person_id, secs)
+
+        elif action_type == "Violation":
+            _emit("turnover", team_id, person_id, secs)
+            _emit("new_poss", None, None, secs)
+
+        elif action_type == "Ejection":
+            _emit("sub_out", team_id, person_id, secs)
+
+    # Final period end
+    if current_period > 0:
+        final_secs = _parse_clock(
+            actions[-1].get("clock", "PT00M00.00S"),
+            actions[-1].get("period") or current_period,
+        )
+        if current_period <= 4:
+            _emit("period_end", None, None, final_secs)
+        else:
+            _emit("overtime_end", None, None, final_secs)
+
+    # Parse standard events into domain resultSets
+    from src.etl.lib.pbp_parser import parse
+
+    result = parse(std_events)
+
+    # Attach game-level metadata as a resultSet so db_columns can map
+    # home_team_id / away_team_id from pbp_stats with domain "game".
+    if home_team_id is not None and away_team_id is not None:
+        result.setdefault("resultSets", []).append(
+            {
+                "name": "game",
+                "headers": ["home_team_id", "away_team_id"],
+                "rowSet": [[home_team_id, away_team_id]],
+            }
+        )
+
+    return result
 
 
-def _parse_clock(clock_str: str) -> float:
-    """Convert 'PT11M42.00S' → seconds elapsed in period (702.0)."""
+def _parse_clock(clock_str: str, period: int) -> float:
+    """Convert 'PT10M27.00S' in period 1 → cumulative seconds elapsed (93.0).
+
+    Clock counts DOWN.  A 12-minute quarter has 720s.
+    Period 1: 0-720, Period 2: 720-1440, etc.
+    """
     import re
 
     m = re.match(r"PT(\d+)M([\d.]+)S", clock_str or "")
     if not m:
         return 0.0
-    return int(m.group(1)) * 60 + float(m.group(2))
+    remaining = int(m.group(1)) * 60 + float(m.group(2))
+    quarter_seconds = 720.0
+    elapsed_in_period = quarter_seconds - remaining
+    return (period - 1) * quarter_seconds + elapsed_in_period
 
 
 # ============================================================================
@@ -454,10 +548,9 @@ def make_fetcher(
     league_code: str,
     season_end_year: int,
     season_type_name: str,
-    entity: str,
     identity_code: str = "nba_id",
 ) -> Callable:
-    """Create an api_fetcher closure for the given league, season, type, and entity.
+    """Create an api_fetcher closure for the given league, season, and type.
 
     Returns a function that accepts (dataset, extra_params) and executes
     a fully parameterized NBA API call with retry logic.
@@ -477,7 +570,6 @@ def make_fetcher(
             league_code,
             season_end_year,
             season_type_name,
-            entity,
             extra_params=extra_params or {},
         )
         api_call = create_api_call(

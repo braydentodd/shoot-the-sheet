@@ -1,58 +1,43 @@
 """
-Shoot the Sheet - Stat Coverage Tracker
+Shoot the Sheet - Coverage Tracker
 
-Tracks which (col_name, dataset) pairs have been fetched for each
-(target, identity, league, season, season_type) tuple.  A coverage
-row simply records that the data was pulled — no params comparison
-is needed because the dataset's ``source_mapping`` is the single
-source of truth for API parameters.
+Single ``coverage`` table tracks fetch state for every dataset, season,
+type, target, and column combination.  ``coverage_level`` distinguishes
+season-level vs game-level granularity.
 
-Table: ``core.season_coverages``
-PK:    (identity, league_code, target, season, season_type, dataset, col_name)
+Table: ``core.coverage``
+PK:    (identity, league_code, coverage_level, game_id, target, season,
+       season_type, dataset, col_name)
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Union
 
 from src.core.definitions.db_columns import DB_COLUMNS
 from src.core.definitions.schema import TABLES
 from src.core.lib.postgres import db_connection, quote_col
+from src.etl.definitions.datasets import DATASETS
+from src.etl.lib.call_groups import is_dataset_available
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-_COVERAGE_META = TABLES["season_coverages"]
-_COVERAGE_TABLE = f"{_COVERAGE_META['schema']}.season_coverages"
+_COVERAGE_META = TABLES["coverage"]
+_COVERAGE_TABLE = f"{_COVERAGE_META['schema']}.coverage"
 _COVERAGE_PK_COLS = _COVERAGE_META["primary_key"] or []
 _COVERAGE_CONFLICT = ", ".join(quote_col(c) for c in _COVERAGE_PK_COLS)
 
-
-def _targets_for_column(col_meta: Any) -> set:
-    targets: set[str] = set()
-    mapping = col_meta.get("dataset_mapping")
-    if not mapping:
-        return targets
-    for league_sources in mapping.values():
-        if not isinstance(league_sources, dict):
-            continue
-        for identity_sources in league_sources.values():
-            if not isinstance(identity_sources, dict):
-                continue
-            targets.update(identity_sources.keys())
-    return targets
+# Sentinel game_id for season-level coverage (all games in season).
+_SEASON_GAME_ID = "0"
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
+# ============================================================================
+# Check
+# ============================================================================
 
 
-def is_group_coverage_current(
+def is_coverage_current(
     conn: Any,
     league_code: str,
     target: str,
@@ -60,14 +45,31 @@ def is_group_coverage_current(
     season_type: str,
     identity_code: str,
     group: Dict[str, Any],
+    *,
+    coverage_level: str = "season",
+    game_id: Union[str, None] = None,
 ) -> bool:
-    """Return True if every col_name in this group already has a coverage row."""
+    """Return True if every col_name in this group has ``covered=true``."""
     dataset = group.get("dataset", "")
     columns = group.get("columns") or {}
     col_names = list(columns.keys())
 
     if not col_names:
         return False
+
+    game_filter = "AND game_id = %s" if game_id else ""
+    params: list = [
+        identity_code,
+        league_code,
+        coverage_level,
+        target,
+        season,
+        season_type,
+        dataset,
+        col_names,
+    ]
+    if game_id:
+        params.insert(7, game_id)
 
     with conn.cursor() as cur:
         cur.execute(
@@ -76,28 +78,28 @@ def is_group_coverage_current(
               FROM {_COVERAGE_TABLE}
              WHERE identity = %s
                AND league_code = %s
+               AND coverage_level = %s
                AND target   = %s
                AND season   = %s
                AND season_type = %s
                AND dataset  = %s
+               {game_filter}
+               AND covered  = true
                AND col_name = ANY(%s)
             """,
-            (
-                identity_code,
-                league_code,
-                target,
-                season,
-                season_type,
-                dataset,
-                col_names,
-            ),
+            params,
         )
         covered = {row[0] for row in cur.fetchall()}
 
     return covered == set(col_names)
 
 
-def upsert_group_coverage(
+# ============================================================================
+# Upsert
+# ============================================================================
+
+
+def upsert_coverage(
     conn: Any,
     league_code: str,
     target: str,
@@ -105,8 +107,11 @@ def upsert_group_coverage(
     season_type: str,
     identity_code: str,
     group: Dict[str, Any],
+    *,
+    coverage_level: str = "season",
+    game_id: str = _SEASON_GAME_ID,
 ) -> None:
-    """Upsert coverage rows for every col_name produced by this call group."""
+    """Upsert coverage rows for every col_name in this call group."""
     dataset = group.get("dataset", "")
     columns = group.get("columns") or {}
     col_names = list(columns.keys())
@@ -119,14 +124,18 @@ def upsert_group_coverage(
             cur.execute(
                 f"""
                 INSERT INTO {_COVERAGE_TABLE} (
-                    identity, league_code, target, season, season_type, dataset, col_name, completed_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+                    identity, league_code, coverage_level, game_id,
+                    target, season, season_type, dataset, col_name,
+                    updated_at, covered
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), true)
                 ON CONFLICT ({_COVERAGE_CONFLICT})
-                DO UPDATE SET completed_at = NOW()
+                DO UPDATE SET updated_at = NOW(), covered = true
                 """,
                 (
                     identity_code,
                     league_code,
+                    coverage_level,
+                    game_id,
                     target,
                     season,
                     season_type,
@@ -137,189 +146,174 @@ def upsert_group_coverage(
     conn.commit()
 
 
-def prune_season_coverages(league_code: str) -> int:
-    """Delete coverage rows for (target, col_name) pairs no longer in config."""
-    valid: set[tuple[str, str]] = set()
-    for col_name, col_meta in DB_COLUMNS.items():
-        for target in _targets_for_column(col_meta):
-            valid.add((target, col_name))
+# ============================================================================
+# Seed
+# ============================================================================
+
+
+def seed_coverage(
+    league_code: str,
+    seasons: List[str],
+    identity_code: str,
+    *,
+    coverage_level: str = "season",
+) -> int:
+    """Pre-create coverage rows with ``covered=false``.
+
+    For season level, one row per season per combination.
+    For game level, one row per game (discovered from ``games`` table).
+
+    Existing ``covered=true`` rows are never overwritten (ON CONFLICT DO NOTHING).
+    """
+    from src.core.lib.leagues_resolver import get_all_canonical_season_types
+
+    inserted = 0
+    all_types = get_all_canonical_season_types(league_code)
+
+    with db_connection() as conn:
+        with conn.cursor() as cur:
+            for season in seasons:
+                for st_key in all_types:
+                    # Discover games for game-level coverage
+                    game_ids: List[str] = [str(_SEASON_GAME_ID)]
+                    if coverage_level == "game":
+                        cur.execute(
+                            """SELECT game_id FROM games
+                                WHERE league_code = %s AND season = %s
+                                  AND season_type = %s""",
+                            (league_code, season, st_key),
+                        )
+                        game_ids = [str(row[0]) for row in cur.fetchall()]
+                        if not game_ids:
+                            continue
+
+                    for col_name, col_def in DB_COLUMNS.items():
+                        dm = col_def.get("dataset_mapping")
+                        if not dm:
+                            continue
+                        for league_key, identities in dm.items():
+                            if league_key != league_code:
+                                continue
+                            for ident, targets in identities.items():
+                                if ident != identity_code:
+                                    continue
+                                for target, datasets in targets.items():
+                                    for ds_name in datasets:
+                                        ds_def = DATASETS.get(identity_code, {}).get(
+                                            ds_name, {}
+                                        )
+                                        tier = ds_def.get(
+                                            "execution_tier", "per_league"
+                                        )
+                                        expected_level = (
+                                            "game" if tier == "per_game" else "season"
+                                        )
+                                        if expected_level != coverage_level:
+                                            continue
+                                        if not is_dataset_available(
+                                            ds_name, season, identity_code
+                                        ):
+                                            continue
+
+                                        for game_id in game_ids:
+                                            cur.execute(
+                                                f"""
+                                                INSERT INTO {_COVERAGE_TABLE} (
+                                                    identity, league_code,
+                                                    coverage_level, game_id,
+                                                    target, season, season_type,
+                                                    dataset, col_name, covered
+                                                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,false)
+                                                ON CONFLICT ({_COVERAGE_CONFLICT}) DO NOTHING
+                                                """,
+                                                (
+                                                    identity_code,
+                                                    league_code,
+                                                    coverage_level,
+                                                    game_id,
+                                                    target,
+                                                    season,
+                                                    st_key,
+                                                    ds_name,
+                                                    col_name,
+                                                ),
+                                            )
+                                            inserted += cur.rowcount
+            conn.commit()
+
+    return inserted
+
+
+# ============================================================================
+# Prune
+# ============================================================================
+
+
+def prune_coverage(league_code: str) -> int:
+    """Delete coverage rows that are no longer valid.
+
+    Removes rows where:
+      - (identity, dataset, target, col_name) no longer in config
+      - season is outside the retention window
+    """
+    from src.core.lib.leagues_resolver import get_current_season, get_retained_seasons
+
+    current_season = get_current_season(league_code)
+    retained = set(get_retained_seasons(league_code, current_season))
+
+    valid_combos: set[tuple[str, str, str, str]] = set()
+    for identity_code, datasets in DATASETS.items():
+        for ds_name in datasets:
+            for col_name, col_def in DB_COLUMNS.items():
+                dm = col_def.get("dataset_mapping")
+                if not dm:
+                    continue
+                for league_key, identities in dm.items():
+                    if league_key != league_code:
+                        continue
+                    for ident, targets in identities.items():
+                        if ident != identity_code:
+                            continue
+                        for target, ds_map in targets.items():
+                            if ds_name in ds_map:
+                                valid_combos.add(
+                                    (identity_code, ds_name, target, col_name)
+                                )
 
     deleted = 0
     with db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                f"SELECT target, col_name FROM {_COVERAGE_TABLE} WHERE league_code = %s",
+                f"SELECT identity, dataset, target, col_name, season "
+                f"FROM {_COVERAGE_TABLE} WHERE league_code = %s",
                 (league_code,),
             )
-            to_delete: List[tuple[str, str]] = [
-                (row[0], row[1])
+            to_delete = [
+                (row[0], row[1], row[2], row[3], row[4])
                 for row in cur.fetchall()
-                if (row[0], row[1]) not in valid
+                if (row[0], row[1], row[2], row[3]) not in valid_combos
+                or row[4] not in retained
             ]
 
             if not to_delete:
                 return 0
 
-            values = ",".join("(%s, %s)" for _ in to_delete)
-            flat = [item for pair in to_delete for item in pair]
-            cur.execute(
-                f"""
-                DELETE FROM {_COVERAGE_TABLE}
-                WHERE league_code = %s
-                  AND (target, col_name) IN (VALUES """
-                + values
-                + """)
-                """,
-                (league_code,) + tuple(flat),
-            )
-            deleted = cur.rowcount
+            for identity, ds, target, col, season in to_delete:
+                cur.execute(
+                    f"""
+                    DELETE FROM {_COVERAGE_TABLE}
+                    WHERE league_code = %s
+                      AND identity = %s
+                      AND dataset = %s
+                      AND target = %s
+                      AND col_name = %s
+                      AND season = %s
+                    """,
+                    (league_code, identity, ds, target, col, season),
+                )
+                deleted += cur.rowcount
         conn.commit()
 
     if deleted:
         logger.info("Pruned %d stale coverage rows for %s", deleted, league_code)
-    return deleted
-
-
-# ---------------------------------------------------------------------------
-# Game coverage (mirrors season_coverages at game granularity)
-# ---------------------------------------------------------------------------
-
-_GAME_COVERAGE_META = TABLES["game_coverages"]
-_GAME_COVERAGE_TABLE = f"{_GAME_COVERAGE_META['schema']}.game_coverages"
-_GAME_COVERAGE_PK_COLS = _GAME_COVERAGE_META["primary_key"] or []
-_GAME_COVERAGE_CONFLICT = ", ".join(quote_col(c) for c in _GAME_COVERAGE_PK_COLS)
-
-
-def is_game_coverage_current(
-    conn: Any,
-    league_code: str,
-    target: str,
-    season: str,
-    season_type: str,
-    identity_code: str,
-    group: Dict[str, Any],
-) -> bool:
-    """Return True if every col_name in this group has game coverage for the season.
-
-    For league-wide game datasets (like ``leaguegamelog``), coverage is tracked
-    at the season level since a single call fetches all games.
-    """
-    dataset = group.get("dataset", "")
-    columns = group.get("columns") or {}
-    col_names = list(columns.keys())
-
-    if not col_names:
-        return False
-
-    with conn.cursor() as cur:
-        cur.execute(
-            f"""
-            SELECT col_name
-              FROM {_GAME_COVERAGE_TABLE}
-             WHERE identity = %s
-               AND league_code = %s
-               AND target   = %s
-               AND season   = %s
-               AND season_type = %s
-               AND dataset  = %s
-               AND col_name = ANY(%s)
-            """,
-            (
-                identity_code,
-                league_code,
-                target,
-                season,
-                season_type,
-                dataset,
-                col_names,
-            ),
-        )
-        covered = {row[0] for row in cur.fetchall()}
-
-    return covered == set(col_names)
-
-
-def upsert_game_coverage(
-    conn: Any,
-    league_code: str,
-    target: str,
-    season: str,
-    season_type: str,
-    identity_code: str,
-    ext_game_id: str,
-    group: Dict[str, Any],
-) -> None:
-    """Upsert game-level coverage rows for every col_name in this call group."""
-    dataset = group.get("dataset", "")
-    columns = group.get("columns") or {}
-    col_names = list(columns.keys())
-
-    if not col_names:
-        return
-
-    with conn.cursor() as cur:
-        for col_name in col_names:
-            cur.execute(
-                f"""
-                INSERT INTO {_GAME_COVERAGE_TABLE} (
-                    identity, league_code, ext_game_id, target, season, season_type,
-                    dataset, col_name, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
-                ON CONFLICT ({_GAME_COVERAGE_CONFLICT})
-                DO UPDATE SET updated_at = NOW()
-                """,
-                (
-                    identity_code,
-                    league_code,
-                    ext_game_id,
-                    target,
-                    season,
-                    season_type,
-                    dataset,
-                    col_name,
-                ),
-            )
-    conn.commit()
-
-
-def prune_game_coverages(league_code: str) -> int:
-    """Delete game coverage rows for (target, col_name) pairs no longer in config."""
-    valid: set[tuple[str, str]] = set()
-    for col_name, col_meta in DB_COLUMNS.items():
-        for target in _targets_for_column(col_meta):
-            valid.add((target, col_name))
-
-    deleted = 0
-    with db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                f"SELECT target, col_name FROM {_GAME_COVERAGE_TABLE} WHERE league_code = %s",
-                (league_code,),
-            )
-            to_delete: List[tuple[str, str]] = [
-                (row[0], row[1])
-                for row in cur.fetchall()
-                if (row[0], row[1]) not in valid
-            ]
-
-            if not to_delete:
-                return 0
-
-            values = ",".join("(%s, %s)" for _ in to_delete)
-            flat = [item for pair in to_delete for item in pair]
-            cur.execute(
-                f"""
-                DELETE FROM {_GAME_COVERAGE_TABLE}
-                WHERE league_code = %s
-                  AND (target, col_name) IN (VALUES """
-                + values
-                + """)
-                """,
-                (league_code,) + tuple(flat),
-            )
-            deleted = cur.rowcount
-        conn.commit()
-
-    if deleted:
-        logger.info("Pruned %d stale game coverage rows for %s", deleted, league_code)
     return deleted

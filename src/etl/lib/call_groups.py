@@ -53,6 +53,26 @@ def _enrich_source(source: Dict[str, Any], col_meta: Any) -> Dict[str, Any]:
     return enriched
 
 
+def _get_all_target_sources(
+    col_meta: Any,
+    source_code: str,
+    league_code: str,
+) -> List[Dict[str, Any]]:
+    """Return source entries for ALL targets that reference this column."""
+    all_sources = col_meta.get("dataset_mapping") or {}
+    league_sources = all_sources.get(league_code, {})
+    identity_sources = league_sources.get(source_code)
+    if not isinstance(identity_sources, dict):
+        return []
+    results: List[Dict[str, Any]] = []
+    for target, target_sources in identity_sources.items():
+        if not isinstance(target_sources, dict):
+            continue
+        for dataset_name, mapping in target_sources.items():
+            results.append({"dataset": dataset_name, "target": target, **mapping})
+    return results
+
+
 def _get_source_definitions(
     col_meta: Any,
     target: str,
@@ -96,9 +116,12 @@ def is_dataset_available(
     if not ds:
         return False
     min_season = ds.get("min_season")
-    if min_season is None:
-        return True
-    return season >= min_season
+    max_season = ds.get("max_season")
+    if min_season and season < min_season:
+        return False
+    if max_season and season > max_season:
+        return False
+    return True
 
 
 # ============================================================================
@@ -132,7 +155,6 @@ def tier_for_source(source: Dict[str, Any], dataset: str, source_code: str) -> s
 
 
 def build_call_groups(
-    target: str,
     season: str,
     source_code: str,
     dataset: str,
@@ -140,21 +162,11 @@ def build_call_groups(
     league_code: Union[str, None] = None,
     in_season: bool = True,
 ) -> List[Dict[str, Any]]:
-    """Group columns for *target* that reference *dataset*.
+    """Group ALL columns across ALL targets that reference *dataset*.
 
-    Groups simple/derived columns that share the same params so each
-    batch requires exactly one API call.  Pipeline columns get their
-    own entries.
-
-    Args:
-        dataset: Only columns whose source references this dataset are
-                 included.  Required — the caller always knows which
-                 dataset it wants to call.
-        table_name: Bare table name used to filter columns (e.g.
-                    ``'players'``, ``'player_seasons'``).  When
-                    ``None`` every column is considered.
-        in_season: If False, excludes in_season_source columns and
-                   all stats-scoped columns.
+    A call group is a batch of columns satisfied by a single API call.
+    Columns from every target are included — the orchestrator extracts
+    per-target after fetching.
 
     Returns a list of dicts, each with:
         dataset, params, tier, columns ({col_name: enriched_source})
@@ -183,17 +195,17 @@ def build_call_groups(
             if any(t in stats_tables for t in col_tables):
                 continue
 
-        sources = _get_source_definitions(
+        # Collect sources across ALL targets for this column
+        all_sources = _get_all_target_sources(
             col_meta,
-            target,
             source_code,
             league_code=league_code or "",
         )
-        if not sources:
+        if not all_sources:
             continue
 
         # Process each source entry (handles multi-source columns)
-        for src_entry in sources:
+        for src_entry in all_sources:
             enriched = _enrich_source(src_entry, col_meta)
 
             ds = enriched.get("dataset")
@@ -291,9 +303,9 @@ def build_call_groups(
             )
 
     logger.debug(
-        "build_call_groups: target=%s table=%s -> %d groups (%d league_wide, %d per_entity)",
-        target,
+        "build_call_groups: table=%s dataset=%s -> %d groups (%d league_wide, %d per_entity)",
         table_name,
+        dataset,
         len(groups),
         len(league_wide),
         len(per_entity),
