@@ -11,5 +11,4 @@ Long term:
 - [ ] Find a contracts source
 - [ ] Find an injuries source
 - [ ] set up db column comments
-- [ ] make my own pbp parser (source agnostic) to replace pbp_stats and other leagues
 - [ ] rewrite all comments/documentation

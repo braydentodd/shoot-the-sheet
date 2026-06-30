@@ -310,7 +310,15 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         ],
         "nullable": False,
         "default": False,
-        "dataset_mapping": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "games": {
+                        "pbp_stats": {"field": "ot", "result_set": "game"},
+                    },
+                },
+            },
+        },
     },
     "neutral_site": {
         "type": "BOOLEAN",
@@ -330,7 +338,18 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         ],
         "nullable": True,
         "default": None,
-        "dataset_mapping": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "games": {
+                        "pbp_stats": {
+                            "field": "home_team_points",
+                            "result_set": "game",
+                        },
+                    },
+                },
+            },
+        },
     },
     "away_team_points": {
         "type": "SMALLINT",
@@ -340,7 +359,18 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         ],
         "nullable": True,
         "default": None,
-        "dataset_mapping": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "games": {
+                        "pbp_stats": {
+                            "field": "away_team_points",
+                            "result_set": "game",
+                        },
+                    },
+                },
+            },
+        },
     },
     # ── Profiles ──
     "name": {
@@ -478,6 +508,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         "player_profiles": {
                             "field": "COUNTRY",
                             "transform": "match_country",
+                            "result_set": "PlayerIndex",
                         }
                     },
                     "teams": {

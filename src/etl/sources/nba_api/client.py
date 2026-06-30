@@ -509,13 +509,39 @@ def _normalize_pbp_response(raw: Dict[str, Any]) -> Dict[str, Any]:
     result = parse(std_events)
 
     # Attach game-level metadata as a resultSet so db_columns can map
-    # home_team_id / away_team_id from pbp_stats with domain "game".
+    # home_team_id / away_team_id / points / ot from pbp_stats with domain "game".
     if home_team_id is not None and away_team_id is not None:
+        # Read team points from parser output
+        home_pts = 0
+        away_pts = 0
+        for rs in result.get("resultSets", []):
+            if rs.get("name") != "team":
+                continue
+            headers = rs.get("headers", [])
+            if "total_points" not in headers:
+                continue
+            pts_idx = headers.index("total_points")
+            id_idx = headers.index("team_id")
+            for row in rs.get("rowSet", []):
+                tid = str(row[id_idx])
+                pts = row[pts_idx] or 0
+                if tid == str(home_team_id):
+                    home_pts = pts
+                elif tid == str(away_team_id):
+                    away_pts = pts
+
+        ot = result.get("ot", False)
         result.setdefault("resultSets", []).append(
             {
                 "name": "game",
-                "headers": ["home_team_id", "away_team_id"],
-                "rowSet": [[home_team_id, away_team_id]],
+                "headers": [
+                    "home_team_id",
+                    "away_team_id",
+                    "home_team_points",
+                    "away_team_points",
+                    "ot",
+                ],
+                "rowSet": [[home_team_id, away_team_id, home_pts, away_pts, ot]],
             }
         )
 

@@ -25,7 +25,7 @@ risks deleting an entity that's about to be referenced.
 """
 
 import logging
-from typing import Dict, List
+from typing import Dict, List, Union
 
 from src.core.definitions.leagues import LEAGUES
 from src.core.definitions.schema import TABLES

@@ -94,7 +94,7 @@ EVENT_STAT: Dict[str, List[str]] = {
 
 
 def parse(events: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Parse standard PBP events into domain resultSets."""
+    """Parse standard PBP events into domain resultSets.
 
     Returns::
 
@@ -118,6 +118,7 @@ def parse(events: List[Dict[str, Any]]) -> Dict[str, Any]:
     last_poss: Dict[int, float] = {}  # team_id → secs of last new_poss for o_poss_secs
     team_scores: Dict[int, int] = {}  # team_id → total points
     player_teams: Dict[int, int] = {}  # player_id → team_id (set on first sub_in)
+    has_ot: bool = False  # True if any overtime_start event seen
 
     # Accumulators: {domain: {entity_id: {stat: value}}}
     acc: Dict[str, Dict[int, Dict[str, Any]]] = {
@@ -152,6 +153,10 @@ def parse(events: List[Dict[str, Any]]) -> Dict[str, Any]:
         # --- Track the two teams ---
         if tid and tid not in team_ids and len(team_ids) < 2:
             team_ids.append(tid)
+
+        # --- OT detection ---
+        if ev == "overtime_start":
+            has_ot = True
 
         # --- Lineup tracking ---
         if ev == "sub_in" and pid and tid:
@@ -229,11 +234,13 @@ def parse(events: List[Dict[str, Any]]) -> Dict[str, Any]:
     # --- Post-processing: secs per player ---
     for pid in stints:
         _inc("player", pid, "secs", stints[pid])
-    # Team secs: last event's secs value
+    # Team secs and points: last event's secs value + accumulated scores
+    ot = has_ot
     if events:
         final_secs = events[-1].get("secs", 0)
         for tid in team_ids:
             _inc("team", tid, "secs", final_secs)
+            _inc("team", tid, "total_points", team_scores.get(tid, 0))
 
     # --- Post-processing: win ---
     if len(team_ids) == 2:
@@ -257,7 +264,9 @@ def parse(events: List[Dict[str, Any]]) -> Dict[str, Any]:
     # --- Post-processing: o_poss_secs ---
     # (computed inline during the main loop from new_poss timestamps)
 
-    return _build_result_sets(acc)
+    result = _build_result_sets(acc)
+    result["ot"] = ot
+    return result
 
 
 def _build_result_sets(
