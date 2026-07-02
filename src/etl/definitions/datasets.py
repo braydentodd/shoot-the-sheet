@@ -55,14 +55,7 @@ class RowFilterDef(TypedDict):
 
 
 class DatasetDef(TypedDict):
-    """Generic dataset metadata, uniform across every identity.
-
-    ``coverage`` drives refresh behaviour:
-        ``"normal"``   — use stat_coverages to gate re-fetching (default).
-        ``"all_years"`` — fetch every season from min_season to current,
-                        aggregate most-recent-non-null per entity.
-        ``"current"``   — skip coverage, always fetch the current season.
-    """
+    """Generic dataset metadata, uniform across every identity."""
 
     min_season: Union[str, None]
     max_season: Union[str, None]
@@ -424,26 +417,6 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
                 "class_name": "leaguegamelog",
                 "season_type_param": "season_type_all_star",
                 "player_or_team_abbreviation": "P",
-            },
-        },
-        "pbp_stats": {
-            "min_season": "1996-97",
-            "max_season": None,
-            "execution_tier": "per_game",
-            "source": "nba_api",
-            "phase": "maintain_pbp",
-            "coverage": "normal",
-            "row_filters": None,
-            "discovery_tables": [
-                "players_staging",
-                "games_staging",
-                "teams_staging",
-            ],
-            "prune_tables": None,
-            "source_mapping": {
-                "season_param_format": {"NBA": "SSSS-EE"},
-                "class_name": "playbyplayv3",
-                "season_type_param": "season_type_all_star",
             },
         },
         "combine_anthros": {
