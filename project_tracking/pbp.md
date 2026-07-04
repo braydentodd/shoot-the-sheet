@@ -39,9 +39,7 @@ standard pbp columns:
   - sub_out (substitution out, will include one at 0 secs at the end of each period for all players on the court; includes ejections)
   - jump_ball_win (jump ball win)
   - jump_ball_lose (jump ball lose)
-  - foul_commit (foul commit; personal, technical, flagrant, any kind of foul)
-  - foul_draw_2_ft (foul draw that directly results in 2 possible free throw attempts)
-  - foul_draw_3_ft (foul draw that directly results in 3 possible free throw attempts)
+  - poss_ending_ft_trip (foul draw that directly results in potentially possession ending free throw attempts (not counting and-ones, because the fg attempt drives it being potentially possession ending; ft trips followed by a change of possession, rebound, or out of bounds... so essentially just all free throws except and-ones, flagrants or technicals, since the shooting team automatically maintains possession on those after shooting)
   - new_poss (new possession for a team; turnover, d_reb, period_start, overtime_start, jump_ball_win if didn't have possession previously)
 
 ===========
@@ -69,7 +67,7 @@ team result_set
   - secs = (secs value at final record in pbp)
   - poss = (sum of new_poss team events)
   - o_poss_secs = (secs value at new_poss for opp_team) - (secs value at new_poss for team) for every team poss)
-  - poss_ending_ft_trips = (sum of foul_draw_2_ft team events) + (sum of foul_draw_3_ft team events)
+  - poss_ending_ft_trips = (sum of poss_ending_ft_trip team events)
 
 player result_set
 
@@ -84,7 +82,7 @@ player result_set
   - turnovers = (sum of turnover player events)
   - win = (((sum of fg2_make team events) * 2) + ((sum of fg3_make team events) * 3) + (sum of ft_make team events)) > (((sum of fg2_make opp_team events) * 2) + ((sum of fg3_make opp_team events) * 3) + (sum of ft_make opp_team events))
   - secs = ((secs value at sub_out player event) - (secs value at preceeding sub_in player event) for every sub_out player event)
-  - poss_ending_ft_trips = (sum of foul_draw_2_ft player events) + (sum of foul_draw_3_ft player events)
+  - poss_ending_ft_trips = (sum of poss_ending_ft_trip player events)
 
 opp_team result_set
 
@@ -99,7 +97,7 @@ opp_team result_set
   - turnovers = (sum of turnover opp_team events)
   - poss = (sum of new_poss opp_team events)
   - o_poss_secs = (secs value at new_poss for team) - (secs value at preceeding new_poss for opp_team) for every opp_team poss)
-  - poss_ending_ft_trips = (sum of foul_draw_2_ft opp_team events) + (sum of foul_draw_3_ft opp_team events)
+  - poss_ending_ft_trips = (sum of poss_ending_ft_trip opp_team events)
 
 opp_player result_set
 
@@ -114,7 +112,7 @@ opp_player result_set
   - turnovers = (sum of turnover opp_player events)
   - poss = ((sum of new_poss opp_team events) while in between sub_in and sub_out player events)
   - o_poss_secs = (secs value at new_poss for team) - (secs value at preceeding new_poss for opp_player) for every opp_player poss)
-  - poss_ending_ft_trips = (sum of foul_draw_2_ft opp_player events) + (sum of foul_draw_3_ft opp_player events)
+  - poss_ending_ft_trips = (sum of poss_ending_ft_trip opp_player events)
 
 on_player result_set
 
@@ -129,4 +127,4 @@ on_player result_set
   - turnovers = (sum of turnover on_player events)
   - poss = ((sum of new_poss team events) while in between sub_in and sub_out player events)
   - o_poss_secs = (secs value at new_poss for opp_team) - (secs value at preceeding new_poss for team) while in between sub_in and sub_out player events)
-  - poss_ending_ft_trips = (sum of foul_draw_2_ft on_player events) + (sum of foul_draw_3_ft on_player events)
+  - poss_ending_ft_trips = (sum of poss_ending_ft_trip on_player events)

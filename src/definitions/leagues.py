@@ -1,0 +1,86 @@
+"""
+Shoot the Sheet - League Definitions
+
+Per-league operational settings: calendar window, retention, season grammar.
+
+Season types are declared as ``{canonical_key: {is_postseason, min_season}}``.
+The ``is_postseason`` boolean groups types for core stats table purposes.
+``min_season`` gates whether a season type is valid for a given season
+(e.g. Play-In started in 2020-21).
+
+Dataset-level role assignments and source wiring live in
+:data:`src.definitions.datasets.DATASETS` and
+:data:`src.definitions.db_columns.DB_COLUMNS`.
+
+Pure declarative data; helpers live in :mod:`src.lib.leagues_resolver`.
+"""
+
+from typing import Dict, TypedDict, Union
+
+# ============================================================================
+# VALIDATION CONSTANTS
+# ============================================================================
+
+VALID_LEAGUE_SEASON_FORMATS = frozenset({"same_year", "split_year"})
+VALID_LEAGUE_GENDERS = frozenset({"M", "W"})
+VALID_SEASON_TYPE_GROUPS = frozenset({"regular", "postseason"})
+VALID_CANONICAL_SEASON_TYPES = frozenset(
+    {
+        "regular_season",
+        "playoffs",
+        "play_in",
+        "showcase_cup",
+    }
+)
+
+
+# ============================================================================
+# SCHEMA
+# ============================================================================
+
+
+class SeasonTypeDef(TypedDict):
+    """Per-season-type configuration within a league."""
+
+    is_postseason: bool
+    min_season: Union[str, None]
+
+
+class LeagueDef(TypedDict):
+    """Per-league operational configuration."""
+
+    name: str
+    gender: str
+    season_format: str
+    season_types: Dict[str, SeasonTypeDef]
+    calendar_flip: str
+    season_retention_start: str
+
+
+# ============================================================================
+# LEAGUE REGISTRY
+# ============================================================================
+
+LEAGUES: Dict[str, LeagueDef] = {
+    "NBA": {
+        "name": "National Basketball Association",
+        "gender": "M",
+        "season_format": "split_year",
+        "season_types": {
+            "regular_season": {
+                "is_postseason": False,
+                "min_season": None,
+            },
+            "playoffs": {
+                "is_postseason": True,
+                "min_season": None,
+            },
+            "play_in": {
+                "is_postseason": True,
+                "min_season": "2020-21",
+            },
+        },
+        "calendar_flip": "07/01",
+        "season_retention_start": "2024-25",
+    },
+}
