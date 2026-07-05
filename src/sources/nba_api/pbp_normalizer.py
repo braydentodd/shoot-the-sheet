@@ -111,7 +111,7 @@ def detect_event_type(action: Dict) -> Optional[EventType]:
     if action_type == "made shot" or (
         shot_result == "made" and action.get("isFieldGoal")
     ):
-        if "3pt" in sub_type or "three point" in description:
+        if "3pt" in sub_type or "3pt" in description:
             return "fg3_make"
         else:
             return "fg2_make"
@@ -119,7 +119,7 @@ def detect_event_type(action: Dict) -> Optional[EventType]:
     if action_type == "missed shot" or (
         shot_result == "missed" and action.get("isFieldGoal")
     ):
-        if "3pt" in sub_type or "three point" in description:
+        if "3pt" in sub_type or "3pt" in description:
             return "fg3_miss"
         else:
             return "fg2_miss"
@@ -217,17 +217,13 @@ def is_poss_ending_ft_trip(
 
         # If next action is by same team, check if it's offensive rebound or made shot (and-one)
         if next_team_id == ft_team_id:
-            # Offensive rebound after FT = YES (either team can get rebound)
             if (
                 next_action_type == "rebound"
                 and "offensive" in next_action.get("subType", "").lower()
             ):
                 return True
-            # Made shot immediately before FT = and-one, FT is NOT possession-ending
-            # But we're looking forward, so if next action is another FT or made shot, it's flagrant/technical
             if next_action_type in ["made shot", "free throw"]:
-                return False  # Team retains possession (flagrant/technical)
-            # Otherwise, team retained possession somehow
+                return False
             return False
 
         # If next action is by opponent, possession changed
@@ -310,7 +306,7 @@ def normalize_nba_pbp_events(
                     "identity": identity,
                     "ext_game_id": ext_game_id,
                     "event_id": event_id,
-                    "secs": secs,
+                    "pbp_secs": secs,
                     "event_type": event_type,
                     "pbp_ext_team_id": team_id,
                     "pbp_ext_player_id": person_id,
@@ -323,7 +319,7 @@ def normalize_nba_pbp_events(
                     "identity": identity,
                     "ext_game_id": ext_game_id,
                     "event_id": event_id,
-                    "secs": secs,
+                    "pbp_secs": secs,
                     "event_type": "new_poss",
                     "pbp_ext_team_id": opp_team_id,
                     "pbp_ext_player_id": None,
@@ -339,7 +335,7 @@ def normalize_nba_pbp_events(
                     "identity": identity,
                     "ext_game_id": ext_game_id,
                     "event_id": event_id,
-                    "secs": secs,
+                    "pbp_secs": secs,
                     "event_type": event_type,
                     "pbp_ext_team_id": team_id,
                     "pbp_ext_player_id": person_id,
@@ -352,7 +348,7 @@ def normalize_nba_pbp_events(
                     "identity": identity,
                     "ext_game_id": ext_game_id,
                     "event_id": event_id,
-                    "secs": secs,
+                    "pbp_secs": secs,
                     "event_type": "new_poss",
                     "pbp_ext_team_id": team_id,
                     "pbp_ext_player_id": None,
@@ -369,7 +365,7 @@ def normalize_nba_pbp_events(
                     "identity": identity,
                     "ext_game_id": ext_game_id,
                     "event_id": event_id,
-                    "secs": secs,
+                    "pbp_secs": secs,
                     "event_type": event_type,
                     "pbp_ext_team_id": None,
                     "pbp_ext_player_id": None,
@@ -382,7 +378,7 @@ def normalize_nba_pbp_events(
                     "identity": identity,
                     "ext_game_id": ext_game_id,
                     "event_id": event_id,
-                    "secs": secs,
+                    "pbp_secs": secs,
                     "event_type": "new_poss",
                     "pbp_ext_team_id": home_team_id,
                     "pbp_ext_player_id": None,
@@ -401,7 +397,7 @@ def normalize_nba_pbp_events(
                         "identity": identity,
                         "ext_game_id": ext_game_id,
                         "event_id": event_id,
-                        "secs": secs,
+                        "pbp_secs": secs,
                         "event_type": "poss_ending_ft_trip",
                         "pbp_ext_team_id": team_id,
                         "pbp_ext_player_id": person_id,
@@ -432,7 +428,7 @@ def normalize_nba_pbp_events(
                         "identity": identity,
                         "ext_game_id": ext_game_id,
                         "event_id": event_id,
-                        "secs": period_start_secs,
+                        "pbp_secs": period_start_secs,
                         "event_type": "sub_in",
                         "pbp_ext_team_id": team_id,
                         "pbp_ext_player_id": person_id,
@@ -451,7 +447,7 @@ def normalize_nba_pbp_events(
                 "identity": identity,
                 "ext_game_id": ext_game_id,
                 "event_id": event_id,
-                "secs": secs,
+                "pbp_secs": secs,
                 "event_type": event_type,
                 "pbp_ext_team_id": team_id,
                 "pbp_ext_player_id": person_id,
@@ -468,7 +464,7 @@ def normalize_nba_pbp_events(
                     "identity": identity,
                     "ext_game_id": ext_game_id,
                     "event_id": event_id,
-                    "secs": final_secs,
+                    "pbp_secs": final_secs,
                     "event_type": "sub_out",
                     "pbp_ext_team_id": team_id,
                     "pbp_ext_player_id": player_id,

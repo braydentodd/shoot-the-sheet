@@ -14,7 +14,7 @@ def load_fk_mapping(
     conn: Any,
     ref_schema: str,
     ref_table: str,
-    source_code: str,
+    identity_code: str,
     source_ids: Optional[Iterable[Any]] = None,
 ) -> Dict[str, int]:
     """Return ``{str(ext_id): sts_id}`` via the identity registry.
@@ -35,14 +35,14 @@ def load_fk_mapping(
 
     with conn.cursor() as cur:
         if source_ids is None:
-            cur.execute(sql, (source_code,))
+            cur.execute(sql, (identity_code,))
         else:
             ids_list = [str(v) for v in source_ids if v is not None]
             if not ids_list:
                 return {}
             cur.execute(
                 sql + " AND i.ext_id = ANY(%s)",
-                (source_code, ids_list),
+                (identity_code, ids_list),
             )
         return {str(row[0]): int(row[1]) for row in cur.fetchall()}
 
@@ -51,7 +51,7 @@ def resolve_fk_value_columns(
     rows: Dict[Any, Dict[str, Any]],
     conn: Any,
     league_code: str,
-    source_code: str,
+    identity_code: str,
     table_name: str,
 ) -> Tuple[Dict[Any, Dict[str, Any]], int]:
     """Translate FK source-id values using explicit table config strategies.
@@ -85,7 +85,7 @@ def resolve_fk_value_columns(
             conn,
             ref_schema=fk["ref_schema"],
             ref_table=fk["ref_table"],
-            source_code=source_code,
+            identity_code=identity_code,
             source_ids=raw_values,
         )
 

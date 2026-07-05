@@ -68,7 +68,7 @@ def _validate_pg_types(db_columns: Dict[str, Any]) -> List[str]:
     return errors
 
 
-def _validate_source_structure(
+def _validate_identity_structure(
     db_columns: Dict[str, Any],
 ) -> List[str]:
     """Validate the nested identity structure in DB_COLUMNS.
@@ -498,7 +498,7 @@ def validate_config() -> List[str]:
     errors: List[str] = []
 
     errors.extend(_validate_pg_types(DB_COLUMNS))
-    errors.extend(_validate_source_structure(DB_COLUMNS, SOURCES))
+    errors.extend(_validate_identity_structure(DB_COLUMNS))
     errors.extend(_validate_table_definitions(TABLES, DB_COLUMNS))
     errors.extend(_validate_fk_targets(TABLES))
     errors.extend(_validate_league_stage_definitions())

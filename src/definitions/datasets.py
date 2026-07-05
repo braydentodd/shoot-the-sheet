@@ -76,10 +76,10 @@ class DatasetDef(TypedDict):
     Attributes:
         min_season: Earliest season to fetch (None for no lower bound).
         max_season: Latest season to fetch (None for no upper bound).
-        execution_tier: Grouping level for API calls.
         source: Source module key (e.g. 'nba_api').
         phase: ETL phase that triggers this dataset.
         coverage: Coverage level for backfill behavior.
+        execution_tier: API execution level (per_league, per_team, per_player, per_game).
         source_mapping: Source-specific API parameters.
         discovery_tables: Tables to check for new entities.
         prune_tables: Tables to truncate before loading.
@@ -88,10 +88,10 @@ class DatasetDef(TypedDict):
 
     min_season: Union[str, None]
     max_season: Union[str, None]
-    execution_tier: ExecutionTierT
     source: str
     phase: str
     coverage: CoverageT
+    execution_tier: ExecutionTierT
     source_mapping: SourceMappingDef
     discovery_tables: Union[List[str], None]
     prune_tables: Union[List[str], None]
@@ -104,9 +104,9 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "coverage": "current",
             "min_season": None,
             "max_season": None,
-            "execution_tier": "per_league",
             "source": "nba_api",
             "phase": "detect_season_activity",
+            "execution_tier": "per_league",
             "row_filters": None,
             "discovery_tables": None,
             "prune_tables": None,
@@ -120,9 +120,9 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "coverage": "current",
             "min_season": None,
             "max_season": None,
-            "execution_tier": "per_league",
             "source": "nba_api",
             "phase": "maintain_leagues_teams",
+            "execution_tier": "per_league",
             "row_filters": [
                 {
                     "field": "MIN_YEAR",
@@ -146,9 +146,9 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "coverage": "current",
             "min_season": None,
             "max_season": None,
-            "execution_tier": "per_team",
             "source": "nba_api",
             "phase": "maintain_teams_players",
+            "execution_tier": "per_team",
             "row_filters": None,
             "discovery_tables": ["players_staging", "teams_players_staging"],
             "prune_tables": ["teams_players_staging"],
@@ -160,10 +160,10 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
         "team_basic_stats": {
             "min_season": "2003-04",
             "max_season": None,
-            "execution_tier": "per_league",
             "source": "nba_api",
             "phase": "maintain_seasons",
             "coverage": "normal",
+            "execution_tier": "per_league",
             "row_filters": None,
             "discovery_tables": ["teams_staging", "team_seasons_staging"],
             "prune_tables": None,
@@ -177,10 +177,10 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
         "team_advanced_stats": {
             "min_season": "2003-04",
             "max_season": None,
-            "execution_tier": "per_league",
             "source": "nba_api",
             "phase": "maintain_seasons",
             "coverage": "normal",
+            "execution_tier": "per_league",
             "row_filters": None,
             "discovery_tables": ["teams_staging", "team_seasons_staging"],
             "prune_tables": None,
@@ -195,10 +195,10 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
         "team_passing_stats": {
             "min_season": "2013-14",
             "max_season": None,
-            "execution_tier": "per_league",
             "source": "nba_api",
             "phase": "maintain_seasons",
             "coverage": "normal",
+            "execution_tier": "per_league",
             "row_filters": None,
             "discovery_tables": ["teams_staging", "team_seasons_staging"],
             "prune_tables": None,
@@ -214,10 +214,10 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
         "team_possession_stats": {
             "min_season": "2013-14",
             "max_season": None,
-            "execution_tier": "per_league",
             "source": "nba_api",
             "phase": "maintain_seasons",
             "coverage": "normal",
+            "execution_tier": "per_league",
             "row_filters": None,
             "discovery_tables": ["teams_staging", "team_seasons_staging"],
             "prune_tables": None,
@@ -233,27 +233,28 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
         "team_hustle_stats": {
             "min_season": "2015-16",
             "max_season": None,
-            "execution_tier": "per_league",
             "source": "nba_api",
             "phase": "maintain_seasons",
             "coverage": "normal",
+            "execution_tier": "per_league",
             "row_filters": None,
             "discovery_tables": ["teams_staging", "team_seasons_staging"],
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
-                "class_name": "leaguehustlestatsteam",
+                "class_name": "leaguehustlestatsplayer",
                 "season_type_param": "season_type_all_star",
+                "player_or_team": "Team",
                 "per_mode_param": "per_mode_time",
             },
         },
         "team_defense_stats": {
             "min_season": "2013-14",
             "max_season": None,
-            "execution_tier": "per_league",
             "source": "nba_api",
             "phase": "maintain_seasons",
             "coverage": "normal",
+            "execution_tier": "per_league",
             "row_filters": None,
             "discovery_tables": ["teams_staging", "team_seasons_staging"],
             "prune_tables": None,
@@ -267,10 +268,10 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
         "team_opp_stats": {
             "min_season": "2003-04",
             "max_season": None,
-            "execution_tier": "per_league",
             "source": "nba_api",
             "phase": "maintain_seasons",
             "coverage": "normal",
+            "execution_tier": "per_league",
             "row_filters": None,
             "discovery_tables": ["teams_staging", "team_seasons_staging"],
             "prune_tables": None,
@@ -285,10 +286,10 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
         "player_basic_stats": {
             "min_season": "2003-04",
             "max_season": None,
-            "execution_tier": "per_team",
             "source": "nba_api",
             "phase": "maintain_seasons",
             "coverage": "normal",
+            "execution_tier": "per_team",
             "row_filters": None,
             "discovery_tables": ["players_staging", "player_seasons_staging"],
             "prune_tables": None,
@@ -302,10 +303,10 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
         "player_advanced_stats": {
             "min_season": "2003-04",
             "max_season": None,
-            "execution_tier": "per_team",
             "source": "nba_api",
             "phase": "maintain_seasons",
             "coverage": "normal",
+            "execution_tier": "per_team",
             "row_filters": None,
             "discovery_tables": ["players_staging", "player_seasons_staging"],
             "prune_tables": None,
@@ -320,10 +321,10 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
         "player_passing_stats": {
             "min_season": "2013-14",
             "max_season": None,
-            "execution_tier": "per_team",
             "source": "nba_api",
             "phase": "maintain_seasons",
             "coverage": "normal",
+            "execution_tier": "per_team",
             "row_filters": None,
             "discovery_tables": ["players_staging", "player_seasons_staging"],
             "prune_tables": None,
@@ -339,10 +340,10 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
         "player_possession_stats": {
             "min_season": "2013-14",
             "max_season": None,
-            "execution_tier": "per_team",
             "source": "nba_api",
             "phase": "maintain_seasons",
             "coverage": "normal",
+            "execution_tier": "per_team",
             "row_filters": None,
             "discovery_tables": ["players_staging", "player_seasons_staging"],
             "prune_tables": None,
@@ -358,10 +359,10 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
         "player_hustle_stats": {
             "min_season": "2016-17",
             "max_season": None,
-            "execution_tier": "per_team",
             "source": "nba_api",
             "phase": "maintain_seasons",
             "coverage": "normal",
+            "execution_tier": "per_team",
             "row_filters": None,
             "discovery_tables": ["players_staging", "player_seasons_staging"],
             "prune_tables": None,
@@ -375,10 +376,10 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
         "player_defense_stats": {
             "min_season": "2013-14",
             "max_season": None,
-            "execution_tier": "per_team",
             "source": "nba_api",
             "phase": "maintain_seasons",
             "coverage": "normal",
+            "execution_tier": "per_team",
             "row_filters": None,
             "discovery_tables": ["players_staging", "player_seasons_staging"],
             "prune_tables": None,
@@ -392,16 +393,16 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
         "player_on_stats": {
             "min_season": "2007-08",
             "max_season": None,
-            "execution_tier": "per_team",
             "source": "nba_api",
             "phase": "maintain_seasons",
             "coverage": "normal",
+            "execution_tier": "per_team",
             "row_filters": None,
             "discovery_tables": ["players_staging", "player_seasons_staging"],
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
-                "class_name": "teamplayeronoffdetails",
+                "class_name": "leaguedashlineups",
                 "season_type_param": "season_type_all_star",
                 "per_mode_param": "per_mode_detailed",
             },
@@ -409,10 +410,10 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
         "team_game_stats": {
             "min_season": None,
             "max_season": None,
-            "execution_tier": "per_league",
             "source": "nba_api",
             "phase": "maintain_games",
             "coverage": "normal",
+            "execution_tier": "per_league",
             "row_filters": None,
             "discovery_tables": [
                 "teams_staging",
@@ -430,10 +431,10 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
         "player_game_stats": {
             "min_season": None,
             "max_season": None,
-            "execution_tier": "per_league",
             "source": "nba_api",
             "phase": "maintain_games",
             "coverage": "normal",
+            "execution_tier": "per_league",
             "row_filters": None,
             "discovery_tables": [
                 "players_staging",
@@ -449,12 +450,12 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             },
         },
         "pbp_data": {
-            "min_season": "2016-17",  # TODO: Verify actual playbyplayv3 availability
+            "min_season": "2000-01",  # playbyplayv3 verified available from 2000-01 onward
             "max_season": None,
-            "execution_tier": "per_game",
             "source": "nba_api",
             "phase": "maintain_pbp",
             "coverage": "normal",
+            "execution_tier": "per_game",
             "row_filters": None,
             "discovery_tables": [
                 "games_staging",
@@ -472,10 +473,10 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
         "combine_anthros": {
             "min_season": "2000-01",
             "max_season": None,
-            "execution_tier": "per_league",
             "source": "nba_api",
             "phase": "maintain_profiles",
             "coverage": "all_years",
+            "execution_tier": "per_league",
             "row_filters": None,
             "discovery_tables": ["players"],
             "prune_tables": None,
@@ -488,10 +489,10 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
         "draft_years": {
             "min_season": None,
             "max_season": None,
-            "execution_tier": "per_league",
             "source": "nba_api",
             "phase": "maintain_profiles",
             "coverage": "all_years",
+            "execution_tier": "per_league",
             "row_filters": None,
             "discovery_tables": ["players"],
             "prune_tables": None,
@@ -505,9 +506,9 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "coverage": "current",
             "min_season": None,
             "max_season": None,
-            "execution_tier": "per_league",
             "source": "nba_api",
             "phase": "maintain_profiles",
+            "execution_tier": "per_league",
             "row_filters": None,
             "discovery_tables": ["players_staging", "countries_players_staging"],
             "prune_tables": None,
@@ -520,9 +521,9 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
             "coverage": "current",
             "min_season": None,
             "max_season": None,
-            "execution_tier": "per_team",
             "source": "nba_api",
             "phase": "maintain_profiles",
+            "execution_tier": "per_team",
             "row_filters": None,
             "discovery_tables": None,
             "prune_tables": None,

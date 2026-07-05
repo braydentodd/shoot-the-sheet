@@ -1,13 +1,12 @@
-"""
-Shoot the Sheet - Call Group Builder
+"""Shoot the Sheet - Call Group Builder
 
 Transforms column configuration into executable API call groups for any
-data source.  A "call group" is a batch of columns that can be satisfied
+data identity.  A "call group" is a batch of columns that can be satisfied
 by a single API call.
 
-Functions accept source-specific config (``source_code``, ``datasets``)
-as parameters rather than importing from a specific source, keeping this
-module source-agnostic.
+Functions accept identity-specific config (``identity_code``, ``datasets``)
+as parameters rather than importing from a specific identity, keeping this
+module identity-agnostic.
 """
 
 import logging
@@ -55,13 +54,13 @@ def _enrich_source(source: Dict[str, Any], col_meta: Any) -> Dict[str, Any]:
 
 def _get_all_target_sources(
     col_meta: Any,
-    source_code: str,
+    identity_code: str,
     league_code: str,
 ) -> List[Dict[str, Any]]:
     """Return source entries for ALL targets that reference this column."""
     all_sources = col_meta.get("dataset_mapping") or {}
     league_sources = all_sources.get(league_code, {})
-    identity_sources = league_sources.get(source_code)
+    identity_sources = league_sources.get(identity_code)
     if not isinstance(identity_sources, dict):
         return []
     results: List[Dict[str, Any]] = []
@@ -81,10 +80,10 @@ def _get_all_target_sources(
 def is_dataset_available(
     dataset_name: str,
     season: str,
-    source_code: str,
+    identity_code: str,
 ) -> bool:
     """Check whether a dataset has data for the given season."""
-    ds = DATASETS.get(source_code, {}).get(dataset_name)
+    ds = DATASETS.get(identity_code, {}).get(dataset_name)
     if not ds:
         return False
     min_season = ds.get("min_season")
@@ -101,16 +100,16 @@ def is_dataset_available(
 # ============================================================================
 
 
-def tier_for_dataset(dataset: str, source_code: str) -> str:
+def tier_for_dataset(dataset: str, identity_code: str) -> str:
     """Get the default execution tier for a dataset."""
     return (
-        DATASETS.get(source_code, {})
+        DATASETS.get(identity_code, {})
         .get(dataset, {})
         .get("execution_tier", "per_league")
     )
 
 
-def tier_for_source(source: Dict[str, Any], dataset: str, source_code: str) -> str:
+def tier_for_source(source: Dict[str, Any], dataset: str, identity_code: str) -> str:
     """Resolve execution tier from a source config or the dataset default."""
     tier = source.get("tier")
     if tier:
@@ -118,7 +117,7 @@ def tier_for_source(source: Dict[str, Any], dataset: str, source_code: str) -> s
     pipeline = source.get("pipeline", {})
     if pipeline.get("tier"):
         return pipeline["tier"]
-    return tier_for_dataset(dataset, source_code)
+    return tier_for_dataset(dataset, identity_code)
 
 
 # ============================================================================
@@ -128,7 +127,7 @@ def tier_for_source(source: Dict[str, Any], dataset: str, source_code: str) -> s
 
 def build_call_groups(
     season: str,
-    source_code: str,
+    identity_code: str,
     dataset: str,
     table_name: Union[str, None] = None,
     league_code: Union[str, None] = None,
@@ -137,7 +136,7 @@ def build_call_groups(
     """Group ALL columns across ALL targets that reference *dataset*.
 
     A call group is a batch of columns satisfied by a single API call.
-    Columns from every target are included — the orchestrator extracts
+    Columns from every target are included - the orchestrator extracts
     per-target after fetching.
 
     Returns a list of dicts, each with:
@@ -170,7 +169,7 @@ def build_call_groups(
         # Collect sources across ALL targets for this column
         all_sources = _get_all_target_sources(
             col_meta,
-            source_code,
+            identity_code,
             league_code=league_code or "",
         )
         if not all_sources:
@@ -185,7 +184,7 @@ def build_call_groups(
                 ds = enriched.get("pipeline", {}).get("dataset")
             if not ds:
                 continue
-            if not is_dataset_available(ds, season, source_code):
+            if not is_dataset_available(ds, season, identity_code):
                 continue
 
             if ds != dataset:
@@ -196,7 +195,7 @@ def build_call_groups(
                     {
                         "dataset": ds,
                         "params": enriched.get("params", {}),
-                        "tier": tier_for_source(enriched, ds, source_code),
+                        "tier": tier_for_source(enriched, ds, identity_code),
                         "columns": {col_name: enriched},
                     }
                 )
@@ -217,7 +216,7 @@ def build_call_groups(
     groups: List[Dict[str, Any]] = []
 
     for (ds, frozen_params), cols in league_wide.items():
-        ds_cfg = DATASETS.get(source_code, {}).get(ds, {})
+        ds_cfg = DATASETS.get(identity_code, {}).get(ds, {})
         removed_refresh_mode = (
             "always"
             if ds_cfg.get("coverage") in ("all_years", "current")
@@ -227,7 +226,7 @@ def build_call_groups(
             {
                 "dataset": ds,
                 "params": dict(frozen_params),
-                "tier": tier_for_dataset(ds, source_code),
+                "tier": tier_for_dataset(ds, identity_code),
                 "columns": cols,
                 "removed_refresh_mode": removed_refresh_mode,
             }
@@ -259,7 +258,7 @@ def build_call_groups(
     for tier, merged in per_entity_merged.items():
         for bucket in merged.values():
             ds = bucket["dataset"]
-            ds_cfg2 = DATASETS.get(source_code, {}).get(ds, {})
+            ds_cfg2 = DATASETS.get(identity_code, {}).get(ds, {})
             groups.append(
                 {
                     "dataset": ds,

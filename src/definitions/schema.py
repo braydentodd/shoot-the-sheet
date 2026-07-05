@@ -57,6 +57,13 @@ DEFAULT_TYPE_TRANSFORMS: Dict[str, str] = {
 
 
 class SequenceDef(TypedDict):
+    """PostgreSQL sequence definition.
+
+    Attributes:
+        schema: Schema where sequence lives (e.g., 'core').
+        owner_columns: Columns that use this sequence as default.
+    """
+
     schema: str
     owner_columns: List[str]
 
@@ -70,6 +77,10 @@ SEQUENCES: Dict[str, SequenceDef] = {
         "schema": "core",
         "owner_columns": ["game_id"],
     },
+    "core.error_id_seq": {
+        "schema": "core",
+        "owner_columns": ["error_id"],
+    },
 }
 
 
@@ -79,6 +90,18 @@ SEQUENCES: Dict[str, SequenceDef] = {
 
 
 class FKDef(TypedDict):
+    """Foreign key constraint definition.
+
+    Attributes:
+        columns: Column(s) in this table.
+        ref_schema: Referenced table's schema.
+        ref_table: Referenced table name.
+        ref_columns: Referenced column(s).
+        strategy: FK strategy ('simple' for direct FK).
+        on_update: Action on referenced row update.
+        on_delete: Action on referenced row delete.
+    """
+
     columns: List[str]
     ref_schema: str
     ref_table: str
@@ -89,13 +112,31 @@ class FKDef(TypedDict):
 
 
 class IndexDef(TypedDict):
+    """Database index definition.
+
+    Attributes:
+        name: Index name.
+        columns: Column(s) to index.
+    """
+
     name: str
     columns: List[str]
 
 
 class TableDef(TypedDict, total=False):
+    """Complete table schema definition.
+
+    Attributes:
+        schema: Schema name (e.g., 'core', 'staging', 'ready').
+        name: Table name override (defaults to dict key if omitted).
+        primary_key: Primary key column(s).
+        foreign_keys: Foreign key constraints.
+        unique_constraints: Unique constraint column combinations.
+        indexes: Additional indexes.
+    """
+
     schema: Union[str, None]
-    name: Union[str, None]  # Override table name (if not provided, uses dict key)
+    name: Union[str, None]
     primary_key: Union[List[str], None]
     foreign_keys: Union[List[FKDef], None]
     unique_constraints: Union[List[List[str]], None]
@@ -1173,5 +1214,19 @@ TABLES: Dict[str, TableDef] = {
         ],
         "unique_constraints": None,
         "indexes": None,
+    },
+    # ------------------------------------------------------------------
+    # CORE — operational tables
+    # ------------------------------------------------------------------
+    "core.errors": {
+        "schema": "core",
+        "primary_key": ["error_id"],
+        "foreign_keys": None,
+        "unique_constraints": None,
+        "indexes": [
+            {"name": "idx_errors_timestamp", "columns": ["timestamp"]},
+            {"name": "idx_errors_phase", "columns": ["phase"]},
+            {"name": "idx_errors_identity", "columns": ["identity"]},
+        ],
     },
 }

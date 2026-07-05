@@ -163,20 +163,20 @@ def write_entity_rows(
     season: str,
     season_type: str,
     league_code: str,
-    source_code: Union[str, None] = None,
+    identity_code: Union[str, None] = None,
 ) -> int:
     """Write extracted rows to the database.
 
     Args:
-        target:       ``'player'``, ``'team'``, ``'player_opp'``, etc.
-        table_name:   Bare target table (``'players'``, ``'player_seasons'``,
-                      ``'teams_players'``).  Determines which staging table
-                      and write strategy to use.
-        rows:         ``{source_entity_id: {col_name: value, ...}, ...}``.
-        season:       Season label (``'2024-25'``).
-        season_type:  Season type code (``'rs'``, ``'po'``, ``'pi'``, ...).
-        league_code:  League key (e.g. ``'nba'``).
-        source_code:  Source registry key.  Defaults to the league's reader.
+        target:        ``'player'``, ``'team'``, ``'player_opp'``, etc.
+        table_name:    Bare target table (``'players'``, ``'player_seasons'``,
+                       ``'teams_players'``).  Determines which staging table
+                       and write strategy to use.
+        rows:          ``{source_entity_id: {col_name: value, ...}, ...}``.
+        season:        Season label (``'2024-25'``).
+        season_type:   Season type code (``'rs'``, ``'po'``, ``'pi'``, ...).
+        league_code:   League key (e.g. ``'nba'``).
+        identity_code: Identity registry key.  Defaults to the league's reader.
 
     Returns:
         Number of rows written.
@@ -184,22 +184,22 @@ def write_entity_rows(
     if not rows:
         return 0
 
-    if source_code is None:
-        source_code = get_default_external_source(league_code)
+    if identity_code is None:
+        identity_code = get_default_external_source(league_code)
 
     _profile_tables = {"players", "teams"}
     _roster_tables = {"teams_players", "leagues_teams", "countries_players"}
     _stats_tables = {"player_seasons", "team_seasons"}
 
     if table_name in _profile_tables:
-        return write_staged_entity_rows(target, rows, league_code, source_code)
+        return write_staged_entity_rows(target, rows, league_code, identity_code)
 
     if table_name in _roster_tables:
-        return write_staged_roster_rows(target, rows, league_code, source_code)
+        return write_staged_roster_rows(target, rows, league_code, identity_code)
 
     if table_name in _stats_tables:
         return write_staged_stats_rows(
-            target, rows, season, season_type, league_code, source_code
+            target, rows, season, season_type, league_code, identity_code
         )
 
     raise ValueError(f"Unknown target table: {table_name!r}")

@@ -179,8 +179,6 @@ def accumulate_pbp_events(
                 stat_name = DOMAIN_PREFIXES["opp_team"] + base_stat
                 opp_team_stats[opp_team_id][stat_name] += 1
 
-            # opp_player: For each player on team, accumulate opponent stats faced
-            # Key: (team_id, my_player_id) → stats of what opponent players did
             if (
                 "opp_player" in rule["domains"]
                 and team_id

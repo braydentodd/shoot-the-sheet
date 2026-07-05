@@ -90,13 +90,13 @@ class StatRuleDef(TypedDict):
 
 
 # Domain-specific prefixes for stat names
-# When a stat is computed for a domain, the stat name becomes {prefix}_{base_stat}
-# Example: fg2m for team → "fg2m", fg2m for player → "player_fg2m"
+# When a stat is computed for a domain, the stat name becomes {prefix}{base_stat}
+# Example: fg2m for team → "fg2m", fg2m for player → "fg2m", fg2m for opp_team → "opp_fg2m"
 DOMAIN_PREFIXES: Dict[ResultSetType, str] = {
     "team": "",
-    "player": "player_",
+    "player": "",
     "opp_team": "opp_",
-    "opp_player": "opp_player_",
+    "opp_player": "opp_",
     "on_player": "on_",
 }
 

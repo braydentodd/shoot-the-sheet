@@ -108,7 +108,7 @@ def _run_groups(
     failed: List[Dict[str, Any]],
     *,
     league_code: str,
-    source_code: str,
+    identity_code: str,
     dataset: str,
     api_field_names: dict,
     api_config: dict,
@@ -129,7 +129,7 @@ def _run_groups(
         # Build call groups once per season — all columns across all targets
         groups = build_call_groups(
             season,
-            source_code,
+            identity_code,
             dataset=dataset,
             table_name=table_name,
             league_code=league_code,
@@ -137,7 +137,7 @@ def _run_groups(
         )
 
         if not groups:
-            ds_cfg = DATASETS.get(source_code, {}).get(dataset, {})
+            ds_cfg = DATASETS.get(identity_code, {}).get(dataset, {})
             if ds_cfg.get("discovery_tables"):
                 groups = [
                     {
@@ -171,7 +171,7 @@ def _run_groups(
             league_code,
             season_end_year,
             season_type_name,
-            identity_code=source_code,
+            identity_code=identity_code,
         )
 
         for group in groups:
@@ -197,7 +197,7 @@ def _run_groups(
                     season_type_name=season_type_name,
                     entity_id_field=api_field_names["target_id"][target],
                     db_schema=league_code,
-                    source_code=source_code,
+                    identity_code=identity_code,
                     api_fetcher=shared_fetcher,
                     team_ids=team_ids,
                     max_consecutive_failures=api_config.get(
@@ -302,7 +302,7 @@ def _discover_entities(
     season: str,
     phase_name: str,
     identity_code: str,
-    source_code: str,
+    identity_source: str,
     season_type: str,
     season_type_name: str,
     failed: List[Dict[str, Any]],
@@ -316,7 +316,7 @@ def _discover_entities(
     if not dataset_names:
         return 0
 
-    config_mod, client_mod = _load_source(source_code)
+    config_mod, client_mod = _load_source(identity_source)
     targets = ["players"] if phase_name == "maintain_teams_players" else ["teams"]
     roster_targets = (
         ["teams_players"]
@@ -330,7 +330,7 @@ def _discover_entities(
         logger.info(
             phase_marker(
                 phase_name,
-                f"dataset={identity_code}.{dataset_name} source={source_code}",
+                f"dataset={identity_code}.{dataset_name} source={identity_source}",
             )
         )
 
@@ -349,7 +349,7 @@ def _discover_entities(
                 team_ids=team_ids if ds_cfg.get("execution_tier") == "per_team" else {},
                 failed=failed,
                 league_code=league_code,
-                source_code=identity_code,
+                identity_code=identity_code,
                 dataset=dataset_name,
                 api_field_names=config_mod.API_FIELD_NAMES
                 if hasattr(config_mod, "API_FIELD_NAMES")
@@ -372,7 +372,7 @@ def _discover_entities(
                 team_ids=team_ids,
                 failed=failed,
                 league_code=league_code,
-                source_code=identity_code,
+                identity_code=identity_code,
                 dataset=dataset_name,
                 api_field_names=config_mod.API_FIELD_NAMES
                 if hasattr(config_mod, "API_FIELD_NAMES")
@@ -419,7 +419,7 @@ def _maintain_seasons(
     season: str,
     season_range: List[str],
     identity_code: str,
-    source_code: str,
+    identity_source: str,
     failed: List[Dict[str, Any]],
 ) -> int:
     """Fetch season-level stats in two passes.
@@ -458,7 +458,7 @@ def _maintain_seasons(
             if not is_season_type_valid_for(league_code, st_key, season):
                 continue
             season_type_name = get_source_season_type_code(
-                source_code, league_code, st_key
+                identity_source, league_code, st_key
             )
             for dataset_name in dataset_names:
                 for target in stats_targets:
@@ -479,7 +479,7 @@ def _maintain_seasons(
                         st_key=st_key,
                         season_type_name=season_type_name,
                         identity_code=identity_code,
-                        source_code=source_code,
+                        identity_source=identity_source,
                         dataset=dataset_name,
                         filtered_groups=groups,
                         team_ids=team_ids,
@@ -494,7 +494,7 @@ def _maintain_seasons(
                 if not is_season_type_valid_for(league_code, st_key, season_label):
                     continue
                 season_type_name = get_source_season_type_code(
-                    source_code, league_code, st_key
+                    identity_source, league_code, st_key
                 )
                 for target in stats_targets:
                     groups = build_call_groups(
@@ -530,7 +530,7 @@ def _maintain_seasons(
                         st_key=st_key,
                         season_type_name=season_type_name,
                         identity_code=identity_code,
-                        source_code=source_code,
+                        identity_source=identity_source,
                         dataset=dataset_name,
                         filtered_groups=filtered_groups,
                         team_ids=team_ids,
@@ -551,7 +551,7 @@ def _maintain_games(
     season: str,
     season_range: List[str],
     identity_code: str,
-    source_code: str,
+    identity_source: str,
     failed: List[Dict[str, Any]],
 ) -> int:
     """Fetch game-level stats in two passes.
@@ -588,7 +588,7 @@ def _maintain_games(
             if not is_season_type_valid_for(league_code, st_key, season):
                 continue
             season_type_name = get_source_season_type_code(
-                source_code, league_code, st_key
+                identity_source, league_code, st_key
             )
             for dataset_name in dataset_names:
                 for target in game_targets:
@@ -620,7 +620,7 @@ def _maintain_games(
                         st_key=st_key,
                         season_type_name=season_type_name,
                         identity_code=identity_code,
-                        source_code=source_code,
+                        identity_source=identity_source,
                         dataset=dataset_name,
                         filtered_groups=groups,
                         team_ids={},
@@ -635,7 +635,7 @@ def _maintain_games(
                 if not is_season_type_valid_for(league_code, st_key, season_label):
                     continue
                 season_type_name = get_source_season_type_code(
-                    source_code, league_code, st_key
+                    identity_source, league_code, st_key
                 )
                 for target in game_targets:
                     groups = build_call_groups(
@@ -671,7 +671,7 @@ def _maintain_games(
                         st_key=st_key,
                         season_type_name=season_type_name,
                         identity_code=identity_code,
-                        source_code=source_code,
+                        identity_source=identity_source,
                         dataset=dataset_name,
                         filtered_groups=filtered_groups,
                         team_ids={},
@@ -695,7 +695,7 @@ def _execute_stats_groups(
     st_key: str,
     season_type_name: str,
     identity_code: str,
-    source_code: str,
+    identity_source: str,
     dataset: str,
     filtered_groups: List[Dict[str, Any]],
     team_ids: Dict[str, int],
@@ -709,7 +709,7 @@ def _execute_stats_groups(
         return 0
 
     ds_cfg = DATASETS.get(identity_code, {}).get(dataset, {})
-    src_key = ds_cfg.get("source", source_code)
+    src_key = ds_cfg.get("source", identity_source)
 
     logger.info(
         phase_marker(
@@ -757,7 +757,7 @@ def _execute_stats_groups(
         team_ids=team_ids if ds_cfg.get("execution_tier") == "per_team" else {},
         failed=failed,
         league_code=league_code,
-        source_code=identity_code,
+        identity_code=identity_code,
         dataset=dataset,
         api_field_names=config_mod.API_FIELD_NAMES
         if hasattr(config_mod, "API_FIELD_NAMES")
@@ -778,7 +778,7 @@ def _maintain_profiles(
     league_code: str,
     season: str,
     identity_code: str,
-    source_code: str,
+    identity_source: str,
     season_type: str,
     season_type_name: str,
     failed: List[Dict[str, Any]],
@@ -792,7 +792,7 @@ def _maintain_profiles(
     if not dataset_names:
         return 0
 
-    config_mod, client_mod = _load_source(source_code)
+    config_mod, client_mod = _load_source(identity_source)
 
     for dataset_name in dataset_names:
         for target in ["teams", "players"]:
@@ -811,7 +811,7 @@ def _maintain_profiles(
                 team_ids=team_ids,
                 failed=failed,
                 league_code=league_code,
-                source_code=identity_code,
+                identity_code=identity_code,
                 api_field_names=config_mod.API_FIELD_NAMES
                 if hasattr(config_mod, "API_FIELD_NAMES")
                 else {},
@@ -2097,23 +2097,23 @@ def _phase_maintain_leagues_teams(ctx: dict) -> int:
         phase_datasets = _get_datasets_by_phase(handler).get(identity_code, [])
         if not phase_datasets:
             continue
-        source_code = DATASETS[identity_code][phase_datasets[0]]["source"]
-        if league_code not in SOURCES[source_code].get("leagues", {}):
+        identity_source = DATASETS[identity_code][phase_datasets[0]]["source"]
+        if league_code not in SOURCES[identity_source].get("leagues", {}):
             continue
         logger.info(
             "  identity=%s source=%s datasets=%s",
             identity_code,
-            source_code,
+            identity_source,
             phase_datasets,
         )
         reg_st = get_regular_season_types(league_code)[0]
-        reg_code = get_source_season_type_code(source_code, league_code, reg_st)
+        reg_code = get_source_season_type_code(identity_source, league_code, reg_st)
         total_rows += _discover_entities(
             league_code,
             season,
             handler,
             identity_code,
-            source_code,
+            identity_source,
             reg_st,
             reg_code,
             failed,
@@ -2135,23 +2135,23 @@ def _phase_maintain_teams_players(ctx: dict) -> int:
         phase_datasets = _get_datasets_by_phase(handler).get(identity_code, [])
         if not phase_datasets:
             continue
-        source_code = DATASETS[identity_code][phase_datasets[0]]["source"]
-        if league_code not in SOURCES[source_code].get("leagues", {}):
+        identity_source = DATASETS[identity_code][phase_datasets[0]]["source"]
+        if league_code not in SOURCES[identity_source].get("leagues", {}):
             continue
         logger.info(
             "  identity=%s source=%s datasets=%s",
             identity_code,
-            source_code,
+            identity_source,
             phase_datasets,
         )
         reg_st = get_regular_season_types(league_code)[0]
-        reg_code = get_source_season_type_code(source_code, league_code, reg_st)
+        reg_code = get_source_season_type_code(identity_source, league_code, reg_st)
         total_rows += _discover_entities(
             league_code,
             season,
             handler,
             identity_code,
-            source_code,
+            identity_source,
             reg_st,
             reg_code,
             failed,
@@ -2171,11 +2171,11 @@ def _phase_maintain_games(ctx: dict) -> int:
         phase_datasets = _get_datasets_by_phase("maintain_games").get(identity_code, [])
         if not phase_datasets:
             continue
-        source_code = DATASETS[identity_code][phase_datasets[0]]["source"]
-        if league_code not in SOURCES[source_code].get("leagues", {}):
+        identity_source = DATASETS[identity_code][phase_datasets[0]]["source"]
+        if league_code not in SOURCES[identity_source].get("leagues", {}):
             continue
         total_rows += _maintain_games(
-            league_code, season, season_range, identity_code, source_code, failed
+            league_code, season, season_range, identity_code, identity_source, failed
         )
     return total_rows
 
@@ -2207,16 +2207,16 @@ def _phase_maintain_pbp(ctx: dict) -> int:
             continue
 
         dataset_name = phase_datasets[0]
-        source_code = DATASETS[identity_code][dataset_name]["source"]
+        identity_source = DATASETS[identity_code][dataset_name]["source"]
 
         # Verify league is supported by this source
-        if league_code not in SOURCES[source_code].get("leagues", {}):
+        if league_code not in SOURCES[identity_source].get("leagues", {}):
             continue
 
         logger.info(
             phase_marker(
                 "maintain_pbp",
-                f"identity={identity_code} source={source_code}",
+                f"identity={identity_code} source={identity_source}",
             )
         )
 
@@ -2453,11 +2453,11 @@ def _phase_maintain_seasons(ctx: dict) -> int:
         )
         if not phase_datasets:
             continue
-        source_code = DATASETS[identity_code][phase_datasets[0]]["source"]
-        if league_code not in SOURCES[source_code].get("leagues", {}):
+        identity_source = DATASETS[identity_code][phase_datasets[0]]["source"]
+        if league_code not in SOURCES[identity_source].get("leagues", {}):
             continue
         total_rows += _maintain_seasons(
-            league_code, season, season_range, identity_code, source_code, failed
+            league_code, season, season_range, identity_code, identity_source, failed
         )
     return total_rows
 
@@ -2474,17 +2474,17 @@ def _phase_maintain_profiles(ctx: dict) -> int:
         )
         if not phase_datasets:
             continue
-        source_code = DATASETS[identity_code][phase_datasets[0]]["source"]
-        if league_code not in SOURCES[source_code].get("leagues", {}):
+        identity_source = DATASETS[identity_code][phase_datasets[0]]["source"]
+        if league_code not in SOURCES[identity_source].get("leagues", {}):
             continue
         team_ids = _load_team_ids(league_code)
         reg_st = get_regular_season_types(league_code)[0]
-        reg_code = get_source_season_type_code(source_code, league_code, reg_st)
+        reg_code = get_source_season_type_code(identity_source, league_code, reg_st)
         total_rows += _maintain_profiles(
             league_code,
             season,
             identity_code,
-            source_code,
+            identity_source,
             reg_st,
             reg_code,
             failed,

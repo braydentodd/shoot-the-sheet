@@ -24,16 +24,16 @@ class RateLimiter:
     Args:
         config: Rate limit configuration dict. If None, uses DEFAULT_RATE_LIMITS.
         config can override any of the default values.
-        source_code: Optional identifier for the source/destination (for logging).
+        identity_code: Optional identifier for the identity (for logging).
     """
 
     def __init__(
         self,
         config: Any = None,
-        source_code: Union[str, None] = None,
+        identity_code: Union[str, None] = None,
     ):
         self.config = {**DEFAULT_RATE_LIMITS, **(config or {})}
-        self.source_code = source_code
+        self.identity_code = identity_code
         self._last_request_time = 0.0
         self._consecutive_failures = 0
 
@@ -74,14 +74,14 @@ class RateLimiter:
                 logger.error(
                     "Max consecutive failures (%d) reached for %s - auto-restart recommended",
                     max_failures,
-                    self.source_code or "unknown",
+                    self.identity_code or "unknown",
                 )
                 return True
             else:
                 logger.warning(
                     "Max consecutive failures (%d) reached for %s - auto-restart disabled",
                     max_failures,
-                    self.source_code or "unknown",
+                    self.identity_code or "unknown",
                 )
                 return False
         return False
@@ -131,7 +131,7 @@ class RateLimiter:
                 if self.record_failure():
                     # Auto-restart triggered
                     raise RuntimeError(
-                        f"Auto-restart triggered for {self.source_code or 'unknown'} "
+                        f"Auto-restart triggered for {self.identity_code or 'unknown'} "
                         f"after {self._consecutive_failures} consecutive failures"
                     ) from exc
 
@@ -150,18 +150,18 @@ class RateLimiter:
 
 
 def get_rate_limiter(
-    source_code: str,
+    identity_code: str,
     config: Union[Dict[str, Any], None] = None,
     is_destination: bool = False,
 ) -> RateLimiter:
-    """Get a RateLimiter instance for a given source or destination key.
+    """Get a RateLimiter instance for a given identity key.
 
-    Reads per-source overrides from ``SOURCE_RATE_LIMITS`` in
-    ``src/core/definitions/rate_limits.py``.  Falls back to ``DEFAULT_RATE_LIMITS``
+    Reads per-identity overrides from ``SOURCE_RATE_LIMITS`` in
+    ``src/definitions/rate_limits.py``.  Falls back to ``DEFAULT_RATE_LIMITS``
     for any knobs not overridden.
     """
     from src.definitions.rate_limits import SOURCE_RATE_LIMITS
 
-    source_overrides = SOURCE_RATE_LIMITS.get(source_code, {})
-    effective = {**(config or {}), **source_overrides}
-    return RateLimiter(effective, source_code=source_code)
+    identity_overrides = SOURCE_RATE_LIMITS.get(identity_code, {})
+    effective = {**(config or {}), **identity_overrides}
+    return RateLimiter(effective, identity_code=identity_code)

@@ -105,6 +105,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "staging.leagues_teams",
             "staging.teams_players",
             "staging.countries_players",
+            "errors",
         ],
         "nullable": False,
         "default": None,
@@ -341,7 +342,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "default": None,
         "dataset_mapping": None,
     },
-    "secs": {
+    "pbp_secs": {
         "type": "INTEGER",
         "tables": [
             "staging.pbp_events",
@@ -827,6 +828,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "type": "TEXT",
         "tables": [
             "coverage",
+            "errors",
         ],
         "nullable": True,
         "default": None,
@@ -2608,193 +2610,68 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "default": None,
         "dataset_mapping": None,
     },
-    # ── Stats — player PBP ──
-    "player_fg2m": {
-        "type": "INTEGER",
-        "tables": [
-            "staging.player_games",
-        ],
+    # ==================================================================
+    # ERRORS TABLE
+    # ==================================================================
+    "error_id": {
+        "type": "BIGINT",
+        "tables": ["errors"],
+        "nullable": False,
+        "default": "nextval('core.error_id_seq')",
+        "dataset_mapping": None,
+    },
+    "timestamp": {
+        "type": "TIMESTAMP",
+        "tables": ["errors"],
+        "nullable": False,
+        "default": "CURRENT_TIMESTAMP",
+        "dataset_mapping": None,
+    },
+    "phase": {
+        "type": "VARCHAR(100)",
+        "tables": ["errors"],
         "nullable": True,
         "default": None,
         "dataset_mapping": None,
     },
-    "player_fg2a": {
-        "type": "INTEGER",
-        "tables": [
-            "staging.player_games",
-        ],
+    "entity": {
+        "type": "VARCHAR(50)",
+        "tables": ["errors"],
         "nullable": True,
         "default": None,
         "dataset_mapping": None,
     },
-    "player_fg3m": {
-        "type": "INTEGER",
-        "tables": [
-            "staging.player_games",
-        ],
+    "entity_id": {
+        "type": "VARCHAR(100)",
+        "tables": ["errors"],
         "nullable": True,
         "default": None,
         "dataset_mapping": None,
     },
-    "player_fg3a": {
-        "type": "INTEGER",
-        "tables": [
-            "staging.player_games",
-        ],
+    "error_type": {
+        "type": "VARCHAR(100)",
+        "tables": ["errors"],
+        "nullable": False,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "error_message": {
+        "type": "TEXT",
+        "tables": ["errors"],
+        "nullable": False,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "error_traceback": {
+        "type": "TEXT",
+        "tables": ["errors"],
         "nullable": True,
         "default": None,
         "dataset_mapping": None,
     },
-    "player_ftm": {
-        "type": "INTEGER",
-        "tables": [
-            "staging.player_games",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "player_fta": {
-        "type": "INTEGER",
-        "tables": [
-            "staging.player_games",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "player_o_rebs": {
-        "type": "INTEGER",
-        "tables": [
-            "staging.player_games",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "player_d_rebs": {
-        "type": "INTEGER",
-        "tables": [
-            "staging.player_games",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "player_turnovers": {
-        "type": "INTEGER",
-        "tables": [
-            "staging.player_games",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "player_poss_ending_ft_trips": {
-        "type": "INTEGER",
-        "tables": [
-            "staging.player_games",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "player_secs": {
-        "type": "INTEGER",
-        "tables": [
-            "staging.player_games",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    # ── Stats — opponent player PBP ──
-    "opp_player_fg2m": {
-        "type": "INTEGER",
-        "tables": [
-            "staging.player_games",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "opp_player_fg2a": {
-        "type": "INTEGER",
-        "tables": [
-            "staging.player_games",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "opp_player_fg3m": {
-        "type": "INTEGER",
-        "tables": [
-            "staging.player_games",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "opp_player_fg3a": {
-        "type": "INTEGER",
-        "tables": [
-            "staging.player_games",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "opp_player_ftm": {
-        "type": "INTEGER",
-        "tables": [
-            "staging.player_games",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "opp_player_fta": {
-        "type": "INTEGER",
-        "tables": [
-            "staging.player_games",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "opp_player_o_rebs": {
-        "type": "INTEGER",
-        "tables": [
-            "staging.player_games",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "opp_player_d_rebs": {
-        "type": "INTEGER",
-        "tables": [
-            "staging.player_games",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "opp_player_turnovers": {
-        "type": "INTEGER",
-        "tables": [
-            "staging.player_games",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "opp_player_poss_ending_ft_trips": {
-        "type": "INTEGER",
-        "tables": [
-            "staging.player_games",
-        ],
+    "context": {
+        "type": "TEXT",
+        "tables": ["errors"],
         "nullable": True,
         "default": None,
         "dataset_mapping": None,

@@ -12,7 +12,7 @@ import importlib
 import inspect
 import logging
 import warnings
-from typing import Any, Callable, Dict, List, Union
+from typing import Any, Callable, Dict, Union
 
 from src.definitions.datasets import DATASETS
 from src.definitions.leagues import LEAGUES

@@ -57,7 +57,7 @@ class ExecutionContext:
     season_type_name: str
     entity_id_field: str
     db_schema: str
-    source_code: str
+    identity_code: str
     api_fetcher: Callable
     team_ids: Dict[str, int] = field(default_factory=dict)
     max_consecutive_failures: int = 5
@@ -181,7 +181,7 @@ def _execute_multi_season_league_wide(
 ) -> int:
     """Fetch data across multiple years and aggregate using most_recent_non_null."""
     season_format = LEAGUES[ctx.db_schema]["season_format"]
-    ds_cfg = DATASETS.get(ctx.source_code, {}).get(dataset, {})
+    ds_cfg = DATASETS.get(ctx.identity_code, {}).get(dataset, {})
 
     start_year_str = ds_cfg.get("min_season") or "2000-01"
     start_year = parse_season_end_year(start_year_str, season_format)
@@ -240,7 +240,7 @@ def _execute_multi_season_league_wide(
         ctx.season,
         ctx.season_type,
         ctx.db_schema,
-        ctx.source_code,
+        ctx.identity_code,
     )
 
 
@@ -258,7 +258,7 @@ def _execute_league_wide(
     If *result* is provided, use it instead of calling the API.
     """
     if result is None:
-        ds_cfg = DATASETS.get(ctx.source_code, {}).get(dataset, {})
+        ds_cfg = DATASETS.get(ctx.identity_code, {}).get(dataset, {})
         multi_season_config = (
             {"aggregation": "most_recent_non_null"}
             if ds_cfg.get("coverage") == "all_years"
@@ -279,7 +279,7 @@ def _execute_league_wide(
         if result is None:
             return 0
 
-    ds_cfg = DATASETS.get(ctx.source_code, {}).get(dataset, {})
+    ds_cfg = DATASETS.get(ctx.identity_code, {}).get(dataset, {})
 
     rows = extract_columns_from_result(
         result,
@@ -298,7 +298,7 @@ def _execute_league_wide(
         ctx.season,
         ctx.season_type,
         ctx.db_schema,
-        ctx.source_code,
+        ctx.identity_code,
     )
 
 
@@ -378,7 +378,7 @@ def _execute_pipeline_per_entity(
                 ctx.season,
                 ctx.season_type,
                 ctx.db_schema,
-                ctx.source_code,
+                ctx.identity_code,
             )
             all_rows = {}
 
@@ -390,7 +390,7 @@ def _execute_pipeline_per_entity(
             ctx.season,
             ctx.season_type,
             ctx.db_schema,
-            ctx.source_code,
+            ctx.identity_code,
         )
 
     return written_count
@@ -441,7 +441,7 @@ def _execute_pipeline_column(
         ctx.season,
         ctx.season_type,
         ctx.db_schema,
-        ctx.source_code,
+        ctx.identity_code,
     )
 
 
@@ -536,7 +536,7 @@ def _execute_per_entity(
                 ctx.season,
                 ctx.season_type,
                 ctx.db_schema,
-                ctx.source_code,
+                ctx.identity_code,
             )
         else:
             all_rows.update(extracted)
@@ -549,7 +549,7 @@ def _execute_per_entity(
                     ctx.season,
                     ctx.season_type,
                     ctx.db_schema,
-                    ctx.source_code,
+                    ctx.identity_code,
                 )
                 all_rows = {}
 
@@ -561,7 +561,7 @@ def _execute_per_entity(
             ctx.season,
             ctx.season_type,
             ctx.db_schema,
-            ctx.source_code,
+            ctx.identity_code,
         )
 
     return written_count
