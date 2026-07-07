@@ -40,15 +40,16 @@ from src.definitions.datasets import DATASETS
 from src.definitions.db_columns import DB_COLUMNS
 from src.definitions.execution import GAME_LOOKBACK_DAYS
 from src.definitions.leagues import LEAGUES
-from src.definitions.pipeline import PIPELINE, VALID_PHASES
+from src.definitions.pipeline import PIPELINE
 from src.definitions.sources import SOURCES
 from src.definitions.validation import VALID_ENTITY_TYPES
-from src.lib.call_groups import build_call_groups
+from src.lib.call_grouper import build_call_groups
 from src.lib.cleanup import (
     normalize_nulls_zeroes,
     prune_entities,
     prune_stats_retention,
 )
+from src.lib.console_logger import phase_marker
 from src.lib.coverage_tracker import (
     is_coverage_current,
     prune_coverage,
@@ -62,11 +63,10 @@ from src.lib.leagues_resolver import (
     get_retained_seasons,
 )
 from src.lib.load import _resolve_league_id
-from src.lib.logging import phase_marker
 from src.lib.postgres import db_connection, quote_col
 from src.lib.schema_builder import bootstrap_schema
 from src.lib.season_detector import _check_recent_games
-from src.lib.season_resolver import parse_season_end_year
+from src.lib.season_formatter import parse_season_end_year
 from src.lib.source_resolver import get_source_season_type_code
 from src.sources.registry import get_source_modules
 
@@ -258,7 +258,7 @@ def _get_datasets_by_phase(phase_name: str) -> Dict[str, List[str]]:
 
 def _load_team_ids(league_code: str) -> Dict[str, int]:
     """Return ``{ext_id: int(ext_id)}`` for teams in staging."""
-    table = "staging.teams_staging"
+    table = "staging.teams"
     with db_connection() as conn:
         league_val = _resolve_league_id(conn, league_code)
         with conn.cursor() as cur:
@@ -838,7 +838,7 @@ def _shared_profile_columns(entity: str) -> List[str]:
     reviewed) and core-generated columns (sts_id).
     """
     core_table = entity  # "players" or "teams"
-    staging_table = f"{entity}_staging"
+    staging_table = entity  # same bare name as core - staging prefix handled by schema
     exclude = {
         "identity",
         "ext_id",
@@ -886,13 +886,13 @@ def _match_entities(
     match_pairs = [
         (
             "staging",
-            "players_staging",
+            "players",
             "core",
             "identities_players",
             "player_id",
             "player",
         ),
-        ("staging", "teams_staging", "core", "identities_teams", "team_id", "team"),
+        ("staging", "teams", "core", "identities_teams", "team_id", "team"),
     ]
 
     with db_connection() as conn:
@@ -945,7 +945,7 @@ def _match_games(
             # 1) Upsert games from staging using composite unique key
             cur.execute(
                 """
-                INSERT INTO core.games (
+                INSERT INTO core.games AS target (
                     date, home_team_id, away_team_id,
                     season, season_type, ot, neutral_site
                 )
@@ -956,7 +956,7 @@ def _match_games(
                        gs.season_type,
                        gs.ot,
                        gs.neutral_site
-                  FROM staging.games_staging gs
+                  FROM staging.games gs
                   JOIN core.identities_teams home_t
                     ON home_t.identity = gs.identity
                    AND home_t.ext_id = gs.ext_home_team_id
@@ -966,10 +966,10 @@ def _match_games(
                  WHERE gs.league_code = %s
                    AND gs.reviewed = TRUE
                 ON CONFLICT (date, home_team_id, away_team_id)
-                DO UPDATE SET season = EXCLUDED.season,
-                              season_type = EXCLUDED.season_type,
-                              ot = EXCLUDED.ot,
-                              neutral_site = EXCLUDED.neutral_site
+                DO UPDATE SET season = COALESCE(target.season, EXCLUDED.season),
+                              season_type = COALESCE(target.season_type, EXCLUDED.season_type),
+                              ot = COALESCE(target.ot, EXCLUDED.ot),
+                              neutral_site = COALESCE(target.neutral_site, EXCLUDED.neutral_site)
                 """,
                 (league_code,),
             )
@@ -983,7 +983,7 @@ def _match_games(
                 """
                 INSERT INTO core.identities_games (identity, ext_id, game_id)
                 SELECT gs.identity, gs.ext_game_id, g.game_id
-                  FROM staging.games_staging gs
+                  FROM staging.games gs
                   JOIN core.games g
                     ON g.date = gs.date
                    AND g.home_team_id = home_t.sts_id
@@ -1031,8 +1031,8 @@ def _merge_staging(
     rank = {pair: i for i, pair in enumerate(priority_order)}
 
     for entity, staging_table in [
-        ("player", "staging.players_staging"),
-        ("team", "staging.teams_staging"),
+        ("player", "staging.players"),
+        ("team", "staging.teams"),
     ]:
         shared_cols = _shared_profile_columns(entity)
         if not shared_cols:
@@ -1118,160 +1118,136 @@ def _merge_staging(
     return total_deleted
 
 
-def _merge_to_ready(
+def _merge_to_intermediate(
     league_code: str,
     identity: str,
 ) -> int:
-    """Merge staging tables into ready tables for a single identity.
+    """Merge staging tables into intermediate tables for a single identity.
 
-    Called at the end of each per_identity run. For each stat table:
+    For each of the 9 intermediate tables:
       - SELECT * FROM staging.{table}
-      - INSERT INTO ready.{table} ... ON CONFLICT UPDATE
-      - Update all columns + last_identity field
+      - INSERT INTO intermediate.{table} ... ON CONFLICT UPDATE
+      - COALESCE preserves existing values (first-write-wins)
 
-    This implements tier 2 of the 3-tier promotion:
-      staging (per-identity, first-write-wins within identity)
-        ↓
-      ready (cross-identity, last-write-wins by execution order)
-        ↓ (after all identities complete)
-      core (production)
-
-    Returns the number of rows upserted to ready.
+    Called at the end of each per_identity run.
+    Returns the number of rows upserted.
     """
-    logger.info(phase_marker("merge_to_ready", f"identity={identity}"))
+    logger.info(phase_marker("merge_to_intermediate", f"identity={identity}"))
     total_upserted = 0
 
-    # Get all columns from DB_COLUMNS for ready tables
     from src.definitions.db_columns import DB_COLUMNS
 
-    ready_tables = [
-        "ready.teams",
-        "ready.players",
-        "ready.leagues_teams",
-        "ready.teams_players",
-        "ready.countries_players",
-        "ready.identities_players",
-        "ready.identities_teams",
-        "ready.identities_games",
-        "ready.team_seasons",
-        "ready.player_seasons",
-        "ready.team_games",
-        "ready.player_games",
-        "ready.games",
-        "ready.pbp_events",
+    # Only these 9 tables flow through the intermediate layer
+    intermediate_tables = [
+        "teams",
+        "players",
+        "leagues_teams",
+        "teams_players",
+        "team_seasons",
+        "player_seasons",
+        "games",
+        "team_games",
+        "player_games",
     ]
 
-    for ready_table in ready_tables:
-        # Derive staging table name
-        table_name = ready_table.split(".", 1)[-1]
-        staging_table = f"staging.{table_name}"
+    for bare_name in intermediate_tables:
+        staging_table = f"staging.{bare_name}"
+        intermediate_table = f"intermediate.{bare_name}"
 
-        # Get columns for this table from DB_COLUMNS
+        # Build set of valid column names for this table (both qualified and bare matches)
         cols = []
-        pk_cols = []
-
         for col_name, col_def in DB_COLUMNS.items():
-            if staging_table in col_def["tables"] and ready_table in col_def["tables"]:
+            tables = col_def.get("tables", [])
+            if isinstance(tables, str):
+                tables = [tables]
+            if "all" in tables:
                 cols.append(col_name)
-                # Determine PK columns based on table type
-                if col_name in [
-                    "identity",
-                    "ext_id",
-                    "sts_id",
-                    "game_id",
-                    "player_id",
-                    "team_id",
-                    "event_id",
-                ]:
-                    pk_cols.append(col_name)
-
-        if not cols:
-            continue
-
-        # Remove last_identity from cols if present (we'll set it separately)
-        cols = [c for c in cols if c != "last_identity"]
+                continue
+            for entry in tables:
+                if "." in entry:
+                    # Qualified: match exact schema.table
+                    if entry == staging_table or entry == intermediate_table:
+                        cols.append(col_name)
+                        break
+                else:
+                    # Bare: match table name regardless of schema
+                    if entry == bare_name:
+                        cols.append(col_name)
+                        break
 
         if not cols:
             continue
 
         with db_connection() as conn:
             with conn.cursor() as cur:
-                # Check if staging table has any rows
+                # Check if staging has rows
                 cur.execute(f"SELECT COUNT(*) FROM {staging_table}")
                 result = cur.fetchone()
                 if result is None or result[0] == 0:
                     continue
 
-                # Determine appropriate PK for ON CONFLICT
-                # This depends on table structure
-                if table_name in ["teams", "players"]:
-                    conflict_cols = ["identity", "ext_id"]
-                elif table_name in ["identities_players", "identities_teams"]:
-                    conflict_cols = ["identity", "ext_id"]
-                elif table_name in ["identities_games"]:
-                    conflict_cols = ["identity", "ext_game_id"]
-                elif table_name in ["leagues_teams"]:
-                    conflict_cols = ["league_code", "team_id"]
-                elif table_name in ["teams_players"]:
-                    conflict_cols = ["team_id", "player_id", "league_code"]
-                elif table_name in ["countries_players"]:
-                    conflict_cols = ["player_id", "league_code"]
-                elif table_name in ["team_seasons", "player_seasons"]:
-                    if "team_id" in cols:
-                        conflict_cols = [
-                            "team_id",
-                            "league_code",
-                            "season",
-                            "season_type",
-                        ]
-                    else:
-                        conflict_cols = [
-                            "player_id",
-                            "team_id",
-                            "league_code",
-                            "season",
-                            "season_type",
-                        ]
-                elif table_name in ["team_games", "player_games"]:
-                    if "team_id" in cols and "player_id" not in cols:
-                        conflict_cols = ["team_id", "game_id"]
-                    else:
-                        conflict_cols = ["player_id", "team_id", "game_id"]
-                elif table_name == "games":
-                    conflict_cols = ["game_id"]
-                elif table_name == "pbp_events":
-                    conflict_cols = ["identity", "ext_game_id", "event_id"]
-                else:
-                    logger.warning(
-                        f"Unknown table structure for {table_name}, skipping"
-                    )
-                    continue
-
-                # Build INSERT ... ON CONFLICT UPDATE query
                 col_list = ", ".join(quote_col(c) for c in cols)
-                conflict_list = ", ".join(quote_col(c) for c in conflict_cols)
-
-                update_clauses = [
-                    f"{quote_col(c)} = EXCLUDED.{quote_col(c)}" for c in cols
+                update_cols = [
+                    c
+                    for c in cols
+                    if c
+                    not in ("identity", "ext_id", "sts_id", "game_id", "league_code")
                 ]
-                update_clauses.append("last_identity = %s")
-                update_sql = ", ".join(update_clauses)
 
-                cur.execute(
-                    f"""
-                    INSERT INTO {ready_table} ({col_list}, last_identity)
-                    SELECT {col_list}, %s
-                      FROM {staging_table}
-                    ON CONFLICT ({conflict_list}) DO UPDATE SET {update_sql}
-                    """,
-                    (identity, identity),
-                )
+                # Read primary key from staging table definition
+                from src.definitions.schema import get_table
+
+                staging_meta = get_table(staging_table)
+                conflict_cols = list(staging_meta.get("primary_key") or [])
+
+                if conflict_cols and update_cols:
+                    conflict_sql = ", ".join(quote_col(c) for c in conflict_cols)
+                    update_sql = ", ".join(
+                        f"{quote_col(c)} = COALESCE({bare_name}.{quote_col(c)}, EXCLUDED.{quote_col(c)})"
+                        for c in update_cols
+                    )
+                    cur.execute(
+                        f"""
+                        INSERT INTO {intermediate_table} AS {bare_name} ({col_list})
+                        SELECT {col_list}
+                          FROM {staging_table}
+                         WHERE identity = %s
+                        ON CONFLICT ({conflict_sql}) DO UPDATE SET {update_sql}
+                        """,
+                        (identity,),
+                    )
+                elif conflict_cols:
+                    conflict_sql = ", ".join(quote_col(c) for c in conflict_cols)
+                    cur.execute(
+                        f"""
+                        INSERT INTO {intermediate_table} ({col_list})
+                        SELECT {col_list}
+                          FROM {staging_table}
+                         WHERE identity = %s
+                        ON CONFLICT ({conflict_sql}) DO NOTHING
+                        """,
+                        (identity,),
+                    )
+                else:
+                    cur.execute(
+                        f"""
+                        INSERT INTO {intermediate_table} ({col_list})
+                        SELECT {col_list}
+                          FROM {staging_table}
+                         WHERE identity = %s
+                        """,
+                        (identity,),
+                    )
+
                 upserted = cur.rowcount
                 total_upserted += upserted
 
                 if upserted:
                     logger.info(
-                        f"Merged {upserted} rows from {staging_table} to {ready_table}"
+                        "Merged %d rows from %s to %s",
+                        upserted,
+                        staging_table,
+                        intermediate_table,
                     )
 
             conn.commit()
@@ -1282,17 +1258,14 @@ def _merge_to_ready(
 def _promote_to_core(
     league_code: str,
 ) -> int:
-    """Promote ready tables to core tables after all identities complete.
+    """Promote intermediate tables to core tables after all identities complete.
 
-    Called once in execution_end cluster. For each table:
-      - SELECT * FROM ready.{table}
-      - INSERT INTO core.{table} ... ON CONFLICT UPDATE (last-write-wins)
+    For each of the 9 intermediate tables:
+      - SELECT * FROM intermediate.{table}
+      - INSERT INTO core.{table} ... ON CONFLICT UPDATE
+      - COALESCE preserves existing core values (first-write-wins)
 
-    This implements tier 3 of the 3-tier promotion:
-      ready (accumulated from all identities)
-        ↓
-      core (production, stable)
-
+    Called once in execution_end cluster.
     Returns the number of rows upserted to core.
     """
     logger.info(phase_marker("promote_to_core"))
@@ -1300,116 +1273,104 @@ def _promote_to_core(
 
     from src.definitions.db_columns import DB_COLUMNS
 
-    core_tables = [
-        "core.teams",
-        "core.players",
-        "core.leagues_teams",
-        "core.teams_players",
-        "core.countries_players",
-        "core.identities_players",
-        "core.identities_teams",
-        "core.identities_games",
-        "core.team_seasons",
-        "core.player_seasons",
-        "core.team_games",
-        "core.player_games",
-        "core.games",
-        "core.pbp_events",
+    # Only the 9 tables that flow through intermediate
+    promote_tables = [
+        "teams",
+        "players",
+        "leagues_teams",
+        "teams_players",
+        "team_seasons",
+        "player_seasons",
+        "games",
+        "team_games",
+        "player_games",
     ]
 
-    for core_table in core_tables:
-        # Derive ready table name
-        table_name = core_table.split(".", 1)[-1]
-        ready_table = f"ready.{table_name}"
+    for bare_name in promote_tables:
+        intermediate_table = f"intermediate.{bare_name}"
+        core_table = f"core.{bare_name}"
 
-        # Get columns for this table from DB_COLUMNS
+        # Build set of valid column names for this table in both schemas
         cols = []
-
         for col_name, col_def in DB_COLUMNS.items():
-            if ready_table in col_def["tables"] and core_table in col_def["tables"]:
-                # Skip last_identity - it's only in ready, not core
-                if col_name != "last_identity":
-                    cols.append(col_name)
+            tables = col_def.get("tables", [])
+            if isinstance(tables, str):
+                tables = [tables]
+            if "all" in tables:
+                cols.append(col_name)
+                continue
+            for entry in tables:
+                if "." in entry:
+                    if entry == intermediate_table or entry == core_table:
+                        cols.append(col_name)
+                        break
+                else:
+                    if entry == bare_name:
+                        cols.append(col_name)
+                        break
 
         if not cols:
             continue
 
         with db_connection() as conn:
             with conn.cursor() as cur:
-                # Check if ready table has any rows
-                cur.execute(f"SELECT COUNT(*) FROM {ready_table}")
+                # Check if intermediate has rows
+                cur.execute(f"SELECT COUNT(*) FROM {intermediate_table}")
                 result = cur.fetchone()
                 if result is None or result[0] == 0:
                     continue
 
-                # Determine appropriate PK for ON CONFLICT
-                if table_name in ["teams", "players"]:
-                    conflict_cols = ["sts_id"]
-                elif table_name in ["identities_players", "identities_teams"]:
-                    conflict_cols = ["identity", "ext_id"]
-                elif table_name in ["identities_games"]:
-                    conflict_cols = ["identity", "ext_game_id"]
-                elif table_name in ["leagues_teams"]:
-                    conflict_cols = ["league_code", "team_id"]
-                elif table_name in ["teams_players"]:
-                    conflict_cols = ["team_id", "player_id", "league_code"]
-                elif table_name in ["countries_players"]:
-                    conflict_cols = ["player_id", "league_code"]
-                elif table_name in ["team_seasons", "player_seasons"]:
-                    if "team_id" in cols and "player_id" not in cols:
-                        conflict_cols = [
-                            "team_id",
-                            "league_code",
-                            "season",
-                            "season_type",
-                        ]
-                    else:
-                        conflict_cols = [
-                            "player_id",
-                            "team_id",
-                            "league_code",
-                            "season",
-                            "season_type",
-                        ]
-                elif table_name in ["team_games", "player_games"]:
-                    if "team_id" in cols and "player_id" not in cols:
-                        conflict_cols = ["team_id", "game_id"]
-                    else:
-                        conflict_cols = ["player_id", "team_id", "game_id"]
-                elif table_name == "games":
-                    conflict_cols = ["game_id"]
-                elif table_name == "pbp_events":
-                    conflict_cols = ["game_id", "event_id"]
-                else:
-                    logger.warning(
-                        f"Unknown table structure for {table_name}, skipping"
-                    )
-                    continue
-
-                # Build INSERT ... ON CONFLICT UPDATE query
                 col_list = ", ".join(quote_col(c) for c in cols)
-                conflict_list = ", ".join(quote_col(c) for c in conflict_cols)
+                update_cols = [c for c in cols if c not in ("sts_id", "game_id")]
 
-                # For core tables, use last-write-wins (no COALESCE)
-                update_clauses = [
-                    f"{quote_col(c)} = EXCLUDED.{quote_col(c)}" for c in cols
-                ]
-                update_sql = ", ".join(update_clauses)
+                # Get PK from core table definition
+                from src.definitions.schema import get_table
 
-                cur.execute(
-                    f"""
-                    INSERT INTO {core_table} ({col_list})
-                    SELECT {col_list}
-                      FROM {ready_table}
-                    ON CONFLICT ({conflict_list}) DO UPDATE SET {update_sql}
-                    """
-                )
+                core_meta = get_table(core_table)
+                conflict_cols = list(core_meta.get("primary_key") or [])
+
+                if conflict_cols and update_cols:
+                    conflict_sql = ", ".join(quote_col(c) for c in conflict_cols)
+                    update_sql = ", ".join(
+                        f"{quote_col(c)} = COALESCE({bare_name}.{quote_col(c)}, EXCLUDED.{quote_col(c)})"
+                        for c in update_cols
+                    )
+                    cur.execute(
+                        f"""
+                        INSERT INTO {core_table} AS {bare_name} ({col_list})
+                        SELECT {col_list}
+                          FROM {intermediate_table}
+                        ON CONFLICT ({conflict_sql}) DO UPDATE SET {update_sql}
+                        """
+                    )
+                elif conflict_cols:
+                    conflict_sql = ", ".join(quote_col(c) for c in conflict_cols)
+                    cur.execute(
+                        f"""
+                        INSERT INTO {core_table} ({col_list})
+                        SELECT {col_list}
+                          FROM {intermediate_table}
+                        ON CONFLICT ({conflict_sql}) DO NOTHING
+                        """
+                    )
+                else:
+                    cur.execute(
+                        f"""
+                        INSERT INTO {core_table} ({col_list})
+                        SELECT {col_list}
+                          FROM {intermediate_table}
+                        """
+                    )
+
                 upserted = cur.rowcount
                 total_upserted += upserted
 
                 if upserted:
                     logger.info(
-                        f"Promoted {upserted} rows from {ready_table} to {core_table}"
+                        "Promoted %d rows from %s to %s",
+                        upserted,
+                        intermediate_table,
+                        core_table,
                     )
 
             conn.commit()
@@ -1438,14 +1399,14 @@ def _promote_profiles(
     for entity, staging_table, core_table, identity_table, id_col in [
         (
             "player",
-            "staging.players_staging",
+            "staging.players",
             "core.players",
             "core.identities_players",
             "player_id",
         ),
         (
             "team",
-            "staging.teams_staging",
+            "staging.teams",
             "core.teams",
             "core.identities_teams",
             "team_id",
@@ -1545,7 +1506,7 @@ def _promote_rosters(
     # review_checks: list of (entity_type, staging_table, ext_id_field)
     roster_mappings = [
         (
-            "staging.teams_players_staging",
+            "staging.teams_players",
             "core.teams_players",
             ["league_code", "team_id", "player_id"],
             [
@@ -1555,25 +1516,25 @@ def _promote_rosters(
             ],
             ["league_code", "team_id", "player_id"],
             [
-                ("team", "teams_staging", "ext_team_id"),
-                ("player", "players_staging", "ext_player_id"),
+                ("team", "teams", "ext_team_id"),
+                ("player", "players", "ext_player_id"),
             ],
         ),
         (
-            "staging.leagues_teams_staging",
+            "staging.leagues_teams",
             "core.leagues_teams",
             ["league_code", "team_id"],
             ["s.league_code", "team_ie.team_id"],
             ["league_code", "team_id"],
-            [("team", "teams_staging", "ext_team_id")],
+            [("team", "teams", "ext_team_id")],
         ),
         (
-            "staging.countries_players_staging",
+            "staging.countries_players",
             "core.countries_players",
             ["country_code", "player_id"],
             ["s.country_code", "player_ie.player_id"],
             ["country_code", "player_id"],
-            [("player", "players_staging", "ext_player_id")],
+            [("player", "players", "ext_player_id")],
         ),
     ]
 
@@ -1656,7 +1617,7 @@ def _promote_seasons(
     total_upserted = 0
 
     for entity in VALID_ENTITY_TYPES:
-        staging_table = f"staging.{entity}_seasons_staging"
+        staging_table = f"staging.{entity}_seasons"
         core_table = f"core.{entity}_seasons"
 
         # Stats columns shared between staging and core
@@ -1667,7 +1628,7 @@ def _promote_seasons(
             tables = col_meta.get("tables", [])
             if isinstance(tables, str):
                 tables = [tables]
-            if f"{entity}_seasons" in tables and f"{entity}_seasons_staging" in tables:
+            if f"{entity}_seasons" in tables:
                 shared_cols.append(col_name)
 
         if not shared_cols:
@@ -1732,12 +1693,13 @@ def _promote_seasons(
                     SELECT {select_sql}
                       FROM {from_clause}
                      WHERE EXISTS (
-                           SELECT 1 FROM staging.{entity}s_staging ps
+                           SELECT 1 FROM staging.{entity}s ps
                             WHERE ps.identity = s.identity
                               AND ps.ext_id = s.ext_{entity}_id
                               AND ps.reviewed = TRUE
                        )
-                    ON CONFLICT ({conflict_sql}) DO NOTHING
+                    ON CONFLICT ({conflict_sql}) DO UPDATE SET
+                        {", ".join(f"{quote_col(c)} = COALESCE(target.{quote_col(c)}, EXCLUDED.{quote_col(c)})" for c in shared_cols)}
                     """
                 )
                 upserted = cur.rowcount
@@ -1772,7 +1734,7 @@ def _promote_games(
                        home_team_id, away_team_id, ot)
                 SELECT nextval('core.game_id_seq'), gs.league_code, gs.date,
                        home_ie.team_id, away_ie.team_id, gs.ot
-                  FROM staging.games_staging gs
+                  FROM staging.games gs
                   JOIN core.identities_teams home_ie
                     ON gs.identity = home_ie.identity
                    AND gs.ext_home_team_id = home_ie.ext_id
@@ -1796,8 +1758,8 @@ def _promote_games(
                 SELECT pgs.league_code, g.game_id,
                        player_ie.player_id, team_ie.team_id,
                        pgs.date
-                  FROM staging.player_games_staging pgs
-                  JOIN staging.games_staging gs
+                  FROM staging.player_games pgs
+                  JOIN staging.games gs
                     ON pgs.identity = gs.identity
                    AND pgs.ext_game_id = gs.ext_game_id
                   JOIN core.games g
@@ -1826,8 +1788,8 @@ def _promote_games(
                        team_id, date)
                 SELECT tgs.league_code, g.game_id,
                        team_ie.team_id, tgs.date
-                  FROM staging.team_games_staging tgs
-                  JOIN staging.games_staging gs
+                  FROM staging.team_games tgs
+                  JOIN staging.games gs
                     ON tgs.identity = gs.identity
                    AND tgs.ext_game_id = gs.ext_game_id
                   JOIN core.games g
@@ -1858,7 +1820,7 @@ def _cascade_delete_reviewed(
     """Delete reviewed=True profile staging rows.
 
     All dependent staging tables (rosters, stats) have ON DELETE CASCADE
-    foreign keys to players_staging and teams_staging, so the database
+    foreign keys to staging.players and staging.teams, so the database
     handles cascading automatically.
     """
     logger.info(phase_marker("cascade_delete_reviewed"))
@@ -1866,8 +1828,8 @@ def _cascade_delete_reviewed(
 
     # Table-driven deletion config: (schema, table_name)
     staging_tables = [
-        ("staging", "players_staging"),
-        ("staging", "teams_staging"),
+        ("staging", "players"),
+        ("staging", "teams"),
     ]
 
     with db_connection() as conn:
@@ -1995,7 +1957,7 @@ def _run_phases(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Phase dispatch
+# Phase dispatch  --  explicit mapping from phase name to handler function
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -2180,15 +2142,71 @@ def _phase_maintain_games(ctx: dict) -> int:
     return total_rows
 
 
+def _write_pbp_stats(
+    cur,
+    table_name: str,
+    stats: List[Dict[str, Any]],
+    identity_code: str,
+    ext_game_id: str,
+    pk_columns: List[str],
+) -> int:
+    """Write accumulated PBP stats to a staging table with COALESCE fill.
+
+    Args:
+        cur: Database cursor.
+        table_name: Qualified staging table name (e.g. ``"staging.player_games"``).
+        stats: List of stat dicts from the accumulator (each dict has canonical field names
+               plus the entity ID columns like ``ext_team_id``, ``ext_player_id``).
+        identity_code: Identity to stamp on each row.
+        ext_game_id: External game ID to stamp on each row.
+        pk_columns: PK column names for ON CONFLICT clause (e.g. ``["identity", "ext_player_id", "ext_team_id", "ext_game_id"]``).
+
+    Returns the number of rows written.
+    """
+    if not stats:
+        return 0
+
+    for record in stats:
+        record["identity"] = identity_code
+        record["ext_game_id"] = ext_game_id
+
+    cols = sorted(stats[0].keys())
+    col_list = ", ".join(quote_col(c) for c in cols)
+    placeholders = ", ".join("%s" for _ in cols)
+
+    data = [tuple(record.get(col) for col in cols) for record in stats]
+
+    update_cols = [c for c in cols if c not in pk_columns]
+    update_set = ", ".join(
+        f"{quote_col(c)} = COALESCE({table_name}.{quote_col(c)}, EXCLUDED.{quote_col(c)})"
+        for c in update_cols
+    )
+
+    pk_list = ", ".join(quote_col(c) for c in pk_columns)
+
+    execute_values(
+        cur,
+        f"""
+        INSERT INTO {table_name} ({col_list})
+        VALUES %s
+        ON CONFLICT ({pk_list})
+        DO UPDATE SET {update_set}
+        """,
+        data,
+        template=f"({placeholders})",
+    )
+
+    return len(stats)
+
+
 def _phase_maintain_pbp(ctx: dict) -> int:
     """Fetch PBP events, normalize, accumulate into stats, write to staging.
 
     This phase:
     1. Fetches raw PBP data from sources
     2. Normalizes events to standard event types
-    3. Writes normalized events to pbp_events_staging
-    4. Accumulates events into stats per result_set
-    5. Writes accumulated stats to appropriate staging tables
+    3. Accumulates events into stats per result_set
+    4. Writes accumulated stats to appropriate staging tables
     """
     from nba_api.stats.endpoints.playbyplayv3 import PlayByPlayV3
 
@@ -2226,15 +2244,9 @@ def _phase_maintain_pbp(ctx: dict) -> int:
                 cur.execute(
                     """
                     SELECT ext_game_id, ext_home_team_id, ext_away_team_id
-                    FROM staging.games_staging
+                    FROM staging.games
                     WHERE identity = %s
                       AND league_code = %s
-                      AND NOT EXISTS (
-                        SELECT 1
-                        FROM staging.pbp_events_staging
-                        WHERE pbp_events_staging.identity = games_staging.identity
-                          AND pbp_events_staging.ext_game_id = games_staging.ext_game_id
-                      )
                     ORDER BY ext_game_id
                     """,
                     (identity_code, league_code),
@@ -2285,41 +2297,7 @@ def _phase_maintain_pbp(ctx: dict) -> int:
                     )
                     continue
 
-                # Write events to pbp_events_staging
-                with db_connection() as conn:
-                    with conn.cursor() as cur:
-                        # Build column list from first event
-                        event_cols = sorted(normalized_events[0].keys())
-                        col_list = ", ".join(quote_col(c) for c in event_cols)
-                        placeholders = ", ".join("%s" for _ in event_cols)
-
-                        # Prepare data tuples
-                        event_data = [
-                            tuple(event.get(col) for col in event_cols)
-                            for event in normalized_events
-                        ]
-
-                        # Insert events with ON CONFLICT DO NOTHING (first-write-wins)
-                        execute_values(
-                            cur,
-                            f"""
-                            INSERT INTO staging.pbp_events_staging ({col_list})
-                            VALUES %s
-                            ON CONFLICT (identity, ext_game_id, event_id) DO NOTHING
-                            """,
-                            event_data,
-                            template=f"({placeholders})",
-                        )
-                        events_written = cur.rowcount
-                        total_rows += events_written
-                        logger.debug(
-                            "Wrote %d PBP events for game %s",
-                            events_written,
-                            ext_game_id,
-                        )
-
-                    conn.commit()
-
+                # Events are in-memory only; pass directly to accumulator
                 # Accumulate events into stats
                 result_sets = accumulate_pbp_events(
                     events=normalized_events,
@@ -2328,7 +2306,7 @@ def _phase_maintain_pbp(ctx: dict) -> int:
                     ext_away_team_id=ext_away_team_id,
                 )
 
-                # Prepare stats for writing
+                # Separate result sets into player-level and team-level stats
                 player_stats = (
                     result_sets.get("player", [])
                     + result_sets.get("opp_player", [])
@@ -2338,85 +2316,44 @@ def _phase_maintain_pbp(ctx: dict) -> int:
                     "opp_team", []
                 )
 
-                # Write accumulated stats to staging tables
+                # Write accumulated stats to staging tables via shared helper
                 with db_connection() as conn:
                     with conn.cursor() as cur:
-                        # Write player_games_staging (player + opp_player + on_player)
-                        if player_stats:
-                            # Add identity and ext_game_id to each record
-                            for record in player_stats:
-                                record["identity"] = identity_code
-                                record["ext_game_id"] = ext_game_id
-
-                            player_cols = sorted(player_stats[0].keys())
-                            col_list = ", ".join(quote_col(c) for c in player_cols)
-                            placeholders = ", ".join("%s" for _ in player_cols)
-
-                            player_data = [
-                                tuple(record.get(col) for col in player_cols)
-                                for record in player_stats
-                            ]
-
-                            execute_values(
-                                cur,
-                                f"""
-                                INSERT INTO staging.player_games_staging ({col_list})
-                                VALUES %s
-                                ON CONFLICT (identity, ext_player_id, ext_team_id, ext_game_id)
-                                DO UPDATE SET
-                                    {", ".join(f"{quote_col(c)} = COALESCE(staging.player_games_staging.{quote_col(c)}, EXCLUDED.{quote_col(c)})" for c in player_cols if c not in ["identity", "ext_player_id", "ext_team_id", "ext_game_id"])}
-                                """,
-                                player_data,
-                                template=f"({placeholders})",
-                            )
-                            logger.debug(
-                                "Wrote %d player_games records for game %s",
-                                len(player_stats),
-                                ext_game_id,
-                            )
-
-                        # Write team_games_staging (team + opp_team)
-                        if team_stats:
-                            # Add identity and ext_game_id to each record
-                            for record in team_stats:
-                                record["identity"] = identity_code
-                                record["ext_game_id"] = ext_game_id
-
-                            team_cols = sorted(team_stats[0].keys())
-                            col_list = ", ".join(quote_col(c) for c in team_cols)
-                            placeholders = ", ".join("%s" for _ in team_cols)
-
-                            team_data = [
-                                tuple(record.get(col) for col in team_cols)
-                                for record in team_stats
-                            ]
-
-                            execute_values(
-                                cur,
-                                f"""
-                                INSERT INTO staging.team_games_staging ({col_list})
-                                VALUES %s
-                                ON CONFLICT (identity, ext_team_id, ext_game_id)
-                                DO UPDATE SET
-                                    {", ".join(f"{quote_col(c)} = COALESCE(staging.team_games_staging.{quote_col(c)}, EXCLUDED.{quote_col(c)})" for c in team_cols if c not in ["identity", "ext_team_id", "ext_game_id"])}
-                                """,
-                                team_data,
-                                template=f"({placeholders})",
-                            )
-                            logger.debug(
-                                "Wrote %d team_games records for game %s",
-                                len(team_stats),
-                                ext_game_id,
-                            )
-
+                        player_rows = _write_pbp_stats(
+                            cur,
+                            table_name="staging.player_games",
+                            stats=player_stats,
+                            identity_code=identity_code,
+                            ext_game_id=ext_game_id,
+                            pk_columns=[
+                                "identity",
+                                "ext_player_id",
+                                "ext_team_id",
+                                "ext_game_id",
+                            ],
+                        )
+                        team_rows = _write_pbp_stats(
+                            cur,
+                            table_name="staging.team_games",
+                            stats=team_stats,
+                            identity_code=identity_code,
+                            ext_game_id=ext_game_id,
+                            pk_columns=[
+                                "identity",
+                                "ext_team_id",
+                                "ext_game_id",
+                            ],
+                        )
                     conn.commit()
 
+                total_rows += player_rows + team_rows
+
                 logger.info(
-                    "Successfully processed PBP for game %s (%d events, %d player stats, %d team stats)",
+                    "Processed PBP for game %s (%d events, %d player rows, %d team rows)",
                     ext_game_id,
                     len(normalized_events),
-                    len(player_stats) if player_stats else 0,
-                    len(team_stats) if team_stats else 0,
+                    player_rows,
+                    team_rows,
                 )
 
             except Exception as e:
@@ -2436,7 +2373,7 @@ def _phase_maintain_pbp(ctx: dict) -> int:
                 )
                 continue
 
-    logger.info("PBP maintenance phase complete - %d total rows written", total_rows)
+    logger.info("PBP maintenance complete - %d total rows written", total_rows)
     return total_rows
 
 
@@ -2501,8 +2438,11 @@ def _phase_match_games(ctx: dict) -> int:
     return _match_games(ctx["league_code"], ctx["failed"])
 
 
-def _phase_merge_to_ready(ctx: dict) -> int:
-    return _merge_to_ready(ctx["league_code"], ctx["identity"])
+def _phase_merge_to_intermediate(ctx: dict) -> int:
+    total = 0
+    for identity_code in DATASETS:
+        total += _merge_to_intermediate(ctx["league_code"], identity_code)
+    return total
 
 
 def _phase_merge_staging(ctx: dict) -> int:
@@ -2554,21 +2494,44 @@ def _phase_prune_coverage(ctx: dict) -> int:
     return prune_coverage(ctx["league_code"])
 
 
+PHASE_HANDLERS: Dict[str, Callable] = {
+    "build_schema": _phase_build_schema,
+    "detect_season_activity": _phase_detect_season_activity,
+    "seed_season_coverage": _phase_seed_season_coverage,
+    "seed_game_coverage": _phase_seed_game_coverage,
+    "maintain_leagues_teams": _phase_maintain_leagues_teams,
+    "maintain_teams_players": _phase_maintain_teams_players,
+    "maintain_games": _phase_maintain_games,
+    "match_games": _phase_match_games,
+    "maintain_pbp": _phase_maintain_pbp,
+    "maintain_seasons": _phase_maintain_seasons,
+    "maintain_profiles": _phase_maintain_profiles,
+    "match_entities": _phase_match_entities,
+    "merge_to_intermediate": _phase_merge_to_intermediate,
+    "merge_staging": _phase_merge_staging,
+    "promote_to_core": _phase_promote_to_core,
+    "promote_profiles": _phase_promote_profiles,
+    "promote_rosters": _phase_promote_rosters,
+    "promote_seasons": _phase_promote_seasons,
+    "promote_games": _phase_promote_games,
+    "cascade_delete_reviewed": _phase_cascade_delete_reviewed,
+    "normalize_nulls_zeroes": _phase_normalize_nulls_zeroes,
+    "prune_stats_retention": _phase_prune_stats_retention,
+    "prune_entities": _phase_prune_entities,
+    "prune_coverage": _phase_prune_coverage,
+}
+
+
 def _resolve_phase(name: str) -> Callable:
-    """Return the handler function for *name* via naming convention.
+    """Return the handler function for *name* from ``PHASE_HANDLERS``.
 
     Raises RuntimeError at import time if a handler listed in
-    PIPELINE has no corresponding ``_phase_{name}`` function.
+    PIPELINE has no corresponding entry in PHASE_HANDLERS.
     """
-    func = globals().get(f"_phase_{name}")
+    func = PHASE_HANDLERS.get(name)
     if func is None:
         raise RuntimeError(
             f"Phase {name!r} listed in PIPELINE but no "
-            f"implementation _phase_{name!r} found in orchestrator"
+            f"handler registered in PHASE_HANDLERS"
         )
     return func
-
-
-# Validate every handler at import time so missing implementations fail fast.
-for _name in VALID_PHASES:
-    _resolve_phase(_name)

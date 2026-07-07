@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Set, Union
 from psycopg2.extras import execute_values
 
 from src.definitions.execution import DEFAULT_BATCH_SIZE
-from src.definitions.schema import TABLES
+from src.definitions.schema import get_table
 from src.lib.postgres import db_connection, quote_col
 from src.lib.source_resolver import get_default_external_source
 
@@ -190,12 +190,18 @@ def write_entity_rows(
     _profile_tables = {"players", "teams"}
     _roster_tables = {"teams_players", "leagues_teams", "countries_players"}
     _stats_tables = {"player_seasons", "team_seasons"}
+    _game_tables = {"team_games", "player_games"}
 
     if table_name in _profile_tables:
         return write_staged_entity_rows(target, rows, league_code, identity_code)
 
     if table_name in _roster_tables:
         return write_staged_roster_rows(target, rows, league_code, identity_code)
+
+    if table_name in _game_tables:
+        return write_staged_stats_rows(
+            target, rows, season, season_type, league_code, identity_code
+        )
 
     if table_name in _stats_tables:
         return write_staged_stats_rows(
@@ -217,7 +223,7 @@ def write_staged_entity_rows(
     identity_code: str,
 ) -> int:
     """Merge entity data into the staging table for ``league_code``/``identity_code``."""
-    table = f"staging.{target}_staging"
+    table = f"staging.{target}"
 
     data_cols: Set[str] = set()
     for vals in rows.values():
@@ -262,7 +268,9 @@ def write_staged_entity_rows(
         if not data:
             return 0
 
-        conflict_columns = list(TABLES[bare_name].get("primary_key") or [])
+        conflict_columns = list(
+            get_table(f"staging.{bare_name}").get("primary_key") or []
+        )
         written = _bulk_merge_upsert(
             conn,
             table,
@@ -272,17 +280,17 @@ def write_staged_entity_rows(
             skip_unchanged=True,
         )
 
-        # Sync columns declared on both teams_staging and leagues_teams_staging
+        # Sync columns declared on both teams and leagues_teams
         # (e.g. conf) so roster tables stay populated.
         if target == "team":
             lt_cols = [
                 c
                 for c, m in DB_COLUMNS.items()
-                if "leagues_teams_staging" in (m.get("tables") or [])
+                if "leagues_teams" in (m.get("tables") or [])
                 and c not in ("league_code", "identity", "ext_team_id")
             ]
             extra_cols = [c for c in lt_cols if c in sorted_data_cols]
-            lt_table = "staging.leagues_teams_staging"
+            lt_table = "staging.leagues_teams"
             lt_columns = [
                 "league_code",
                 "identity",
@@ -309,9 +317,9 @@ def write_staged_entity_rows(
                     )
                 conn.commit()
 
-        # Sync country_code from players_staging to countries_players_staging
+        # Sync country_code from players to countries_players
         if target == "player":
-            cp_table = "staging.countries_players_staging"
+            cp_table = "staging.countries_players"
             cp_data = [
                 (league_val, identity_code, country_val, str(source_id))
                 for source_id, vals in rows.items()
@@ -405,8 +413,8 @@ def _ensure_staging_profiles(
         league_val = _resolve_league_id(conn, league_code)
 
         for staging_table, codes in [
-            ("players_staging", ext_player_ids),
-            ("teams_staging", ext_team_ids),
+            ("players", ext_player_ids),
+            ("teams", ext_team_ids),
         ]:
             if not codes:
                 continue
@@ -455,12 +463,12 @@ def write_staged_roster_rows(
     identity_code: str,
 ) -> int:
     """Write roster relationships to the roster staging table."""
-    _ROSTER_STAGING_TABLES = {
-        "teams_players": "staging.teams_players_staging",
-        "leagues_teams": "staging.leagues_teams_staging",
-        "countries_players": "staging.countries_players_staging",
+    _ROSTER_TABLES = {
+        "teams_players": "staging.teams_players",
+        "leagues_teams": "staging.leagues_teams",
+        "countries_players": "staging.countries_players",
     }
-    table = _ROSTER_STAGING_TABLES.get(target)
+    table = _ROSTER_TABLES.get(target)
     if table is None:
         raise ValueError(f"Unsupported target for roster write: {target!r}")
 
@@ -540,7 +548,9 @@ def write_staged_roster_rows(
             return 0
 
         bare_name = table.split(".", 1)[-1]
-        conflict_columns = list(TABLES[bare_name].get("primary_key") or [])
+        conflict_columns = list(
+            get_table(f"staging.{bare_name}").get("primary_key") or []
+        )
         return _bulk_merge_upsert(
             conn, table, columns, data, conflict_columns=conflict_columns
         )
@@ -560,9 +570,9 @@ def write_staged_stats_rows(
     identity_code: str,
 ) -> int:
     """Write stats rows to the staging table, preserving source IDs for later FK resolution."""
-    table = f"staging.{target}_staging"
+    table = f"staging.{target}"
     bare_name = table.split(".", 1)[-1]
-    meta = TABLES[bare_name]
+    meta = get_table(f"staging.{bare_name}")
     pk_cols = list(meta.get("primary_key") or [])
 
     # Inject external entity IDs from source IDs so _ensure_staging_profiles

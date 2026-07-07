@@ -28,7 +28,7 @@ import logging
 from typing import Dict, List, Union
 
 from src.definitions.leagues import LEAGUES
-from src.definitions.schema import TABLES
+from src.definitions.schema import iter_tables
 from src.lib.leagues_resolver import get_oldest_retained_season
 from src.lib.postgres import db_connection, get_db_connection, quote_col
 
@@ -153,18 +153,13 @@ def prune_stats_retention(
         with conn.cursor() as cur:
             for lc in league_codes:
                 oldest = get_oldest_retained_season(lc, current_season)
-                for table_name, meta in TABLES.items():
-                    if meta.get("schema") != "core":
-                        continue
-                    if table_name.endswith("_staging"):
+                for qualified_name, schema_name, table_name, meta in iter_tables():
+                    if schema_name != "core":
                         continue
                     if (
                         not table_name.endswith("_seasons")
                         and table_name != "season_coverages"
                     ):
-                        continue
-                    schema_name = meta.get("schema")
-                    if not schema_name:
                         continue
                     cur.execute(
                         f"DELETE FROM {schema_name}.{table_name} WHERE league_code = %s AND season < %s",
@@ -197,19 +192,12 @@ def _profile_has_stats_predicate(entity: str) -> str:
     sub_selects: List[str] = []
     entity_id_col = f"{entity}_id"
     # Core stats tables are named {entity}_seasons (e.g. player_seasons, team_seasons)
-    for table_name, meta in TABLES.items():
-        if (
-            meta.get("schema") != "core"
-            or not table_name.endswith("_seasons")
-            or table_name.endswith("_staging")
-        ):
+    for qualified_name, schema_name, table_name, meta in iter_tables():
+        if schema_name != "core" or not table_name.endswith("_seasons"):
             continue
         # Only include the table that matches this entity's naming convention
         expected_table = f"{entity}_seasons"
         if table_name != expected_table:
-            continue
-        schema_name = meta.get("schema")
-        if not schema_name:
             continue
         sub_selects.append(
             f"SELECT 1 FROM {schema_name}.{table_name} s "
@@ -220,55 +208,42 @@ def _profile_has_stats_predicate(entity: str) -> str:
     return " UNION ALL ".join(sub_selects)
 
 
-def _delete_pruned_players(cur) -> int:
-    """Delete player profiles with no stats anywhere and no roster history."""
-    players_meta = TABLES["core.players"]
-    teams_players_meta = TABLES["core.teams_players"]
-    stats_pred = _profile_has_stats_predicate("player")
+def _delete_pruned(entity: str, cur) -> int:
+    """Delete profile rows with no stats anywhere and no roster history.
 
-    players_schema = players_meta.get("schema")
-    teams_players_schema = teams_players_meta.get("schema")
-    if not players_schema or not teams_players_schema:
-        return 0
+    Args:
+        entity: "player" or "team" -- drives table/column resolution.
 
-    cur.execute(
+    Returns the number of deleted rows.
+    """
+    stats_pred = _profile_has_stats_predicate(entity)
+
+    # Tables that prove an entity is still referenced.
+    reference_checks = []
+
+    if entity == "player":
+        reference_checks = [("core.teams_players", "player_id")]
+    elif entity == "team":
+        reference_checks = [
+            ("core.leagues_teams", "team_id"),
+            ("core.teams_players", "team_id"),
+        ]
+
+    not_exists_clauses = "".join(
         f"""
-        DELETE FROM {players_schema}.players p
-        WHERE NOT EXISTS ({stats_pred})
           AND NOT EXISTS (
-              SELECT 1 FROM {teams_players_schema}.teams_players tr
-              WHERE tr.player_id = p.{quote_col("sts_id")}
-          )
-        """
+              SELECT 1 FROM {table} ref
+              WHERE ref.{fk_col} = p.{quote_col("sts_id")}
+          )"""
+        for table, fk_col in reference_checks
     )
-    return cur.rowcount
 
-
-def _delete_pruned_teams(cur) -> int:
-    """Delete team profiles with no stats anywhere and no league/team-roster history."""
-    teams_meta = TABLES["core.teams"]
-    leagues_teams_meta = TABLES["core.leagues_teams"]
-    teams_players_meta = TABLES["core.teams_players"]
-    stats_pred = _profile_has_stats_predicate("team")
-
-    teams_schema = teams_meta.get("schema")
-    leagues_teams_schema = leagues_teams_meta.get("schema")
-    teams_players_schema = teams_players_meta.get("schema")
-    if not teams_schema or not leagues_teams_schema or not teams_players_schema:
-        return 0
-
+    table = f"core.{entity}s"
     cur.execute(
         f"""
-        DELETE FROM {teams_schema}.teams p
+        DELETE FROM {table} p
         WHERE NOT EXISTS ({stats_pred})
-          AND NOT EXISTS (
-              SELECT 1 FROM {leagues_teams_schema}.leagues_teams lr
-              WHERE lr.team_id = p.{quote_col("sts_id")}
-          )
-          AND NOT EXISTS (
-              SELECT 1 FROM {teams_players_schema}.teams_players tr
-              WHERE tr.team_id = p.{quote_col("sts_id")}
-          )
+        {not_exists_clauses}
         """
     )
     return cur.rowcount
@@ -285,8 +260,8 @@ def prune_entities() -> Dict[str, int]:
     out = {"players": 0, "teams": 0}
     try:
         with conn.cursor() as cur:
-            out["players"] = _delete_pruned_players(cur)
-            out["teams"] = _delete_pruned_teams(cur)
+            out["players"] = _delete_pruned("player", cur)
+            out["teams"] = _delete_pruned("team", cur)
         conn.commit()
         if out["players"]:
             logger.info("Deleted %d unreferenced player profiles", out["players"])

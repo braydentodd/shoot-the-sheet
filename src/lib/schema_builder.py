@@ -12,7 +12,7 @@ import logging
 from typing import Any, Dict, List, Tuple
 
 from src.definitions.db_columns import DB_COLUMNS
-from src.definitions.schema import SEQUENCES, TABLES
+from src.definitions.schema import SCHEMAS, SEQUENCES, get_table, iter_tables
 from src.lib.postgres import get_db_connection, quote_col
 
 logger = logging.getLogger(__name__)
@@ -22,18 +22,37 @@ logger = logging.getLogger(__name__)
 # Column-set assembly
 # ---------------------------------------------------------------------------
 
+# Which schemas contain a given table name (built once at import).
+_TABLE_SCHEMAS: Dict[str, List[str]] = {}
+for _schema_name, _tables in SCHEMAS.items():
+    for _table_name in _tables:
+        _TABLE_SCHEMAS.setdefault(_table_name, []).append(_schema_name)
 
-def _column_in_table(col_meta: Any, table_name: str) -> bool:
-    """Whether a DB_COLUMNS entry contributes to *table_name*.
 
-    Supports the ``'all'`` wildcard, which means the column belongs to
-    every table.  Staging tables must be declared explicitly in each
-    column's ``tables`` list.
+def _column_in_table(col_meta: Any, qualified_table: str) -> bool:
+    """Whether a DB_COLUMNS entry contributes to *qualified_table*.
+
+    *qualified_table* is always a ``"schema.table"`` string (derived from
+    SCHEMAS at call sites). A column's ``tables`` list may contain either
+    bare names (e.g. ``"players"`` -- applies to every schema that has a
+    ``players`` table) or qualified names (e.g. ``"core.errors"`` -- applies
+    only to that specific schema.table). The ``"all"`` wildcard means the
+    column belongs to every table in every schema.
     """
     tables = col_meta.get("tables", [])
     if isinstance(tables, str):
         tables = [tables]
-    return table_name in tables or "all" in tables
+    if "all" in tables:
+        return True
+    schema, table = qualified_table.split(".", 1)
+    for entry in tables:
+        if "." in entry:
+            if entry == qualified_table:
+                return True
+        else:
+            if entry == table and schema in _TABLE_SCHEMAS.get(entry, []):
+                return True
+    return False
 
 
 def _data_columns_for_table(table_name: str) -> List[Tuple[str, Any]]:
@@ -355,9 +374,7 @@ def ensure_schema(
             cur.execute(f"CREATE SCHEMA IF NOT EXISTS {schema_name}")
             _ensure_sequences(cur, schema_name)
 
-            for table_name, meta in TABLES.items():
-                if meta.get("schema") != schema_name:
-                    continue
+            for table_name, meta in SCHEMAS.get(schema_name, {}).items():
                 qualified = f"{schema_name}.{table_name}"
                 acts = _sync_table(cur, table_name, meta, schema_name=schema_name)
                 actions[qualified] = acts
@@ -380,10 +397,8 @@ def ensure_league_profile(league_code: str, conn=None) -> Dict[str, List[str]]:
     if own:
         conn = get_db_connection()
 
-    leagues_meta = TABLES["core.leagues"]
-    leagues_schema = leagues_meta.get("schema")
-    if not leagues_schema:
-        raise RuntimeError("leagues table has no schema")
+    leagues_meta = get_table("core.leagues")
+    leagues_schema = "core"
 
     actions: Dict[str, List[str]] = {}
     try:
@@ -396,7 +411,7 @@ def ensure_league_profile(league_code: str, conn=None) -> Dict[str, List[str]]:
             cfg = LEAGUES[league_code]
 
             vals: Dict[str, Any] = {}
-            for col, col_def in _data_columns_for_table("leagues"):
+            for col, col_def in _data_columns_for_table("core.leagues"):
                 if col == "code":
                     vals[col] = league_code
                 elif col in cfg:
@@ -431,28 +446,27 @@ def _topological_table_order() -> List[Tuple[str, Any]]:
     """
     from collections import deque
 
-    # Build lookup from (schema, qualified_key) -> registry key
+    # Build lookup from (schema, table) -> qualified name
     key_by_location: Dict[Tuple[str, str], str] = {}
-    for key, meta in TABLES.items():
-        schema = meta.get("schema")
-        if schema:
-            key_by_location[(schema, key)] = key
+    all_qualified: List[str] = []
+    for qual, schema, table, meta in iter_tables():
+        key_by_location[(schema, table)] = qual
+        all_qualified.append(qual)
 
-    # Build dependency graph: table -> tables it depends on
-    in_degree: Dict[str, int] = {key: 0 for key in TABLES}
-    dependents: Dict[str, List[str]] = {key: [] for key in TABLES}
+    # Build dependency graph: qualified_name -> qualified_names it depends on
+    in_degree: Dict[str, int] = {q: 0 for q in all_qualified}
+    dependents: Dict[str, List[str]] = {q: [] for q in all_qualified}
 
-    for key, meta in TABLES.items():
+    for qual, schema, table, meta in iter_tables():
         for fk in meta.get("foreign_keys") or []:
             ref_schema = fk.get("ref_schema")
             ref_table = fk.get("ref_table")
             if not ref_schema or not ref_table:
                 continue
-            # Find the referenced table in our registry
             dep_key = key_by_location.get((ref_schema, ref_table))
-            if dep_key and dep_key != key:  # skip self-references
-                dependents[dep_key].append(key)
-                in_degree[key] += 1
+            if dep_key and dep_key != qual:
+                dependents[dep_key].append(qual)
+                in_degree[qual] += 1
 
     # Kahn's algorithm
     queue = deque([k for k, d in in_degree.items() if d == 0])
@@ -460,17 +474,16 @@ def _topological_table_order() -> List[Tuple[str, Any]]:
 
     while queue:
         key = queue.popleft()
-        ordered.append((key, TABLES[key]))
+        ordered.append((key, SCHEMAS[key.split(".", 1)[0]][key.split(".", 1)[1]]))
         for dependent in dependents[key]:
             in_degree[dependent] -= 1
             if in_degree[dependent] == 0:
                 queue.append(dependent)
 
-    if len(ordered) != len(TABLES):
-        # Cycle detected - log which tables weren't ordered
-        unresolved = set(TABLES.keys()) - {k for k, _ in ordered}
+    if len(ordered) != len(all_qualified):
+        unresolved = set(all_qualified) - {k for k, _ in ordered}
         logger.error("Circular FK dependency detected among tables: %s", unresolved)
-        raise RuntimeError(f"Circular FK dependency in TABLES registry: {unresolved}")
+        raise RuntimeError(f"Circular FK dependency in SCHEMAS registry: {unresolved}")
 
     return ordered
 
@@ -485,7 +498,7 @@ def ensure_countries(conn=None) -> Dict[str, int]:
     """
     from src.definitions.countries import COUNTRIES
 
-    countries_meta = TABLES["core.countries"]
+    countries_meta = get_table("core.countries")
     countries_schema = countries_meta.get("schema")
     if not countries_schema:
         raise RuntimeError("countries table has no schema")
@@ -581,10 +594,8 @@ def bootstrap_schema(
 
         with conn.cursor() as cur:
             schemas_set: set[str] = set()
-            for m in TABLES.values():
-                schema = m.get("schema")
-                if isinstance(schema, str):
-                    schemas_set.add(schema)
+            for schema_name in SCHEMAS:
+                schemas_set.add(schema_name)
             schemas = sorted(schemas_set)
             # 1. Create all schemas first
             for schema_name in schemas:
@@ -605,7 +616,7 @@ def bootstrap_schema(
 
         actions.update(ensure_league_profile(league_code, conn=conn))
         country_result = ensure_countries(conn=conn)
-        countries_meta = TABLES["core.countries"]
+        countries_meta = get_table("core.countries")
         countries_schema = countries_meta.get("schema") or "core"
         actions[f"{countries_schema}.countries"] = [
             f"seeded ({country_result['inserted']} new, {country_result['updated']} updated, {country_result['deleted']} deleted)"

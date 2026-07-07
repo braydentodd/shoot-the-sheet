@@ -7,7 +7,7 @@ table registry metadata.
 
 from typing import Any, Dict, Iterable, Optional, Tuple
 
-from src.definitions.schema import TABLES
+from src.definitions.schema import get_table
 
 
 def load_fk_mapping(
@@ -59,7 +59,10 @@ def resolve_fk_value_columns(
     Uses the FK metadata `strategy` to determine resolution approach.
     Rows that cannot be fully resolved against a lookup strategy are dropped.
     """
-    meta = TABLES.get(table_name, {})
+    try:
+        meta = get_table(table_name) if "." in table_name else {}
+    except KeyError:
+        meta = {}
 
     fks_to_resolve = [
         fk

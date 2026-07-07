@@ -17,7 +17,7 @@ from typing import Any, Callable, Dict, Union
 from src.definitions.datasets import DATASETS
 from src.definitions.leagues import LEAGUES
 from src.lib.rate_limiter import get_rate_limiter
-from src.lib.season_resolver import format_season_param, parse_season_end_year
+from src.lib.season_formatter import format_season_param, parse_season_end_year
 from src.lib.source_resolver import (
     get_source_league_id,
 )

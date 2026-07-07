@@ -17,14 +17,14 @@ from typing import Any, Dict, List, Union
 
 from src.definitions.datasets import DATASETS
 from src.definitions.db_columns import DB_COLUMNS
-from src.definitions.schema import TABLES
-from src.lib.call_groups import is_dataset_available
+from src.definitions.schema import get_table
+from src.lib.call_grouper import is_dataset_available
 from src.lib.postgres import db_connection, quote_col
 
 logger = logging.getLogger(__name__)
 
-_COVERAGE_META = TABLES["core.coverage"]
-_COVERAGE_SCHEMA = _COVERAGE_META.get("schema") or "core"
+_COVERAGE_META = get_table("core.coverage")
+_COVERAGE_SCHEMA = "core"
 _COVERAGE_TABLE = f"{_COVERAGE_SCHEMA}.coverage"
 _COVERAGE_PK_COLS = _COVERAGE_META.get("primary_key") or []
 _COVERAGE_CONFLICT = ", ".join(quote_col(c) for c in _COVERAGE_PK_COLS)

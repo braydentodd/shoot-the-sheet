@@ -33,7 +33,6 @@ VALID_STAGING_TABLES = frozenset(
         "staging.games",
         "staging.player_games",
         "staging.team_games",
-        "staging.pbp_events",
     }
 )
 
@@ -58,22 +57,17 @@ VALID_CORE_TABLES = frozenset(
     }
 )
 
-VALID_READY_TABLES = frozenset(
+VALID_INTERMEDIATE_TABLES = frozenset(
     {
-        "ready.teams",
-        "ready.players",
-        "ready.leagues_teams",
-        "ready.teams_players",
-        "ready.countries_players",
-        "ready.identities_players",
-        "ready.identities_teams",
-        "ready.identities_games",
-        "ready.team_seasons",
-        "ready.player_seasons",
-        "ready.games",
-        "ready.player_games",
-        "ready.team_games",
-        "ready.pbp_events",
+        "intermediate.teams",
+        "intermediate.players",
+        "intermediate.leagues_teams",
+        "intermediate.teams_players",
+        "intermediate.team_seasons",
+        "intermediate.player_seasons",
+        "intermediate.games",
+        "intermediate.player_games",
+        "intermediate.team_games",
     }
 )
 

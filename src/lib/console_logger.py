@@ -1,5 +1,5 @@
 """
-Shoot the Sheet - Centralized Logging Setup
+Shoot the Sheet - Console Logger
 
 Provides a single, opinionated logging configuration used by every CLI entry
 point in the codebase.  Goal: consistent log format across the ETL pipeline.
@@ -11,7 +11,7 @@ Conventions:
     DEBUG    per-row / per-call traces (off by default)
 
 Usage:
-    from src.lib.logging import setup_logging, phase_marker
+    from src.lib.logger_setup import setup_logging, phase_marker
     setup_logging(verbose=False)
     logger.info(phase_marker('discover'))
 """

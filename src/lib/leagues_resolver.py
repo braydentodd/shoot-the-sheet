@@ -2,7 +2,7 @@
 Shoot the Sheet - League Resolvers
 
 Pure resolvers over :data:`src.definitions.leagues.LEAGUES`.  Season
-label *formatting* is delegated to :mod:`src.lib.season_resolver` so the same
+label *formatting* is delegated to :mod:`src.lib.season_formatter` so the same
 shape engine drives league-canonical and source-wire formats.
 """
 
@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import List, Optional, Tuple
 
 from src.definitions.leagues import LEAGUES, LeagueDef, SeasonTypeDef
-from src.lib.season_resolver import format_season_label, parse_season_end_year
+from src.lib.season_formatter import format_season_label, parse_season_end_year
 
 
 def _league_or_raise(league_code: str) -> "LeagueDef":

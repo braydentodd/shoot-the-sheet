@@ -1,5 +1,5 @@
 """
-Shoot the Sheet - Season Label Format Engine
+Shoot the Sheet - Season Label Formatter
 
 Shape-driven rendering and parsing for season labels.  Supports both
 league-canonical formats (a coarse ``same_year``/``split_year`` enum) and

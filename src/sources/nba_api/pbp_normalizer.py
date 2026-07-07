@@ -262,7 +262,7 @@ def normalize_nba_pbp_events(
         identity: Identity code (default: "nba_id")
 
     Returns:
-        List of standardized PBP event dicts ready for pbp_events_staging
+        List of standardized PBP event dicts
     """
     events: List[Dict] = []
     event_id = 0

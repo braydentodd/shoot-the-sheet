@@ -17,7 +17,7 @@ import logging
 import sys
 
 from src.definitions.leagues import LEAGUES
-from src.lib.logging import setup_logging
+from src.lib.console_logger import setup_logging
 from src.lib.terminal import (
     HelpFormatter,
     make_base_parser,
@@ -54,7 +54,7 @@ def _build_parser():
         type=str,
         default=None,
         choices=["ingest", "promote"],
-        help="Run only a subset of the pipeline. 'ingest' = execution_start + per_league + per_identity (data into staging). 'promote' = execution_end (staging → ready → core, cleanup). Omit for full run.",
+        help="Run only a subset of the pipeline. 'ingest' = execution_start + per_league + per_identity (data into staging). 'promote' = execution_end (staging → intermediate → core, cleanup). Omit for full run.",
     )
 
     return parser

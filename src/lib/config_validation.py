@@ -20,8 +20,6 @@ from typing import Any, Dict, List, Union
 
 from src.lib.source_resolver import get_identity_entities
 
-VALID_ENTITY_TYPES = frozenset({"league", "player", "team", "country"})
-
 VALID_EXECUTION_TIERS = frozenset({"per_league", "per_team", "per_player", "per_game"})
 
 VALID_COVERAGE_LEVELS = frozenset({"current", "normal", "deep"})
@@ -73,12 +71,16 @@ def _validate_identity_structure(
 ) -> List[str]:
     """Validate the nested identity structure in DB_COLUMNS.
 
-    DB_COLUMNS uses a nested structure: {league: {identity: {entity: {...}}}}
-    where league is the league key (e.g., 'NBA') and identity is the
-    identity key (e.g., 'nba_id'). Provider maps may only contain entity
-    entity keys; provider-level metadata keys are rejected.
+    DB_COLUMNS uses a nested structure: {league: {identity: {table: {...}}}}
+    where league is the league key (e.g., 'NBA'), identity is the
+    identity key (e.g., 'nba_id'), and table is a bare table name
+    (e.g. 'players', 'team_seasons'). Third-level keys must be valid
+    table names present in at least one schema.
     """
     from src.definitions.datasets import DATASETS
+    from src.definitions.schema import iter_tables
+
+    valid_table_names = frozenset(table_name for _, _, table_name, _ in iter_tables())
 
     errors = []
     for col_name, meta in db_columns.items():
@@ -91,7 +93,7 @@ def _validate_identity_structure(
             errors.append(f"{prefix}: 'dataset_mapping' must be dict or None")
             continue
 
-        # col_sources is {league: {identity: {entity: {...}}}}
+        # col_sources is {league: {identity: {table: {...}}}}
         for league, identity_dict in col_sources.items():
             if not isinstance(identity_dict, dict):
                 errors.append(f"{prefix}: dataset_mapping['{league}'] must be dict")
@@ -110,10 +112,10 @@ def _validate_identity_structure(
                     )
                     continue
                 for entity_name, source_def in entities.items():
-                    if entity_name not in VALID_ENTITY_TYPES:
+                    if entity_name not in valid_table_names:
                         errors.append(
                             f"{prefix}: dataset_mapping['{league}']['{identity}'] contains unsupported key {entity_name!r}; "
-                            "only entity keys are allowed"
+                            "only valid table names are allowed"
                         )
                         continue
                     if not isinstance(source_def, dict):
@@ -135,6 +137,9 @@ def _validate_dataset_refs(
 ) -> List[str]:
     """Validate that source dataset references exist in DATASETS."""
     from src.definitions.datasets import DATASETS
+    from src.definitions.schema import iter_tables
+
+    valid_table_names = frozenset(table_name for _, _, table_name, _ in iter_tables())
 
     errors = []
     for col_name, meta in db_columns.items():
@@ -153,7 +158,7 @@ def _validate_dataset_refs(
                     continue
                 source_datasets = DATASETS.get(provider, {})
                 for entity_name, source_def in entities.items():
-                    if entity_name not in VALID_ENTITY_TYPES:
+                    if entity_name not in valid_table_names:
                         continue
                     if not isinstance(source_def, dict):
                         continue
@@ -169,7 +174,6 @@ def _validate_dataset_refs(
 
 
 def _validate_table_definitions(
-    tables: Dict[str, Any],
     db_columns: Dict[str, Any],
 ) -> List[str]:
     """Robustly validate all table definitions in TABLES registry.
@@ -179,12 +183,15 @@ def _validate_table_definitions(
     from src.definitions.schema import (
         VALID_FK_ACTIONS,
         VALID_FK_STRATEGIES,
+        iter_tables,
     )
 
     errors = []
 
-    for table_name, meta in tables.items():
-        prefix = f"TABLES['{table_name}']"
+    valid_tables = {qualified_name for qualified_name, _, _, _ in iter_tables()}
+
+    for qualified_name, schema_name, table_name, meta in iter_tables():
+        prefix = f"TABLES['{qualified_name}']"
 
         # Collect columns declared on this table (both database columns and FK columns)
         fk_columns = set()
@@ -215,15 +222,22 @@ def _validate_table_definitions(
             for idx, fk in enumerate(fks):
                 fk_prefix = f"{prefix}.foreign_keys[{idx}]"
                 cols = fk.get("columns", [])
+                ref_schema = fk.get("ref_schema")
                 ref_table = fk.get("ref_table")
                 ref_cols = fk.get("ref_columns", [])
 
                 if not cols:
                     errors.append(f"{fk_prefix}: missing 'columns'")
+                if not ref_schema:
+                    errors.append(f"{fk_prefix}: missing 'ref_schema'")
                 if not ref_table:
                     errors.append(f"{fk_prefix}: missing 'ref_table'")
-                elif ref_table not in tables:
-                    errors.append(f"{fk_prefix}: ref_table '{ref_table}' not in TABLES")
+                if ref_schema and ref_table:
+                    ref_qualified = f"{ref_schema}.{ref_table}"
+                    if ref_qualified not in valid_tables:
+                        errors.append(
+                            f"{fk_prefix}: ref_table '{ref_qualified}' not in SCHEMAS"
+                        )
 
                 if not ref_cols:
                     errors.append(f"{fk_prefix}: missing 'ref_columns'")
@@ -289,16 +303,16 @@ def _validate_table_definitions(
     return errors
 
 
-def _validate_fk_targets(tables: Dict[str, Any]) -> List[str]:
+def _validate_fk_targets() -> List[str]:
     """Every FK ref_schema/ref_table must resolve to a known table, and the
     on_update / on_delete actions must be in the allowed set."""
-    from src.definitions.schema import VALID_FK_ACTIONS
+    from src.definitions.schema import VALID_FK_ACTIONS, iter_tables
 
     errors: List[str] = []
 
-    for tname, meta in tables.items():
+    for qualified_name, schema_name, table_name, meta in iter_tables():
         for fk in meta.get("foreign_keys") or []:
-            prefix = f"TABLES['{tname}'] FK on '{fk.get('columns', ['?'])[0]}'"
+            prefix = f"TABLES['{qualified_name}'] FK on '{fk.get('columns', ['?'])[0]}'"
             for action_key in ("on_update", "on_delete"):
                 action = fk.get(action_key)
                 if action and action not in VALID_FK_ACTIONS:
@@ -421,10 +435,11 @@ def _validate_transform_references() -> List[str]:
 
 
 def _validate_discovery_tables() -> List[str]:
-    """Validate that every discovery_tables entry exists in TABLES registry."""
+    """Validate that every discovery_tables entry exists in SCHEMAS registry."""
     from src.definitions.datasets import DATASETS
-    from src.definitions.schema import TABLES
+    from src.definitions.schema import iter_tables
 
+    valid_qualified = {qual for qual, _, _, _ in iter_tables()}
     errors: List[str] = []
 
     for identity_code, datasets in DATASETS.items():
@@ -434,10 +449,10 @@ def _validate_discovery_tables() -> List[str]:
                 continue
 
             for table_name in discovery_tables:
-                if table_name not in TABLES:
+                if table_name not in valid_qualified:
                     errors.append(
                         f'DATASETS["{identity_code}"]["{dataset_name}"] discovery_tables: '
-                        f"table '{table_name}' not found in TABLES registry"
+                        f"table '{table_name}' not found in SCHEMAS registry"
                     )
 
     return errors
@@ -492,15 +507,13 @@ def _validate_result_sets() -> List[str]:
 
 def validate_config() -> List[str]:
     from src.definitions.db_columns import DB_COLUMNS
-    from src.definitions.schema import TABLES
-    from src.definitions.sources import SOURCES
 
     errors: List[str] = []
 
     errors.extend(_validate_pg_types(DB_COLUMNS))
     errors.extend(_validate_identity_structure(DB_COLUMNS))
-    errors.extend(_validate_table_definitions(TABLES, DB_COLUMNS))
-    errors.extend(_validate_fk_targets(TABLES))
+    errors.extend(_validate_table_definitions(DB_COLUMNS))
+    errors.extend(_validate_fk_targets())
     errors.extend(_validate_league_stage_definitions())
     errors.extend(_validate_dataset_mapping_references())
     errors.extend(_validate_transform_references())

@@ -1,14 +1,37 @@
 """
 Shoot the Sheet - Column Registry
 
-Single source of truth for database column definitions and provider source
-mappings.  Column names match the actual PostgreSQL schema exactly.
+Single source of truth for every database column and its identity source
+mappings. Column names match the actual PostgreSQL schema exactly.
+
+Table assignment convention
+----------------------------
+A column's ``tables`` list uses bare table names (e.g. ``"teams"``) when the
+column belongs to that table in **every** schema where the table exists.
+Schema-qualified names (``"core.teams"``) are used only when the column must
+be restricted to a *subset* of schemas.
+
+Example: ``"fg2m"`` is in ``core.player_games``, ``intermediate.player_games``, and
+``staging.player_games`` → ``"tables": ["player_games"]``.
+``"identity"`` is in ``staging.teams`` but NOT ``core.teams`` or
+``intermediate.teams`` → ``"tables": ["staging.teams", ...]``.
+
+This is resolved at schema-build time: ``schema_builder._column_in_table``
+expands a bare name to ``{schema}.{name}`` for every schema that has a table
+with that name, then compares against the (always-schema-qualified) keys from
+``SCHEMAS``. See ``schema_builder.py`` for the resolution logic.
 
 Every column with an external source follows this shape:
 
-    dataset_mapping[league_key][identity_key][target][dataset] -> DatasetMappingDef
+    dataset_mapping[league_key][identity_key][table] -> {dataset_name: DatasetMappingDef}
 
-Columns with no external source (system columns) have ``dataset_mapping: None``.
+A column may be populated by more than one dataset for the same identity and
+table (e.g. a box-score API and PBP accumulation both provide ``fg2m``);
+first-write-wins staging semantics ensure only the first value written for a
+run is kept.
+
+Columns with no external source (system columns, or stats with no provider
+yet) have ``dataset_mapping: None``.
 """
 
 from typing import Any, Dict, List, Literal, TypedDict, Union
@@ -32,8 +55,10 @@ class DatasetMappingDef(TypedDict, total=False):
     """Mapping from a dataset to a column value.
 
     Attributes:
-        field: Source field name in the API response.
-        result_set: Result set name within the API response.
+        field: Source field name in the API response, or the accumulator
+            output field name for PBP-derived stats.
+        result_set: Result set name within the API response (or PBP result
+            set: team, player, opp_team, opp_player, on_player).
         transform: Transform function to apply.
         scale: Multiplier for numeric values.
         params: Additional parameters for the transform.
@@ -53,10 +78,14 @@ class ColumnDef(TypedDict, total=True):
 
     Attributes:
         type: PostgreSQL data type.
-        tables: Table name(s) where this column appears.
+        tables: Table name(s) where this column appears. Bare names expand to
+            all schemas that have that table; schema-qualified names
+            (``"core.teams"``) restrict to that specific schema.table.
+            The literal ``"all"`` wildcard applies to every table in every
+            schema (reserved for ``created_at`` / ``updated_at``).
         nullable: Whether NULL values are allowed.
         default: Default value expression.
-        dataset_mapping: Nested mapping: league -> identity -> entity -> dataset -> field mapping.
+        dataset_mapping: Nested mapping: league -> identity -> table -> dataset -> field mapping.
     """
 
     type: str
@@ -70,12 +99,26 @@ class ColumnDef(TypedDict, total=True):
 
 
 DB_COLUMNS: Dict[str, ColumnDef] = {
-    # ── System / identity ──
+    # ==================================================================
+    # SYSTEM / IDENTITY
+    # ==================================================================
+    #
+    # Tables involved: core.teams, core.players, intermediate.teams, intermediate.players,
+    # staging.teams, staging.players.
+    #
+    # sts_id:        core + intermediate only (staging uses ext_id PKs)
+    # identity:      staging profiles/stats + core identities/ops;
+    #                NOT in core/intermediate profile tables
+    # ext_id:        staging profiles + core identity mappings
+    # matched_sts_id, reviewed: staging profiles only
+    # ==================================================================
     "sts_id": {
         "type": "BIGINT",
         "tables": [
             "core.teams",
             "core.players",
+            "intermediate.teams",
+            "intermediate.players",
         ],
         "nullable": False,
         "default": "nextval('core.sts_id_seq')",
@@ -84,7 +127,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     "entity": {
         "type": "TEXT",
         "tables": [
-            "core.coverage",
+            "coverage",
+            "errors",
         ],
         "nullable": False,
         "default": None,
@@ -93,10 +137,11 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     "identity": {
         "type": "TEXT",
         "tables": [
-            "core.identities_players",
-            "core.identities_teams",
-            "core.identities_games",
-            "core.coverage",
+            "identities_players",
+            "identities_teams",
+            "identities_games",
+            "coverage",
+            "errors",
             "staging.teams",
             "staging.players",
             "staging.games",
@@ -105,40 +150,19 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "staging.leagues_teams",
             "staging.teams_players",
             "staging.countries_players",
-            "errors",
+            "staging.player_games",
+            "staging.team_games",
         ],
         "nullable": False,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "last_identity": {
-        "type": "TEXT",
-        "tables": [
-            "ready.teams",
-            "ready.players",
-            "ready.leagues_teams",
-            "ready.teams_players",
-            "ready.countries_players",
-            "ready.identities_players",
-            "ready.identities_teams",
-            "ready.identities_games",
-            "ready.player_seasons",
-            "ready.team_seasons",
-            "ready.games",
-            "ready.player_games",
-            "ready.team_games",
-            "ready.pbp_events",
-        ],
-        "nullable": True,
         "default": None,
         "dataset_mapping": None,
     },
     "ext_id": {
         "type": "TEXT",
         "tables": [
-            "core.identities_players",
-            "core.identities_teams",
-            "core.identities_games",
+            "identities_players",
+            "identities_teams",
+            "identities_games",
             "staging.teams",
             "staging.players",
             "staging.games",
@@ -170,17 +194,15 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     "league_code": {
         "type": "TEXT",
         "tables": [
-            "core.leagues_teams",
-            "core.teams_players",
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.coverage",
+            "leagues_teams",
+            "teams_players",
+            "team_seasons",
+            "player_seasons",
+            "team_games",
+            "player_games",
+            "coverage",
             "staging.teams",
             "staging.players",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.leagues_teams",
-            "staging.teams_players",
         ],
         "nullable": False,
         "default": None,
@@ -189,14 +211,10 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     "season": {
         "type": "TEXT",
         "tables": [
-            "core.games",
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.coverage",
-            "core.coverage",
-            "staging.games",
-            "staging.player_seasons",
-            "staging.team_seasons",
+            "games",
+            "team_seasons",
+            "player_seasons",
+            "coverage",
         ],
         "nullable": True,
         "default": None,
@@ -205,14 +223,10 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     "season_type": {
         "type": "TEXT",
         "tables": [
-            "core.games",
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.coverage",
-            "core.coverage",
-            "staging.games",
-            "staging.player_seasons",
-            "staging.team_seasons",
+            "games",
+            "team_seasons",
+            "player_seasons",
+            "coverage",
         ],
         "nullable": True,
         "default": None,
@@ -221,8 +235,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     "date": {
         "type": "DATE",
         "tables": [
-            "core.games",
-            "staging.games",
+            "games",
         ],
         "nullable": False,
         "default": None,
@@ -243,8 +256,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "type": "BIGINT",
         "tables": [
             "core.games",
-            "core.identities_games",
-            "core.coverage",
+            "intermediate.games",
+            "identities_games",
+            "coverage",
         ],
         "nullable": False,
         "default": "nextval('core.game_id_seq')",
@@ -254,7 +268,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "type": "TEXT",
         "tables": [
             "staging.games",
-            "staging.pbp_events",
+            "staging.player_games",
+            "staging.team_games",
         ],
         "nullable": False,
         "default": None,
@@ -262,36 +277,28 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     "home_team_id": {
         "type": "BIGINT",
-        "tables": [
-            "core.games",
-        ],
+        "tables": ["core.games", "intermediate.games"],
         "nullable": False,
         "default": None,
         "dataset_mapping": None,
     },
     "away_team_id": {
         "type": "BIGINT",
-        "tables": [
-            "core.games",
-        ],
+        "tables": ["core.games", "intermediate.games"],
         "nullable": False,
         "default": None,
         "dataset_mapping": None,
     },
     "ext_home_team_id": {
         "type": "TEXT",
-        "tables": [
-            "staging.games",
-        ],
+        "tables": ["staging.games"],
         "nullable": False,
         "default": None,
         "dataset_mapping": None,
     },
     "ext_away_team_id": {
         "type": "TEXT",
-        "tables": [
-            "staging.games",
-        ],
+        "tables": ["staging.games"],
         "nullable": False,
         "default": None,
         "dataset_mapping": None,
@@ -300,9 +307,13 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "type": "BIGINT",
         "tables": [
             "core.player_seasons",
+            "intermediate.player_seasons",
+            "core.player_games",
+            "intermediate.player_games",
             "core.teams_players",
+            "intermediate.teams_players",
             "core.countries_players",
-            "core.identities_players",
+            "identities_players",
         ],
         "nullable": False,
         "default": None,
@@ -312,10 +323,18 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "type": "BIGINT",
         "tables": [
             "core.team_seasons",
+            "intermediate.team_seasons",
             "core.player_seasons",
+            "intermediate.player_seasons",
+            "core.team_games",
+            "intermediate.team_games",
+            "core.player_games",
+            "intermediate.player_games",
             "core.teams_players",
+            "intermediate.teams_players",
             "core.leagues_teams",
-            "core.identities_teams",
+            "intermediate.leagues_teams",
+            "identities_teams",
         ],
         "nullable": False,
         "default": None,
@@ -327,52 +346,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "staging.player_seasons",
             "staging.teams_players",
             "staging.countries_players",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    # ── PBP event columns ──
-    "event_id": {
-        "type": "INTEGER",
-        "tables": [
-            "staging.pbp_events",
-        ],
-        "nullable": False,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "pbp_secs": {
-        "type": "INTEGER",
-        "tables": [
-            "staging.pbp_events",
-        ],
-        "nullable": False,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "event_type": {
-        "type": "TEXT",
-        "tables": [
-            "staging.pbp_events",
-        ],
-        "nullable": False,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "pbp_ext_team_id": {
-        "type": "TEXT",
-        "tables": [
-            "staging.pbp_events",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "pbp_ext_player_id": {
-        "type": "TEXT",
-        "tables": [
-            "staging.pbp_events",
+            "staging.player_games",
         ],
         "nullable": True,
         "default": None,
@@ -385,17 +359,20 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             "staging.player_seasons",
             "staging.leagues_teams",
             "staging.teams_players",
+            "staging.team_games",
+            "staging.player_games",
         ],
         "nullable": True,
         "default": None,
         "dataset_mapping": None,
     },
-    # ── Game metadata ──
+    # ==================================================================
+    # GAME METADATA
+    # ==================================================================
     "ot": {
         "type": "BOOLEAN",
         "tables": [
-            "core.games",
-            "staging.games",
+            "games",
         ],
         "nullable": False,
         "default": False,
@@ -404,23 +381,22 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     "neutral_site": {
         "type": "BOOLEAN",
         "tables": [
-            "core.games",
-            "staging.games",
+            "games",
         ],
         "nullable": False,
         "default": False,
         "dataset_mapping": None,
     },
-    # ── Profiles ──
+    # ==================================================================
+    # PROFILES
+    # ==================================================================
     "name": {
         "type": "TEXT",
         "tables": [
-            "core.leagues",
-            "core.teams",
-            "core.players",
-            "core.countries",
-            "staging.teams",
-            "staging.players",
+            "leagues",
+            "teams",
+            "players",
+            "countries",
         ],
         "nullable": True,
         "default": None,
@@ -456,10 +432,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     "code": {
         "type": "TEXT",
         "tables": [
-            "core.leagues",
-            "core.countries",
-            "core.teams",
-            "staging.teams",
+            "leagues",
+            "countries",
+            "teams",
         ],
         "nullable": True,
         "default": None,
@@ -480,8 +455,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     "city": {
         "type": "TEXT",
         "tables": [
-            "core.teams",
-            "staging.teams",
+            "teams",
         ],
         "nullable": True,
         "default": None,
@@ -502,8 +476,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     "region": {
         "type": "TEXT",
         "tables": [
-            "core.teams",
-            "staging.teams",
+            "teams",
         ],
         "nullable": True,
         "default": None,
@@ -513,7 +486,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "type": "TEXT",
         "tables": [
             "leagues_teams",
-            "staging.leagues_teams",
         ],
         "nullable": True,
         "default": None,
@@ -534,9 +506,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     "country_code": {
         "type": "TEXT",
         "tables": [
-            "core.teams",
-            "core.countries_players",
-            "staging.countries_players",
+            "teams",
+            "countries_players",
         ],
         "nullable": True,
         "default": None,
@@ -563,9 +534,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     "sovereign_country": {
         "type": "TEXT",
-        "tables": [
-            "countries",
-        ],
+        "tables": ["countries"],
         "nullable": True,
         "default": None,
         "dataset_mapping": None,
@@ -573,8 +542,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     "birthdate": {
         "type": "DATE",
         "tables": [
-            "core.players",
-            "staging.players",
+            "players",
         ],
         "nullable": True,
         "default": None,
@@ -600,8 +568,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     "draft_year": {
         "type": "SMALLINT",
         "tables": [
-            "core.players",
-            "staging.players",
+            "players",
         ],
         "nullable": True,
         "default": None,
@@ -622,8 +589,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     "draft_year_auto": {
         "type": "SMALLINT",
         "tables": [
-            "core.players",
-            "staging.players",
+            "players",
         ],
         "nullable": True,
         "default": None,
@@ -632,8 +598,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     "jersey_num": {
         "type": "TEXT",
         "tables": [
-            "core.teams_players",
-            "staging.teams_players",
+            "teams_players",
         ],
         "nullable": True,
         "default": None,
@@ -657,8 +622,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     "hand": {
         "type": "CHAR",
         "tables": [
-            "core.players",
-            "staging.players",
+            "players",
         ],
         "nullable": True,
         "default": None,
@@ -667,11 +631,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     "gender": {
         "type": "CHAR",
         "tables": [
-            "core.leagues",
-            "core.teams",
-            "core.players",
-            "staging.teams",
-            "staging.players",
+            "leagues",
+            "teams",
+            "players",
         ],
         "nullable": True,
         "default": None,
@@ -680,8 +642,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     "height_ins_no_shoes": {
         "type": "SMALLINT",
         "tables": [
-            "core.players",
-            "staging.players",
+            "players",
         ],
         "nullable": True,
         "default": None,
@@ -712,8 +673,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     "height_ins_with_shoes": {
         "type": "SMALLINT",
         "tables": [
-            "core.players",
-            "staging.players",
+            "players",
         ],
         "nullable": True,
         "default": None,
@@ -734,8 +694,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     "wingspan_ins": {
         "type": "SMALLINT",
         "tables": [
-            "core.players",
-            "staging.players",
+            "players",
         ],
         "nullable": True,
         "default": None,
@@ -753,12 +712,14 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             }
         },
     },
-    # ── Metadata / status ──
+    # ==================================================================
+    # METADATA / STATUS
+    # ==================================================================
     "notes": {
         "type": "TEXT",
         "tables": [
-            "core.teams",
-            "core.players",
+            "teams",
+            "players",
         ],
         "nullable": True,
         "default": None,
@@ -767,12 +728,9 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     "active": {
         "type": "BOOLEAN",
         "tables": [
-            "core.players",
-            "staging.players",
-            "core.teams",
-            "staging.teams",
-            "core.leagues",
-            "leagues_staging",
+            "leagues",
+            "teams",
+            "players",
         ],
         "nullable": False,
         "default": True,
@@ -780,46 +738,45 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     "created_at": {
         "type": "TIMESTAMP",
-        "tables": [
-            "all",
-        ],
+        "tables": ["all"],
         "nullable": False,
         "default": "NOW()",
         "dataset_mapping": None,
     },
     "updated_at": {
         "type": "TIMESTAMP",
-        "tables": [
-            "all",
-        ],
+        "tables": ["all"],
         "nullable": False,
         "default": "NOW()",
         "dataset_mapping": None,
     },
-    # ── Coverage tracking ──
+    # ==================================================================
+    # COVERAGE TRACKING
+    # ==================================================================
     "coverage_level": {
         "type": "TEXT",
-        "tables": [
-            "coverage",
-        ],
+        "tables": ["coverage"],
         "nullable": False,
-        "default": "season",
+        "default": "'season'",
+        "dataset_mapping": None,
+    },
+    "target": {
+        "type": "TEXT",
+        "tables": ["coverage"],
+        "nullable": False,
+        "default": None,
         "dataset_mapping": None,
     },
     "col_name": {
         "type": "TEXT",
-        "tables": [
-            "coverage",
-        ],
+        "tables": ["coverage"],
         "nullable": False,
         "default": None,
         "dataset_mapping": None,
     },
     "covered": {
         "type": "BOOLEAN",
-        "tables": [
-            "coverage",
-        ],
+        "tables": ["coverage"],
         "nullable": False,
         "default": False,
         "dataset_mapping": None,
@@ -834,19 +791,12 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
         "default": None,
         "dataset_mapping": None,
     },
-    # ── Stats — basic ──
+    # ==================================================================
+    # STATS — BASIC
+    # ==================================================================
     "games": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": False,
         "default": 0,
         "dataset_mapping": {
@@ -870,16 +820,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     "secs": {
         "type": "INTEGER",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": False,
         "default": 0,
         "dataset_mapping": {
@@ -890,13 +831,17 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "field": "MIN",
                             "scale": 60,
                             "result_set": "LeagueDashPlayerStats",
-                        }
+                        },
                     },
                     "player_games": {
                         "player_game_stats": {
                             "field": "MIN",
                             "scale": 60,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_data": {
+                            "field": "secs",
+                            "result_set": "player",
                         },
                     },
                     "team_seasons": {
@@ -919,12 +864,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     "win": {
         "type": "BOOLEAN",
-        "tables": [
-            "core.player_games",
-            "core.team_games",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -953,10 +893,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     "wins": {
         "type": "SMALLINT",
         "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "staging.player_seasons",
-            "staging.team_seasons",
+            "player_seasons",
+            "team_seasons",
         ],
         "nullable": True,
         "default": None,
@@ -979,19 +917,12 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             }
         },
     },
-    # ── Stats — shooting ──
+    # ==================================================================
+    # STATS — SHOOTING
+    # ==================================================================
     "fg2m": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -1014,6 +945,10 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             },
                             "result_set": "LeagueGameLog",
                         },
+                        "pbp_data": {
+                            "field": "fg2m",
+                            "result_set": "player",
+                        },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
@@ -1031,6 +966,10 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                                 "fields": ["FGM", "FG3M"],
                             },
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_data": {
+                            "field": "fg2m",
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1039,16 +978,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     "fg2a": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -1071,6 +1001,10 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             },
                             "result_set": "LeagueGameLog",
                         },
+                        "pbp_data": {
+                            "field": "fg2a",
+                            "result_set": "player",
+                        },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
@@ -1088,6 +1022,10 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                                 "fields": ["FGA", "FG3A"],
                             },
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_data": {
+                            "field": "fg2a",
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1096,16 +1034,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     "fg3m": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -1122,6 +1051,10 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "field": "FG3M",
                             "result_set": "LeagueGameLog",
                         },
+                        "pbp_data": {
+                            "field": "fg3m",
+                            "result_set": "player",
+                        },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
@@ -1133,6 +1066,10 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         "team_game_stats": {
                             "field": "FG3M",
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_data": {
+                            "field": "fg3m",
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1141,16 +1078,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     "fg3a": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -1167,6 +1095,10 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "field": "FG3A",
                             "result_set": "LeagueGameLog",
                         },
+                        "pbp_data": {
+                            "field": "fg3a",
+                            "result_set": "player",
+                        },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
@@ -1178,6 +1110,10 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         "team_game_stats": {
                             "field": "FG3A",
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_data": {
+                            "field": "fg3a",
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1186,16 +1122,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     "ftm": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -1212,6 +1139,10 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "field": "FTM",
                             "result_set": "LeagueGameLog",
                         },
+                        "pbp_data": {
+                            "field": "ftm",
+                            "result_set": "player",
+                        },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
@@ -1223,6 +1154,10 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         "team_game_stats": {
                             "field": "FTM",
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_data": {
+                            "field": "ftm",
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1231,16 +1166,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     "fta": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -1257,6 +1183,10 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "field": "FTA",
                             "result_set": "LeagueGameLog",
                         },
+                        "pbp_data": {
+                            "field": "fta",
+                            "result_set": "player",
+                        },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
@@ -1268,25 +1198,22 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         "team_game_stats": {
                             "field": "FTA",
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_data": {
+                            "field": "fta",
+                            "result_set": "team",
                         },
                     },
                 }
             }
         },
     },
-    # ── Stats — rebounding ──
+    # ==================================================================
+    # STATS — REBOUNDING
+    # ==================================================================
     "o_rebs": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -1303,6 +1230,10 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "field": "OREB",
                             "result_set": "LeagueGameLog",
                         },
+                        "pbp_data": {
+                            "field": "o_rebs",
+                            "result_set": "player",
+                        },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
@@ -1314,6 +1245,10 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                         "team_game_stats": {
                             "field": "OREB",
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_data": {
+                            "field": "o_rebs",
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1322,16 +1257,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     "d_rebs": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -1348,6 +1274,10 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "field": "DREB",
                             "result_set": "LeagueGameLog",
                         },
+                        "pbp_data": {
+                            "field": "d_rebs",
+                            "result_set": "player",
+                        },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
@@ -1360,24 +1290,21 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "field": "DREB",
                             "result_set": "LeagueGameLog",
                         },
+                        "pbp_data": {
+                            "field": "d_rebs",
+                            "result_set": "team",
+                        },
                     },
                 }
             }
         },
     },
-    # ── Stats — playmaking ──
+    # ==================================================================
+    # STATS — PLAYMAKING
+    # ==================================================================
     "assists": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -1413,32 +1340,14 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     "assist_points": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": None,
     },
     "turnovers": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -1455,6 +1364,10 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "field": "TOV",
                             "result_set": "LeagueGameLog",
                         },
+                        "pbp_data": {
+                            "field": "turnovers",
+                            "result_set": "player",
+                        },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
@@ -1467,6 +1380,10 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "field": "TOV",
                             "result_set": "LeagueGameLog",
                         },
+                        "pbp_data": {
+                            "field": "turnovers",
+                            "result_set": "team",
+                        },
                     },
                 }
             }
@@ -1475,10 +1392,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     "pot_assists": {
         "type": "SMALLINT",
         "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "staging.player_seasons",
-            "staging.team_seasons",
+            "player_seasons",
+            "team_seasons",
         ],
         "nullable": True,
         "default": None,
@@ -1501,19 +1416,12 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             }
         },
     },
-    # ── Stats — defense ──
+    # ==================================================================
+    # STATS — DEFENSE
+    # ==================================================================
     "blocks": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -1549,16 +1457,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     "steals": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -1594,16 +1493,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     "fouls": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -1639,28 +1529,19 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     "o_fouls_drawn": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": None,
     },
-    # ── Stats — hustle ──
+    # ==================================================================
+    # STATS — HUSTLE
+    # ==================================================================
     "deflections": {
         "type": "SMALLINT",
         "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "staging.player_seasons",
-            "staging.team_seasons",
+            "player_seasons",
+            "team_seasons",
         ],
         "nullable": True,
         "default": None,
@@ -1686,10 +1567,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     "cont_d_fga": {
         "type": "SMALLINT",
         "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "staging.player_seasons",
-            "staging.team_seasons",
+            "player_seasons",
+            "team_seasons",
         ],
         "nullable": True,
         "default": None,
@@ -1712,19 +1591,12 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             }
         },
     },
-    # ── Stats — possession ──
+    # ==================================================================
+    # STATS — POSSESSION
+    # ==================================================================
     "poss": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -1753,6 +1625,10 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "field": "POSS",
                             "result_set": "LeagueGameLog",
                         },
+                        "pbp_data": {
+                            "field": "poss",
+                            "result_set": "team",
+                        },
                     },
                 }
             }
@@ -1760,59 +1636,47 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     "o_poss_secs": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": None,
     },
     "d_poss_secs": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": None,
     },
     "poss_ending_ft_trips": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
-        "dataset_mapping": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_games": {
+                        "pbp_data": {
+                            "field": "poss_ending_ft_trips",
+                            "result_set": "player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_data": {
+                            "field": "poss_ending_ft_trips",
+                            "result_set": "team",
+                        },
+                    },
+                }
+            }
+        },
     },
     "secs_on_ball": {
         "type": "INTEGER",
         "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "staging.player_seasons",
-            "staging.team_seasons",
+            "player_seasons",
+            "team_seasons",
         ],
         "nullable": True,
         "default": None,
@@ -1838,10 +1702,8 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     "touches": {
         "type": "INTEGER",
         "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "staging.player_seasons",
-            "staging.team_seasons",
+            "player_seasons",
+            "team_seasons",
         ],
         "nullable": True,
         "default": None,
@@ -1864,19 +1726,12 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
             }
         },
     },
-    # ── Stats — opponent ──
+    # ==================================================================
+    # STATS — OPPONENT
+    # ==================================================================
     "opp_fg2m": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -1891,22 +1746,25 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
+                    "player_games": {
+                        "pbp_data": {
+                            "field": "fg2m",
+                            "result_set": "opp_player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_data": {
+                            "field": "fg2m",
+                            "result_set": "opp_team",
+                        },
+                    },
                 }
             }
         },
     },
     "opp_fg2a": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -1921,22 +1779,25 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
+                    "player_games": {
+                        "pbp_data": {
+                            "field": "fg2a",
+                            "result_set": "opp_player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_data": {
+                            "field": "fg2a",
+                            "result_set": "opp_team",
+                        },
+                    },
                 }
             }
         },
     },
     "opp_fg3m": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -1948,22 +1809,25 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
+                    "player_games": {
+                        "pbp_data": {
+                            "field": "fg3m",
+                            "result_set": "opp_player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_data": {
+                            "field": "fg3m",
+                            "result_set": "opp_team",
+                        },
+                    },
                 }
             }
         },
     },
     "opp_fg3a": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -1975,22 +1839,25 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
+                    "player_games": {
+                        "pbp_data": {
+                            "field": "fg3a",
+                            "result_set": "opp_player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_data": {
+                            "field": "fg3a",
+                            "result_set": "opp_team",
+                        },
+                    },
                 }
             }
         },
     },
     "opp_ftm": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -2002,22 +1869,25 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
+                    "player_games": {
+                        "pbp_data": {
+                            "field": "ftm",
+                            "result_set": "opp_player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_data": {
+                            "field": "ftm",
+                            "result_set": "opp_team",
+                        },
+                    },
                 }
             }
         },
     },
     "opp_fta": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -2029,22 +1899,25 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
+                    "player_games": {
+                        "pbp_data": {
+                            "field": "fta",
+                            "result_set": "opp_player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_data": {
+                            "field": "fta",
+                            "result_set": "opp_team",
+                        },
+                    },
                 }
             }
         },
     },
     "opp_o_rebs": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -2056,26 +1929,25 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
+                    "player_games": {
+                        "pbp_data": {
+                            "field": "o_rebs",
+                            "result_set": "opp_player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_data": {
+                            "field": "o_rebs",
+                            "result_set": "opp_team",
+                        },
+                    },
                 }
             }
         },
     },
     "opp_d_rebs": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "ready.team_seasons",
-            "ready.player_seasons",
-            "ready.team_games",
-            "ready.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -2087,26 +1959,25 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
+                    "player_games": {
+                        "pbp_data": {
+                            "field": "d_rebs",
+                            "result_set": "opp_player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_data": {
+                            "field": "d_rebs",
+                            "result_set": "opp_team",
+                        },
+                    },
                 }
             }
         },
     },
     "opp_turnovers": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "ready.team_seasons",
-            "ready.player_seasons",
-            "ready.team_games",
-            "ready.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -2118,26 +1989,25 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
+                    "player_games": {
+                        "pbp_data": {
+                            "field": "turnovers",
+                            "result_set": "opp_player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_data": {
+                            "field": "turnovers",
+                            "result_set": "opp_team",
+                        },
+                    },
                 }
             }
         },
     },
     "opp_blocks": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "ready.team_seasons",
-            "ready.player_seasons",
-            "ready.team_games",
-            "ready.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -2155,20 +2025,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     "opp_steals": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "ready.team_seasons",
-            "ready.player_seasons",
-            "ready.team_games",
-            "ready.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -2186,20 +2043,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     "opp_fouls": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "ready.team_seasons",
-            "ready.player_seasons",
-            "ready.team_games",
-            "ready.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -2217,75 +2061,65 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     "opp_o_fouls_drawn": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "ready.team_seasons",
-            "ready.player_seasons",
-            "ready.team_games",
-            "ready.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": None,
     },
     "opp_poss": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "ready.team_seasons",
-            "ready.player_seasons",
-            "ready.team_games",
-            "ready.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
-        "dataset_mapping": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_games": {
+                        "pbp_data": {
+                            "field": "poss",
+                            "result_set": "opp_player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_data": {
+                            "field": "poss",
+                            "result_set": "opp_team",
+                        },
+                    },
+                }
+            }
+        },
     },
     "opp_poss_ending_ft_trips": {
         "type": "SMALLINT",
-        "tables": [
-            "core.team_seasons",
-            "core.player_seasons",
-            "core.team_games",
-            "core.player_games",
-            "ready.team_seasons",
-            "ready.player_seasons",
-            "ready.team_games",
-            "ready.player_games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.player_games",
-            "staging.team_games",
-        ],
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
-        "dataset_mapping": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_games": {
+                        "pbp_data": {
+                            "field": "poss_ending_ft_trips",
+                            "result_set": "opp_player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_data": {
+                            "field": "poss_ending_ft_trips",
+                            "result_set": "opp_team",
+                        },
+                    },
+                }
+            }
+        },
     },
-    # ── Stats — on-court ──
+    # ==================================================================
+    # STATS — ON-COURT (player tables only)
+    # ==================================================================
     "on_fg2m": {
         "type": "SMALLINT",
-        "tables": [
-            "core.player_seasons",
-            "core.player_games",
-            "ready.player_seasons",
-            "ready.player_games",
-            "staging.player_seasons",
-            "staging.player_games",
-        ],
+        "tables": ["player_seasons", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -2300,20 +2134,19 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
                         }
                     },
+                    "player_games": {
+                        "pbp_data": {
+                            "field": "fg2m",
+                            "result_set": "on_player",
+                        },
+                    },
                 }
             }
         },
     },
     "on_fg2a": {
         "type": "SMALLINT",
-        "tables": [
-            "core.player_seasons",
-            "core.player_games",
-            "ready.player_seasons",
-            "ready.player_games",
-            "staging.player_seasons",
-            "staging.player_games",
-        ],
+        "tables": ["player_seasons", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -2328,20 +2161,19 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
                         }
                     },
+                    "player_games": {
+                        "pbp_data": {
+                            "field": "fg2a",
+                            "result_set": "on_player",
+                        },
+                    },
                 }
             }
         },
     },
     "on_fg3m": {
         "type": "SMALLINT",
-        "tables": [
-            "core.player_seasons",
-            "core.player_games",
-            "ready.player_seasons",
-            "ready.player_games",
-            "staging.player_seasons",
-            "staging.player_games",
-        ],
+        "tables": ["player_seasons", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -2353,20 +2185,19 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
                         }
                     },
+                    "player_games": {
+                        "pbp_data": {
+                            "field": "fg3m",
+                            "result_set": "on_player",
+                        },
+                    },
                 }
             }
         },
     },
     "on_fg3a": {
         "type": "SMALLINT",
-        "tables": [
-            "core.player_seasons",
-            "core.player_games",
-            "ready.player_seasons",
-            "ready.player_games",
-            "staging.player_seasons",
-            "staging.player_games",
-        ],
+        "tables": ["player_seasons", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -2378,20 +2209,19 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
                         }
                     },
+                    "player_games": {
+                        "pbp_data": {
+                            "field": "fg3a",
+                            "result_set": "on_player",
+                        },
+                    },
                 }
             }
         },
     },
     "on_ftm": {
         "type": "SMALLINT",
-        "tables": [
-            "core.player_seasons",
-            "core.player_games",
-            "ready.player_seasons",
-            "ready.player_games",
-            "staging.player_seasons",
-            "staging.player_games",
-        ],
+        "tables": ["player_seasons", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -2403,20 +2233,19 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
                         }
                     },
+                    "player_games": {
+                        "pbp_data": {
+                            "field": "ftm",
+                            "result_set": "on_player",
+                        },
+                    },
                 }
             }
         },
     },
     "on_fta": {
         "type": "SMALLINT",
-        "tables": [
-            "core.player_seasons",
-            "core.player_games",
-            "ready.player_seasons",
-            "ready.player_games",
-            "staging.player_seasons",
-            "staging.player_games",
-        ],
+        "tables": ["player_seasons", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -2428,20 +2257,19 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
                         }
                     },
+                    "player_games": {
+                        "pbp_data": {
+                            "field": "fta",
+                            "result_set": "on_player",
+                        },
+                    },
                 }
             }
         },
     },
     "on_o_rebs": {
         "type": "SMALLINT",
-        "tables": [
-            "core.player_seasons",
-            "core.player_games",
-            "ready.player_seasons",
-            "ready.player_games",
-            "staging.player_seasons",
-            "staging.player_games",
-        ],
+        "tables": ["player_seasons", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -2453,20 +2281,19 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
                         }
                     },
+                    "player_games": {
+                        "pbp_data": {
+                            "field": "o_rebs",
+                            "result_set": "on_player",
+                        },
+                    },
                 }
             }
         },
     },
     "on_d_rebs": {
         "type": "SMALLINT",
-        "tables": [
-            "core.player_seasons",
-            "core.player_games",
-            "ready.player_seasons",
-            "ready.player_games",
-            "staging.player_seasons",
-            "staging.player_games",
-        ],
+        "tables": ["player_seasons", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -2478,20 +2305,19 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
                         }
                     },
+                    "player_games": {
+                        "pbp_data": {
+                            "field": "d_rebs",
+                            "result_set": "on_player",
+                        },
+                    },
                 }
             }
         },
     },
     "on_turnovers": {
         "type": "SMALLINT",
-        "tables": [
-            "core.player_seasons",
-            "core.player_games",
-            "ready.player_seasons",
-            "ready.player_games",
-            "staging.player_seasons",
-            "staging.player_games",
-        ],
+        "tables": ["player_seasons", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -2503,20 +2329,19 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
                             "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
                         }
                     },
+                    "player_games": {
+                        "pbp_data": {
+                            "field": "turnovers",
+                            "result_set": "on_player",
+                        },
+                    },
                 }
             }
         },
     },
     "on_blocks": {
         "type": "SMALLINT",
-        "tables": [
-            "core.player_seasons",
-            "core.player_games",
-            "ready.player_seasons",
-            "ready.player_games",
-            "staging.player_seasons",
-            "staging.player_games",
-        ],
+        "tables": ["player_seasons", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -2534,14 +2359,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     "on_steals": {
         "type": "SMALLINT",
-        "tables": [
-            "core.player_seasons",
-            "core.player_games",
-            "ready.player_seasons",
-            "ready.player_games",
-            "staging.player_seasons",
-            "staging.player_games",
-        ],
+        "tables": ["player_seasons", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -2559,14 +2377,7 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     "on_fouls": {
         "type": "SMALLINT",
-        "tables": [
-            "core.player_seasons",
-            "core.player_games",
-            "ready.player_seasons",
-            "ready.player_games",
-            "staging.player_seasons",
-            "staging.player_games",
-        ],
+        "tables": ["player_seasons", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
@@ -2584,31 +2395,46 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     "on_o_fouls_drawn": {
         "type": "SMALLINT",
-        "tables": [
-            "core.player_seasons",
-            "core.player_games",
-            "ready.player_seasons",
-            "ready.player_games",
-            "staging.player_seasons",
-            "staging.player_games",
-        ],
+        "tables": ["player_seasons", "player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": None,
     },
-    "on_poss_ending_ft_trips": {
+    "on_poss": {
         "type": "SMALLINT",
-        "tables": [
-            "core.player_seasons",
-            "core.player_games",
-            "ready.player_seasons",
-            "ready.player_games",
-            "staging.player_seasons",
-            "staging.player_games",
-        ],
+        "tables": ["player_seasons", "player_games"],
         "nullable": True,
         "default": None,
-        "dataset_mapping": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_games": {
+                        "pbp_data": {
+                            "field": "poss",
+                            "result_set": "on_player",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "on_poss_ending_ft_trips": {
+        "type": "SMALLINT",
+        "tables": ["player_seasons", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_games": {
+                        "pbp_data": {
+                            "field": "poss_ending_ft_trips",
+                            "result_set": "on_player",
+                        },
+                    },
+                }
+            }
+        },
     },
     # ==================================================================
     # ERRORS TABLE
@@ -2629,13 +2455,6 @@ DB_COLUMNS: Dict[str, ColumnDef] = {
     },
     "phase": {
         "type": "VARCHAR(100)",
-        "tables": ["errors"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "entity": {
-        "type": "VARCHAR(50)",
         "tables": ["errors"],
         "nullable": True,
         "default": None,

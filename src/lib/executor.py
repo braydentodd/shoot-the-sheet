@@ -27,7 +27,7 @@ from src.lib.extract import (
 )
 from src.lib.load import write_entity_rows
 from src.lib.postgres import db_connection, quote_col
-from src.lib.season_resolver import format_season_label, parse_season_end_year
+from src.lib.season_formatter import format_season_label, parse_season_end_year
 from src.lib.transform import (
     aggregate_multi_season_most_recent_non_null,
     execute_pipeline,
@@ -87,7 +87,7 @@ def _should_abort(
 # STAGING TABLE RESOLUTION
 # ============================================================================
 
-_STATS_TABLES = {"player_seasons", "team_seasons"}
+_STATS_TABLES = {"player_seasons", "team_seasons", "player_games", "team_games"}
 
 
 def _target_api_param(target: str) -> str:
@@ -100,17 +100,13 @@ def _target_api_param(target: str) -> str:
 
 
 def _resolve_staging_table(table_name: str) -> str:
-    """Return the schema-qualified staging table for a core/staging table.
+    """Return the schema-qualified staging table name.
 
     ``table_name`` is the bare name (e.g. ``'players'``, ``'player_seasons'``).
-    We derive the staging equivalent by appending ``_staging`` when the table
-    is in the core schema, or return it as-is when it already lives in staging.
+    The staging table is always ``staging.{table_name}``.
+    No ``_staging`` suffix is appended -- the schema prefix is the convention.
     """
-    if table_name.endswith("_staging"):
-        return f"staging.{table_name}"
-    # Core tables (players, teams, player_seasons, team_seasons) map to
-    # their staging counterparts.
-    return f"staging.{table_name}_staging"
+    return f"staging.{table_name}"
 
 
 # ============================================================================
