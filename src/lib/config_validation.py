@@ -18,34 +18,10 @@ in :func:`validate_config`.
 import logging
 from typing import Any, Dict, List, Union
 
+from src.definitions.db_columns import VALID_TRANSFORMS
 from src.lib.source_resolver import get_identity_entities
 
-VALID_EXECUTION_TIERS = frozenset({"per_league", "per_team", "per_player", "per_game"})
-
-VALID_COVERAGE_LEVELS = frozenset({"current", "normal", "deep"})
-
-VALID_ROW_FILTER_OPS = frozenset({"lte", "gte", "eq"})
-
-
 logger = logging.getLogger(__name__)
-
-
-VALID_TRANSFORMS = {
-    "safe_int",
-    "safe_str",
-    "null_if_zero",
-    "parse_inches",
-    "parse_birthdate",
-    "format_season",
-    "normalize_name",
-    "match_country",
-    "eq",
-    "neq",
-    "gt",
-    "gte",
-    "lt",
-    "lte",
-}
 
 
 # ============================================================================

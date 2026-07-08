@@ -1,4 +1,6 @@
 Short term:
+- [ ] review db_columns for multiple/correct dataset_mapping calls (name for teams needs profile/rosters source)
+- [ ] review pbp standardization
 - [ ] implement lineup tracking
 - [ ] set up github actions
 

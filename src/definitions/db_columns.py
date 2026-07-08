@@ -40,15 +40,46 @@ from typing import Any, Dict, List, Literal, TypedDict, Union
 # TYPE ALIASES
 # ============================================================================
 
-TransformT = Literal[
+Transform = Literal[
     "safe_int",
     "safe_str",
-    "normalize_name",
+    "null_if_zero",
     "parse_inches",
     "parse_birthdate",
+    "format_season",
+    "normalize_name",
     "match_country",
     "eq",
+    "neq",
+    "gt",
+    "gte",
+    "lt",
+    "lte",
 ]
+
+
+# ============================================================================
+# ALLOWED VALUE SETS
+# ============================================================================
+
+VALID_TRANSFORMS = frozenset(
+    {
+        "safe_int",
+        "safe_str",
+        "null_if_zero",
+        "parse_inches",
+        "parse_birthdate",
+        "format_season",
+        "normalize_name",
+        "match_country",
+        "eq",
+        "neq",
+        "gt",
+        "gte",
+        "lt",
+        "lte",
+    }
+)
 
 
 class DatasetMappingDef(TypedDict, total=False):
@@ -67,7 +98,7 @@ class DatasetMappingDef(TypedDict, total=False):
 
     field: Union[str, None]
     result_set: Union[str, None]
-    transform: Union[TransformT, None]
+    transform: Union[Transform, None]
     scale: Union[int, None]
     params: Union[Dict[str, Any], None]
     derived: Union[Dict[str, Any], None]

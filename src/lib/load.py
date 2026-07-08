@@ -69,8 +69,14 @@ def bulk_upsert(
     update_columns: Union[List[str], None] = None,
     skip_unchanged: bool = False,
     batch_size: int = DEFAULT_BATCH_SIZE,
+    coalesce: bool = False,
 ) -> int:
-    """``INSERT ... ON CONFLICT DO UPDATE SET`` for a batch of rows."""
+    """``INSERT ... ON CONFLICT DO UPDATE SET`` for a batch of rows.
+
+    Args:
+        coalesce: If True, use ``COALESCE(target.col, EXCLUDED.col)`` instead of
+            ``EXCLUDED.col`` for updates (first-write-wins semantics).
+    """
     if not data:
         return 0
 
@@ -82,9 +88,15 @@ def bulk_upsert(
     conflict_sql = ", ".join(quote_col(c) for c in conflict_columns)
 
     if update_columns:
-        update_sql = ", ".join(
-            f"{quote_col(c)} = EXCLUDED.{quote_col(c)}" for c in update_columns
-        )
+        if coalesce:
+            update_sql = ", ".join(
+                f"{quote_col(c)} = COALESCE({table}.{quote_col(c)}, EXCLUDED.{quote_col(c)})"
+                for c in update_columns
+            )
+        else:
+            update_sql = ", ".join(
+                f"{quote_col(c)} = EXCLUDED.{quote_col(c)}" for c in update_columns
+            )
         if skip_unchanged:
             conflict_clause = (
                 f"ON CONFLICT ({conflict_sql}) DO UPDATE SET "

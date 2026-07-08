@@ -29,9 +29,10 @@ yet in DB_COLUMNS; they are tracked as follow-up work.
 
 import logging
 from collections import defaultdict
-from typing import Dict, List, Optional
+from typing import Dict, List, Mapping, Optional
 
-from src.definitions.pbp_events import PBP_STAT_RULES, EventType, ResultSetType
+from src.definitions.pbp_events import PBP_STAT_RULES, Event
+from src.lib.extract import extract_value_from_raw_dict
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,84 @@ logger = logging.getLogger(__name__)
 # the ball) rather than a plain per-event count, so it is handled by
 # dedicated logic below and excluded from the generic count loop.
 _CONTEXTUAL_STATS = frozenset({"poss"})
+
+
+# ============================================================================
+# ACCUMULATOR OUTPUT -> STAGING ROWS BRIDGE
+# ============================================================================
+
+
+def map_accumulator_to_staging(
+    result_sets: Mapping[str, List[Dict]],
+    identity_code: str,
+    ext_game_id: str,
+    pbp_column_map: Dict[str, Dict[str, Dict]],
+) -> Dict[str, List[Dict]]:
+    """Map accumulator result sets to staging-ready rows via DB_COLUMNS config.
+
+    Args:
+        result_sets: Output from :func:`accumulate_pbp_events` -- dict of
+            result_set_name -> [row_dict, ...]. Each row dict has entity ID
+            fields (``ext_team_id``, ``ext_player_id``) plus canonical stat
+            fields (e.g. ``fg2m``).
+        identity_code: Identity to stamp on each row.
+        ext_game_id: External game ID to stamp on each row.
+        pbp_column_map: Nested dict mapping target -> col_name -> source config.
+            Each source config has at minimum ``{"field": ..., "result_set": ...}``,
+            matching the structure of a ``"pbp_data"`` entry in
+            ``DB_COLUMNS.dataset_mapping``.
+
+    Returns:
+        ``{target_table_name: [row_dict, ...], ...}`` where each row dict
+        includes ``identity``, ``ext_game_id``, entity ID columns, and the
+        extracted stat values.
+
+    Raises:
+        KeyError: If a DB_COLUMNS entry references a result_set that does not
+            exist in the accumulator output, or a field that does not exist
+            in the result set row.
+    """
+    result: Dict[str, Dict[tuple, Dict]] = {}
+
+    for target, columns in pbp_column_map.items():
+        # Group column configs by the result_set they reference
+        rs_groups: Dict[str, List[tuple]] = defaultdict(list)
+        for col_name, source in columns.items():
+            rs = source.get("result_set")
+            if not rs:
+                continue
+            rs_groups[rs].append((col_name, source))
+
+        if target not in result:
+            result[target] = {}
+
+        for rs_name, col_list in rs_groups.items():
+            acc_rows = result_sets.get(rs_name, [])
+            for acc_row in acc_rows:
+                # Build entity key from identity columns in the accumulator row
+                key_parts = {}
+                teid = acc_row.get("ext_team_id")
+                if teid is not None:
+                    key_parts["ext_team_id"] = teid
+                peid = acc_row.get("ext_player_id")
+                if peid is not None:
+                    key_parts["ext_player_id"] = peid
+
+                row_key = tuple(sorted(key_parts.items()))
+
+                if row_key not in result[target]:
+                    result[target][row_key] = {
+                        "identity": identity_code,
+                        "ext_game_id": ext_game_id,
+                        **key_parts,
+                    }
+
+                for col_name, source in col_list:
+                    value = extract_value_from_raw_dict(acc_row, source)
+                    if value is not None:
+                        result[target][row_key][col_name] = value
+
+    return {target: list(rows.values()) for target, rows in result.items()}
 
 
 # ============================================================================
@@ -75,7 +154,7 @@ def accumulate_pbp_events(
     ext_game_id: str,
     ext_home_team_id: str,
     ext_away_team_id: str,
-) -> Dict[ResultSetType, List[Dict]]:
+) -> Dict[str, List[Dict]]:
     """Accumulate normalized PBP events into per-game stats for all result sets.
 
     Args:
@@ -101,7 +180,7 @@ def accumulate_pbp_events(
     player_sub_in_secs: Dict[tuple, int] = {}
 
     for event in events:
-        event_type: EventType = event["event_type"]
+        event_type: Event = event["event_type"]
         team_id: Optional[str] = event.get("pbp_ext_team_id")
         player_id: Optional[str] = event.get("pbp_ext_player_id")
         secs: int = event["secs"]

@@ -179,9 +179,9 @@ def seed_coverage(
                     game_ids: List[str] = [str(_SEASON_GAME_ID)]
                     if coverage_level == "game":
                         cur.execute(
-                            """SELECT game_id FROM games
-                                WHERE league_code = %s AND season = %s
-                                  AND season_type = %s""",
+                            """SELECT game_id FROM core.games
+                                    WHERE league_code = %s AND season = %s
+                                      AND season_type = %s""",
                             (league_code, season, st_key),
                         )
                         game_ids = [str(row[0]) for row in cur.fetchall()]

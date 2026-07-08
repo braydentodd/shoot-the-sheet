@@ -22,7 +22,7 @@ from typing import Dict, List, Literal, TypedDict
 # TYPE ALIASES
 # ============================================================================
 
-EventType = Literal[
+Event = Literal[
     "fg2_make",
     "fg2_miss",
     "fg3_make",
@@ -44,39 +44,7 @@ EventType = Literal[
     "new_poss",
 ]
 
-ResultSetType = Literal["team", "player", "opp_team", "opp_player", "on_player"]
-
-# ============================================================================
-# ALLOWED VALUE SETS
-# ============================================================================
-
-VALID_EVENT_TYPES = frozenset(
-    {
-        "fg2_make",
-        "fg2_miss",
-        "fg3_make",
-        "fg3_miss",
-        "ft_make",
-        "ft_miss",
-        "o_reb",
-        "d_reb",
-        "turnover",
-        "block",
-        "steal",
-        "period_start",
-        "overtime_start",
-        "sub_in",
-        "sub_out",
-        "jump_ball_win",
-        "jump_ball_lose",
-        "poss_ending_ft_trip",
-        "new_poss",
-    }
-)
-
-VALID_RESULT_SET_TYPES = frozenset(
-    {"team", "player", "opp_team", "opp_player", "on_player"}
-)
+ResultSet = Literal["team", "player", "opp_team", "opp_player", "on_player"]
 
 # ============================================================================
 # STAT ACCUMULATION RULES
@@ -96,8 +64,8 @@ class StatRuleDef(TypedDict):
         operation: Accumulation operation ('count' or 'sum_duration').
     """
 
-    events: List[EventType]
-    domains: List[ResultSetType]
+    events: List[Event]
+    domains: List[ResultSet]
     operation: Literal["count", "sum_duration"]
 
 

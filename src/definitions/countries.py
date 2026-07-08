@@ -1477,3 +1477,10 @@ COUNTRIES: Dict[str, CountryDef] = {
         "sovereign": None,
     },
 }
+
+
+# ============================================================================
+# DERIVED VALUE SETS
+# ============================================================================
+
+VALID_COUNTRY_CODES = frozenset(COUNTRIES.keys())

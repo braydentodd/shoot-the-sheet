@@ -24,7 +24,7 @@ import logging
 import re
 from typing import Dict, List, Optional
 
-from src.definitions.pbp_events import EventType
+from src.definitions.pbp_events import Event
 
 logger = logging.getLogger(__name__)
 
@@ -93,14 +93,14 @@ def calc_cumulative_secs(period: int, clock_remaining_secs: int) -> int:
 # ============================================================================
 
 
-def detect_event_type(action: Dict) -> Optional[EventType]:
+def detect_event_type(action: Dict) -> Optional[Event]:
     """Determine standard event type from NBA API action.
 
     Args:
         action: NBA API action dict with actionType, subType, shotResult, etc.
 
     Returns:
-        Standard EventType or None if unmapped
+        Standard EventT or None if unmapped
     """
     action_type = action.get("actionType", "").lower()
     sub_type = action.get("subType", "").lower()

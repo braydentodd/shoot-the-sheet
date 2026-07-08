@@ -15,23 +15,29 @@ Dataset-level role assignments and source wiring live in
 Pure declarative data; helpers live in :mod:`src.lib.leagues_resolver`.
 """
 
-from typing import Dict, TypedDict, Union
+from typing import Dict, Literal, TypedDict, Union
+
+# ============================================================================
+# TYPE ALIASES
+# ============================================================================
+
+LeagueGender = Literal["M", "W"]
+
+SeasonTypeGroup = Literal["regular", "postseason"]
+
+CanonicalSeasonType = Literal[
+    "regular_season",
+    "playoffs",
+    "play_in",
+    "showcase_cup",
+]
+
 
 # ============================================================================
 # VALIDATION CONSTANTS
 # ============================================================================
 
 VALID_LEAGUE_SEASON_FORMATS = frozenset({"same_year", "split_year"})
-VALID_LEAGUE_GENDERS = frozenset({"M", "W"})
-VALID_SEASON_TYPE_GROUPS = frozenset({"regular", "postseason"})
-VALID_CANONICAL_SEASON_TYPES = frozenset(
-    {
-        "regular_season",
-        "playoffs",
-        "play_in",
-        "showcase_cup",
-    }
-)
 
 
 # ============================================================================

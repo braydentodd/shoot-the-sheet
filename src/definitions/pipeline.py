@@ -4,7 +4,7 @@ Shoot the Sheet - Global ETL Pipeline Policy
 Phases are grouped into clusters, and clusters are grouped into stages.
 
   stage (ingest | promote)
-    └─ cluster (execution_start | per_league | per_identity | execution_end)
+    └─ cluster (execution_start | league_setup | league_ingest | execution_end)
          └─ phase  (build_schema | maintain_games | promote_profiles | ...)
 
 A dataset's ``phase`` field declares which phase triggers it.
@@ -18,32 +18,29 @@ from typing import Dict, List, Literal
 # TYPE ALIASES
 # ============================================================================
 
-ClusterT = Literal["execution_start", "per_league", "per_identity", "execution_end"]
+Cluster = Literal["execution_start", "league_setup", "league_ingest", "execution_end"]
 
-PhaseT = Literal[
+Phase = Literal[
     "build_schema",
     "detect_season_activity",
     "seed_season_coverage",
     "maintain_leagues_teams",
     "maintain_teams_players",
     "match_entities",
+    "maintain_seasons",
     "maintain_games",
     "match_games",
     "seed_game_coverage",
     "maintain_pbp",
-    "maintain_seasons",
     "maintain_profiles",
-    "merge_to_intermediate",
     "merge_staging",
-    "promote_to_core",
-    "promote_profiles",
-    "promote_rosters",
-    "promote_seasons",
-    "promote_games",
-    "cascade_delete_reviewed",
-    "normalize_nulls_zeroes",
-    "prune_stats_retention",
+    "promote_intermediate",
+    "normalize_intermediate",
+    "clean_staging",
+    "clean_intermediate",
+    "prune_stats",
     "prune_entities",
+    "prune_countries",
     "prune_coverage",
 ]
 
@@ -52,40 +49,37 @@ PhaseT = Literal[
 # ============================================================================
 
 VALID_CLUSTERS = frozenset(
-    {"execution_start", "per_league", "per_identity", "execution_end"}
+    {"execution_start", "league_setup", "league_ingest", "execution_end"}
 )
 
 PIPELINE: Dict[str, List[str]] = {
     "execution_start": [
         "build_schema",
     ],
-    "per_league": [
+    "league_setup": [
         "detect_season_activity",
         "seed_season_coverage",
     ],
-    "per_identity": [
+    "league_ingest": [
         "maintain_leagues_teams",
         "maintain_teams_players",
         "match_entities",
+        "maintain_seasons",
         "maintain_games",
         "match_games",
         "seed_game_coverage",
         "maintain_pbp",
-        "maintain_seasons",
         "maintain_profiles",
-        "merge_to_intermediate",
+        "merge_staging",
     ],
     "execution_end": [
-        "merge_staging",
-        "promote_to_core",
-        "promote_profiles",
-        "promote_rosters",
-        "promote_seasons",
-        "promote_games",
-        "cascade_delete_reviewed",
-        "normalize_nulls_zeroes",
-        "prune_stats_retention",
+        "clean_staging",
+        "normalize_intermediate",
+        "promote_intermediate",
+        "clean_intermediate",
+        "prune_stats",
         "prune_entities",
+        "prune_countries",
         "prune_coverage",
     ],
 }

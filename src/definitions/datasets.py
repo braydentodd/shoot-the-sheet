@@ -34,11 +34,11 @@ from typing import Dict, List, Literal, TypedDict, Union
 # TYPE ALIASES
 # ============================================================================
 
-ExecutionTierT = Literal["per_league", "per_team", "per_player", "per_game"]
+ExecutionTier = Literal["per_league", "per_team", "per_player", "per_game"]
 
-CoverageT = Literal["current", "all_years", "normal"]
+Coverage = Literal["current", "all_years", "normal"]
 
-RowFilterOpT = Literal["lte", "gte", "eq"]
+RowFilterOp = Literal["lte", "gte", "eq"]
 
 
 class SourceMappingDef(TypedDict, total=False):
@@ -69,7 +69,7 @@ class RowFilterDef(TypedDict):
     """
 
     field: str
-    op: RowFilterOpT
+    op: RowFilterOp
     value_template: str
 
 
@@ -93,8 +93,8 @@ class DatasetDef(TypedDict):
     max_season: Union[str, None]
     source: str
     phase: str
-    coverage: CoverageT
-    execution_tier: ExecutionTierT
+    coverage: Coverage
+    execution_tier: ExecutionTier
     source_mapping: SourceMappingDef
     discovery_tables: Union[List[str], None]
     prune_tables: Union[List[str], None]
@@ -537,3 +537,10 @@ DATASETS: Dict[str, Dict[str, DatasetDef]] = {
         },
     },
 }
+
+
+# ============================================================================
+# DERIVED VALUE SETS
+# ============================================================================
+
+VALID_IDENTITIES = frozenset(DATASETS.keys())

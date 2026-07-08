@@ -70,24 +70,41 @@ _NUMERIC_TYPES = frozenset(
 )
 
 
-def _discover_stats_columns(cur, table_name: str) -> List[str]:
-    """Return ordered list of numeric stats columns for a core table."""
+def _discover_stats_columns(
+    cur, table_name: str, schema_name: str = "core"
+) -> List[str]:
+    """Return ordered list of numeric stats columns for a table."""
     cur.execute(
         """
         SELECT column_name
           FROM information_schema.columns
-         WHERE table_schema = 'core'
+         WHERE table_schema = %s
            AND table_name   = %s
            AND data_type    = ANY(%s)
            AND column_name != ALL(%s)
          ORDER BY ordinal_position
         """,
-        (table_name, list(_NUMERIC_TYPES), list(_SYSTEM_COLS)),
+        (schema_name, table_name, list(_NUMERIC_TYPES), list(_SYSTEM_COLS)),
     )
     return [row[0] for row in cur.fetchall()]
 
 
 def normalize_nulls_zeroes(league_code: Union[str, None] = None) -> int:
+    """Normalize null/zero values in core stats tables."""
+    return _normalize_table(league_code, schema_name="core")
+
+
+def normalize_intermediate(league_code: Union[str, None] = None) -> int:
+    """Normalize null/zero values in intermediate stats tables.
+
+    Must run BEFORE promote_intermediate so core receives pristine data.
+    """
+    return _normalize_table(league_code, schema_name="intermediate")
+
+
+def _normalize_table(
+    league_code: Union[str, None] = None, schema_name: str = "core"
+) -> int:
     """Normalize null/zero values in stats tables based on minutes played.
 
     If *league_code* is None, normalizes across all registered leagues.
@@ -98,7 +115,9 @@ def normalize_nulls_zeroes(league_code: Union[str, None] = None) -> int:
         with conn.cursor() as cur:
             for lc in league_codes:
                 for table_name in ("player_seasons", "team_seasons"):
-                    stats_cols = _discover_stats_columns(cur, table_name)
+                    stats_cols = _discover_stats_columns(
+                        cur, table_name, schema_name=schema_name
+                    )
                     if not stats_cols:
                         continue
 
@@ -111,7 +130,7 @@ def normalize_nulls_zeroes(league_code: Union[str, None] = None) -> int:
                             for c in zero_to_null
                         )
                         cur.execute(
-                            f"UPDATE core.{table_name} SET {assignments}"
+                            f"UPDATE {schema_name}.{table_name} SET {assignments}"
                             f" WHERE league_code = %s AND mins = 0",
                             (lc,),
                         )
@@ -122,7 +141,7 @@ def normalize_nulls_zeroes(league_code: Union[str, None] = None) -> int:
                         for c in stats_cols
                     )
                     cur.execute(
-                        f"UPDATE core.{table_name} SET {null_to_zero}"
+                        f"UPDATE {schema_name}.{table_name} SET {null_to_zero}"
                         f" WHERE league_code = %s AND mins > 0",
                         (lc,),
                     )
@@ -131,7 +150,7 @@ def normalize_nulls_zeroes(league_code: Union[str, None] = None) -> int:
         conn.commit()
 
     if updated:
-        logger.info("Normalized null/zero: %d rows updated", updated)
+        logger.info("Normalized null/zero in %s: %d rows updated", schema_name, updated)
     return updated
 
 

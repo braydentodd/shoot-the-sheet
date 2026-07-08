@@ -19,13 +19,18 @@ generator looks up type, nullable, default, and other metadata from the
 column registry.
 """
 
-from typing import Dict, List, TypedDict, Union
+from typing import Dict, List, Literal, TypedDict, Union
+
+# ============================================================================
+# TYPE ALIASES
+# ============================================================================
+
+Schema = Literal["core", "staging", "intermediate"]
+
 
 # ============================================================================
 # ALLOWED VALUE SETS
 # ============================================================================
-
-VALID_SCHEMAS = frozenset({"core", "staging", "intermediate"})
 
 VALID_PG_TYPES = frozenset(
     {
@@ -1083,3 +1088,18 @@ def iter_tables():
     for schema, tables in SCHEMAS.items():
         for table, meta in tables.items():
             yield f"{schema}.{table}", schema, table, meta
+
+
+# ============================================================================
+# DERIVED TABLE NAME SETS
+# ============================================================================
+
+
+def _get_qualified_tables(schema_name: str) -> frozenset:
+    """Return a frozenset of ``'schema.table'`` names for the given schema."""
+    return frozenset(f"{schema_name}.{t}" for t in SCHEMAS.get(schema_name, {}))
+
+
+VALID_STAGING_TABLES = _get_qualified_tables("staging")
+VALID_CORE_TABLES = _get_qualified_tables("core")
+VALID_INTERMEDIATE_TABLES = _get_qualified_tables("intermediate")
