@@ -10,9 +10,9 @@ dict that holds source-specific wire parameters.
 
 Shape:
 
-    DATASETS[identity_key][dataset_name] -> DatasetDef
-    DatasetDef['source'] -> source_module_key (e.g. 'nba_api', 'shoot_the_sheet')
-    DatasetDef['source_mapping'] -> SourceMappingDef
+    DATASETS[identity_key][dataset_name] -> Dataset
+    Dataset['source'] -> source_module_key (e.g. 'nba_api', 'shoot_the_sheet')
+    Dataset['source_mapping'] -> SourceMapping
 
 Keys in ``source_mapping`` fall into two categories:
 
@@ -30,6 +30,8 @@ This mirrors the ``dataset_mapping`` pattern in ``db_columns.py``.
 
 from typing import Dict, List, Literal, TypedDict, Union
 
+from src.definitions.pipeline import Phase
+
 # ============================================================================
 # TYPE ALIASES
 # ============================================================================
@@ -41,7 +43,7 @@ Coverage = Literal["current", "all_years", "normal"]
 RowFilterOp = Literal["lte", "gte", "eq"]
 
 
-class SourceMappingDef(TypedDict, total=False):
+class SourceMapping(TypedDict, total=False):
     """Source-specific wire parameters -- how to call the API endpoint."""
 
     class_name: str
@@ -59,7 +61,7 @@ class SourceMappingDef(TypedDict, total=False):
     player_or_team_abbreviation: Union[str, None]
 
 
-class RowFilterDef(TypedDict):
+class RowFilter(TypedDict):
     """Post-API row filter — keeps only rows matching all conditions.
 
     Attributes:
@@ -73,7 +75,7 @@ class RowFilterDef(TypedDict):
     value_template: str
 
 
-class DatasetDef(TypedDict):
+class Dataset(TypedDict):
     """Generic dataset metadata, uniform across every identity.
 
     Attributes:
@@ -92,16 +94,16 @@ class DatasetDef(TypedDict):
     min_season: Union[str, None]
     max_season: Union[str, None]
     source: str
-    phase: str
+    phase: Phase
     coverage: Coverage
     execution_tier: ExecutionTier
-    source_mapping: SourceMappingDef
+    source_mapping: SourceMapping
     discovery_tables: Union[List[str], None]
     prune_tables: Union[List[str], None]
-    row_filters: Union[List[RowFilterDef], None]
+    row_filters: Union[List[RowFilter], None]
 
 
-DATASETS: Dict[str, Dict[str, DatasetDef]] = {
+DATASETS: Dict[str, Dict[str, Dataset]] = {
     "nba_id": {
         "recent_games": {
             "coverage": "current",

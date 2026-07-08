@@ -7,7 +7,7 @@ Pure resolvers over :data:`src.definitions.sources.SOURCES`,
 """
 
 from src.definitions.leagues import LEAGUES
-from src.definitions.sources import SOURCES, LeagueEntryDef
+from src.definitions.sources import SOURCES, LeagueEntry
 
 
 def get_identity_entities(identity_code: str) -> set:
@@ -55,7 +55,7 @@ def get_default_external_source(league_code: str) -> str:
     return sources[0]
 
 
-def _get_league_entry(source_code: str, league_code: str) -> "LeagueEntryDef":
+def _get_league_entry(source_code: str, league_code: str) -> "LeagueEntry":
     """Return the league entry dict (``{id, season_format}``)."""
     if source_code not in SOURCES:
         raise ValueError(f"Unknown source: {source_code!r}")

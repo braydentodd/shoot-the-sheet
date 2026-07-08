@@ -23,7 +23,7 @@ with that name, then compares against the (always-schema-qualified) keys from
 
 Every column with an external source follows this shape:
 
-    dataset_mapping[league_key][identity_key][table] -> {dataset_name: DatasetMappingDef}
+    dataset_mapping[league_key][identity_key][table] -> {dataset_name: DatasetMapping}
 
 A column may be populated by more than one dataset for the same identity and
 table (e.g. a box-score API and PBP accumulation both provide ``fg2m``);
@@ -34,7 +34,7 @@ Columns with no external source (system columns, or stats with no provider
 yet) have ``dataset_mapping: None``.
 """
 
-from typing import Any, Dict, List, Literal, TypedDict, Union
+from typing import Any, Dict, FrozenSet, List, Literal, TypedDict, Union, get_args
 
 # ============================================================================
 # TYPE ALIASES
@@ -59,30 +59,14 @@ Transform = Literal[
 
 
 # ============================================================================
-# ALLOWED VALUE SETS
+# DERIVED VALUE SETS
 # ============================================================================
 
-VALID_TRANSFORMS = frozenset(
-    {
-        "safe_int",
-        "safe_str",
-        "null_if_zero",
-        "parse_inches",
-        "parse_birthdate",
-        "format_season",
-        "normalize_name",
-        "match_country",
-        "eq",
-        "neq",
-        "gt",
-        "gte",
-        "lt",
-        "lte",
-    }
-)
+# Derived from the Transform Literal so it never drifts.
+VALID_TRANSFORMS: FrozenSet[str] = frozenset(get_args(Transform))
 
 
-class DatasetMappingDef(TypedDict, total=False):
+class DatasetMapping(TypedDict, total=False):
     """Mapping from a dataset to a column value.
 
     Attributes:
@@ -104,7 +88,7 @@ class DatasetMappingDef(TypedDict, total=False):
     derived: Union[Dict[str, Any], None]
 
 
-class ColumnDef(TypedDict, total=True):
+class Column(TypedDict, total=True):
     """Complete column definition including sources.
 
     Attributes:
@@ -124,12 +108,12 @@ class ColumnDef(TypedDict, total=True):
     nullable: bool
     default: Union[str, int, None]
     dataset_mapping: Union[
-        Dict[str, Dict[str, Dict[str, Dict[str, DatasetMappingDef]]]],
+        Dict[str, Dict[str, Dict[str, Dict[str, DatasetMapping]]]],
         None,
     ]
 
 
-DB_COLUMNS: Dict[str, ColumnDef] = {
+DB_COLUMNS: Dict[str, Column] = {
     # ==================================================================
     # SYSTEM / IDENTITY
     # ==================================================================

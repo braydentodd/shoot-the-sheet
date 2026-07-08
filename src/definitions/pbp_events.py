@@ -51,7 +51,7 @@ ResultSet = Literal["team", "player", "opp_team", "opp_player", "on_player"]
 # ============================================================================
 
 
-class StatRuleDef(TypedDict):
+class StatRule(TypedDict):
     """Stat accumulation rule from PBP events.
 
     Attributes:
@@ -69,7 +69,7 @@ class StatRuleDef(TypedDict):
     operation: Literal["count", "sum_duration"]
 
 
-PBP_STAT_RULES: Dict[str, StatRuleDef] = {
+PBP_STAT_RULES: Dict[str, StatRule] = {
     "fg2m": {
         "events": ["fg2_make"],
         "domains": ["team", "player", "opp_team", "opp_player", "on_player"],

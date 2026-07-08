@@ -13,11 +13,11 @@ if a source emits two-digit labels for seasons before 1980.
 
 from typing import Tuple, Union
 
-from src.definitions.leagues import VALID_LEAGUE_SEASON_FORMATS
 from src.definitions.season_formats import (
     LEAGUE_FORMAT_TO_SHAPE,
     TWO_DIGIT_PIVOT,
     VALID_ANCHORS,
+    VALID_LEAGUE_SEASON_FORMATS,
     VALID_SHAPES,
 )
 

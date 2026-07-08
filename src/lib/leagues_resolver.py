@@ -9,11 +9,11 @@ shape engine drives league-canonical and source-wire formats.
 from datetime import datetime
 from typing import List, Optional, Tuple
 
-from src.definitions.leagues import LEAGUES, LeagueDef, SeasonTypeDef
+from src.definitions.leagues import LEAGUES, League, SeasonType
 from src.lib.season_formatter import format_season_label, parse_season_end_year
 
 
-def _league_or_raise(league_code: str) -> "LeagueDef":
+def _league_or_raise(league_code: str) -> "League":
     if league_code not in LEAGUES:
         raise ValueError(f"Unknown league: {league_code!r}")
     return LEAGUES[league_code]
@@ -81,8 +81,8 @@ def get_postseason_types(league_code: str) -> List[str]:
     return [k for k, v in cfg["season_types"].items() if v["is_postseason"]]
 
 
-def get_season_type_def(league_code: str, canonical_key: str) -> SeasonTypeDef:
-    """Return the SeasonTypeDef for *canonical_key*, or raise ValueError."""
+def get_season_type_def(league_code: str, canonical_key: str) -> SeasonType:
+    """Return the SeasonType for *canonical_key*, or raise ValueError."""
     cfg = _league_or_raise(league_code)
     st = cfg["season_types"].get(canonical_key)
     if st is None:

@@ -17,9 +17,23 @@ Minimal set of knobs:
 - auto_restart: Whether to trigger auto-restart on consecutive failures
 """
 
-from typing import Any, Dict
+from typing import Dict, TypedDict
 
-DEFAULT_RATE_LIMITS: Dict[str, Any] = {
+
+class RateLimitConfig(TypedDict):
+    """Rate limit settings for a source or default."""
+
+    requests_per_second: float
+    max_retries: int
+    backoff_base: int
+    max_backoff: int
+    timeout_default: int
+    timeout_bulk: int
+    max_consecutive_failures: int
+    auto_restart: bool
+
+
+DEFAULT_RATE_LIMITS: RateLimitConfig = {
     "requests_per_second": 2.0,
     "max_retries": 3,
     "backoff_base": 30,
@@ -30,7 +44,7 @@ DEFAULT_RATE_LIMITS: Dict[str, Any] = {
     "auto_restart": True,
 }
 
-SOURCE_RATE_LIMITS: Dict[str, Dict[str, Any]] = {
+SOURCE_RATE_LIMITS: Dict[str, RateLimitConfig] = {
     "nba_api": {
         "requests_per_second": 0.25,
         "max_retries": 3,

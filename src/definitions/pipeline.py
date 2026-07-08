@@ -18,8 +18,6 @@ from typing import Dict, List, Literal
 # TYPE ALIASES
 # ============================================================================
 
-Cluster = Literal["execution_start", "league_setup", "league_ingest", "execution_end"]
-
 Phase = Literal[
     "build_schema",
     "detect_season_activity",
@@ -44,13 +42,10 @@ Phase = Literal[
     "prune_coverage",
 ]
 
+
 # ============================================================================
 # ALLOWED VALUE SETS
 # ============================================================================
-
-VALID_CLUSTERS = frozenset(
-    {"execution_start", "league_setup", "league_ingest", "execution_end"}
-)
 
 PIPELINE: Dict[str, List[str]] = {
     "execution_start": [
@@ -73,9 +68,9 @@ PIPELINE: Dict[str, List[str]] = {
         "merge_staging",
     ],
     "execution_end": [
-        "clean_staging",
         "normalize_intermediate",
         "promote_intermediate",
+        "clean_staging",
         "clean_intermediate",
         "prune_stats",
         "prune_entities",
@@ -83,5 +78,7 @@ PIPELINE: Dict[str, List[str]] = {
         "prune_coverage",
     ],
 }
+
+VALID_CLUSTERS = frozenset(PIPELINE.keys())
 
 VALID_PHASES = frozenset(phase for phases in PIPELINE.values() for phase in phases)

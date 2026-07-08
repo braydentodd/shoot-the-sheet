@@ -22,13 +22,6 @@ column registry.
 from typing import Dict, List, Literal, TypedDict, Union
 
 # ============================================================================
-# TYPE ALIASES
-# ============================================================================
-
-Schema = Literal["core", "staging", "intermediate"]
-
-
-# ============================================================================
 # ALLOWED VALUE SETS
 # ============================================================================
 
@@ -69,7 +62,7 @@ DEFAULT_TYPE_TRANSFORMS: Dict[str, str] = {
 # ============================================================================
 
 
-class SequenceDef(TypedDict):
+class Sequence(TypedDict):
     """PostgreSQL sequence definition.
 
     Attributes:
@@ -77,11 +70,11 @@ class SequenceDef(TypedDict):
         owner_columns: Columns that use this sequence as default.
     """
 
-    schema: str
+    schema: Literal["core", "staging", "intermediate"]
     owner_columns: List[str]
 
 
-SEQUENCES: Dict[str, SequenceDef] = {
+SEQUENCES: Dict[str, Sequence] = {
     "core.sts_id_seq": {
         "schema": "core",
         "owner_columns": ["sts_id"],
@@ -102,7 +95,7 @@ SEQUENCES: Dict[str, SequenceDef] = {
 # ============================================================================
 
 
-class FKDef(TypedDict):
+class FK(TypedDict):
     """Foreign key constraint definition.
 
     Attributes:
@@ -125,7 +118,7 @@ class FKDef(TypedDict):
     on_delete: str
 
 
-class IndexDef(TypedDict):
+class Index(TypedDict):
     """Database index definition.
 
     Attributes:
@@ -137,7 +130,7 @@ class IndexDef(TypedDict):
     columns: List[str]
 
 
-class TableDef(TypedDict, total=False):
+class Table(TypedDict, total=False):
     """Complete table schema definition (nested under its schema in SCHEMAS).
 
     Attributes:
@@ -148,16 +141,16 @@ class TableDef(TypedDict, total=False):
     """
 
     primary_key: Union[List[str], None]
-    foreign_keys: Union[List[FKDef], None]
+    foreign_keys: Union[List[FK], None]
     unique_constraints: Union[List[List[str]], None]
-    indexes: Union[List[IndexDef], None]
+    indexes: Union[List[Index], None]
 
 
 # ============================================================================
 # SCHEMA REGISTRY
 # ============================================================================
 #
-# SCHEMAS[schema_name][table_name] -> TableDef
+# SCHEMAS[schema_name][table_name] -> Table
 #
 # Intermediate holds only the tables that receive writes from more than one
 # identity and therefore need cross-identity first-write-wins merging:
@@ -166,7 +159,7 @@ class TableDef(TypedDict, total=False):
 # core with first-match-wins semantics, since they are not overwritten
 # across identities.
 
-SCHEMAS: Dict[str, Dict[str, TableDef]] = {
+SCHEMAS: Dict[str, Dict[str, Table]] = {
     # ========================================================================
     # CORE
     # ========================================================================
@@ -1074,7 +1067,7 @@ SCHEMAS: Dict[str, Dict[str, TableDef]] = {
 # ============================================================================
 
 
-def get_table(qualified_name: str) -> TableDef:
+def get_table(qualified_name: str) -> Table:
     """Look up a table definition by ``'schema.table'`` qualified name.
 
     Raises ``KeyError`` if the schema or table is not registered.
@@ -1084,7 +1077,7 @@ def get_table(qualified_name: str) -> TableDef:
 
 
 def iter_tables():
-    """Yield ``(qualified_name, schema, table, TableDef)`` for every table."""
+    """Yield ``(qualified_name, schema, table, Table)`` for every table."""
     for schema, tables in SCHEMAS.items():
         for table, meta in tables.items():
             yield f"{schema}.{table}", schema, table, meta

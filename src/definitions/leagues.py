@@ -18,47 +18,24 @@ Pure declarative data; helpers live in :mod:`src.lib.leagues_resolver`.
 from typing import Dict, Literal, TypedDict, Union
 
 # ============================================================================
-# TYPE ALIASES
-# ============================================================================
-
-LeagueGender = Literal["M", "W"]
-
-SeasonTypeGroup = Literal["regular", "postseason"]
-
-CanonicalSeasonType = Literal[
-    "regular_season",
-    "playoffs",
-    "play_in",
-    "showcase_cup",
-]
-
-
-# ============================================================================
-# VALIDATION CONSTANTS
-# ============================================================================
-
-VALID_LEAGUE_SEASON_FORMATS = frozenset({"same_year", "split_year"})
-
-
-# ============================================================================
 # SCHEMA
 # ============================================================================
 
 
-class SeasonTypeDef(TypedDict):
+class SeasonType(TypedDict):
     """Per-season-type configuration within a league."""
 
     is_postseason: bool
     min_season: Union[str, None]
 
 
-class LeagueDef(TypedDict):
+class League(TypedDict):
     """Per-league operational configuration."""
 
     name: str
-    gender: str
+    gender: Literal["M", "W"]
     season_format: str
-    season_types: Dict[str, SeasonTypeDef]
+    season_types: Dict[str, SeasonType]
     calendar_flip: str
     season_retention_start: str
 
@@ -67,7 +44,7 @@ class LeagueDef(TypedDict):
 # LEAGUE REGISTRY
 # ============================================================================
 
-LEAGUES: Dict[str, LeagueDef] = {
+LEAGUES: Dict[str, League] = {
     "NBA": {
         "name": "National Basketball Association",
         "gender": "M",

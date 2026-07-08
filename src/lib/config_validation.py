@@ -481,6 +481,21 @@ def _validate_result_sets() -> List[str]:
 # ============================================================================
 
 
+def _validate_rate_limit_sources() -> List[str]:
+    """Every key in SOURCE_RATE_LIMITS must be a registered source."""
+    from src.definitions.rate_limits import SOURCE_RATE_LIMITS
+    from src.definitions.sources import VALID_SOURCES
+
+    errors: List[str] = []
+    for source_code in SOURCE_RATE_LIMITS:
+        if source_code not in VALID_SOURCES:
+            errors.append(
+                f"SOURCE_RATE_LIMITS: unknown source {source_code!r}; "
+                f"expected one of {sorted(VALID_SOURCES)}"
+            )
+    return errors
+
+
 def validate_config() -> List[str]:
     from src.definitions.db_columns import DB_COLUMNS
 
@@ -495,6 +510,7 @@ def validate_config() -> List[str]:
     errors.extend(_validate_transform_references())
     errors.extend(_validate_discovery_tables())
     errors.extend(_validate_result_sets())
+    errors.extend(_validate_rate_limit_sources())
 
     return errors
 

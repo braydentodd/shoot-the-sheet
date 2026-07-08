@@ -9,7 +9,7 @@ Declarative registry of every external data source.
       for the season_type API parameter (e.g. ``"play_in"`` → ``"PlayIn"``).
 
 Season parameter format is declared per-dataset in
-:data:`src.definitions.datasets.SourceMappingDef.season_param_format`.
+:data:`src.definitions.datasets.SourceMapping.season_param_format`.
 
 All other source-specific operational settings (rate limits, API parameters,
 field name mappings) live in each source's own config module under
@@ -22,7 +22,7 @@ Helpers that resolve source assignments per league/entity live in
 from typing import Dict, TypedDict
 
 
-class LeagueEntryDef(TypedDict):
+class LeagueEntry(TypedDict):
     """Per-league configuration for a source.
 
     Attributes:
@@ -34,17 +34,17 @@ class LeagueEntryDef(TypedDict):
     season_types: Dict[str, str]
 
 
-class SourceDef(TypedDict):
+class Source(TypedDict):
     """Complete source definition.
 
     Attributes:
         leagues: Mapping from league_code to league entry configuration.
     """
 
-    leagues: Dict[str, LeagueEntryDef]
+    leagues: Dict[str, LeagueEntry]
 
 
-SOURCES: Dict[str, SourceDef] = {
+SOURCES: Dict[str, Source] = {
     "nba_api": {
         "leagues": {
             "NBA": {

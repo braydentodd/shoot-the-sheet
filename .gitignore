@@ -3,24 +3,15 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
-
 venv/
 .venv/
 env/
 ENV/
-
 .env
-
 .vscode/
 .idea/
 *.swp
 *.swo
 *.DS_Store
-
 *.log
 /tmp/
-
-# Data
-*.csv
-
-google-credentials.json

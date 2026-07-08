@@ -7,13 +7,13 @@ Canonical country metadata derived from countries.json.
 from typing import Dict, List, Optional, TypedDict
 
 
-class CountryDef(TypedDict):
+class Country(TypedDict):
     name: str
     aliases: List[str]
     sovereign: Optional[str]
 
 
-COUNTRIES: Dict[str, CountryDef] = {
+COUNTRIES: Dict[str, Country] = {
     "AFG": {
         "name": "Afghanistan",
         "aliases": [
