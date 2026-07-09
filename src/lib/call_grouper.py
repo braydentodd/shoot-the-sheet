@@ -25,14 +25,27 @@ logger = logging.getLogger(__name__)
 
 
 def columns_for_table(table_name: str) -> List[Tuple[str, Any]]:
-    """Return columns whose ``tables`` list includes *table_name* or ``'all'``."""
+    """Return columns whose ``tables`` list includes *table_name* or ``'all'``.
+
+    Handles both bare table names (``"games"``) and schema-qualified names
+    (``"staging.games"``) -- the table part is extracted from qualified names
+    before comparison, so a column declared with ``"staging.games"`` is found
+    when queried with bare ``"games"``.
+    """
     matched: List[Tuple[str, Any]] = []
     for col_name, col_meta in DB_COLUMNS.items():
         tables = col_meta.get("tables", [])
         if isinstance(tables, str):
             tables = [tables]
-        if table_name in tables or "all" in tables:
-            matched.append((col_name, col_meta))
+        for entry in tables:
+            if entry == "all":
+                matched.append((col_name, col_meta))
+                break
+            # Strip schema qualifier ("staging.games" -> "games") before matching
+            entry_table = entry.split(".", 1)[1] if "." in entry else entry
+            if entry_table == table_name:
+                matched.append((col_name, col_meta))
+                break
     if not matched:
         logger.debug("No columns found for table=%s", table_name)
     return matched

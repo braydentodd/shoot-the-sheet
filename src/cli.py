@@ -18,6 +18,7 @@ import sys
 
 from src.definitions.leagues import LEAGUES
 from src.lib.console_logger import setup_logging
+from src.lib.error_recorder import log_error_simple
 from src.lib.terminal import (
     HelpFormatter,
     make_base_parser,
@@ -103,6 +104,13 @@ def main() -> int:
         return 130
     except Exception:
         logger.exception("ETL run failed.")
+        try:
+            log_error_simple(
+                "main",
+                "ETL run failed at top level -- see traceback above",
+            )
+        except Exception:
+            pass  # Defensive: don't let a logging failure mask the original crash
         return 1
 
 

@@ -178,6 +178,7 @@ def prune_stats_retention(
                     if (
                         not table_name.endswith("_seasons")
                         and table_name != "season_coverages"
+                        and table_name != "game_coverages"
                     ):
                         continue
                     cur.execute(

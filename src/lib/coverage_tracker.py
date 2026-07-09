@@ -1,13 +1,13 @@
 """
 Shoot the Sheet - Coverage Tracker
 
-Single ``coverage`` table tracks fetch state for every dataset, season,
-type, target, and column combination.  ``coverage_level`` distinguishes
-season-level vs game-level granularity.
+Two coverage tables track fetch state at different granularities:
 
-Table: ``core.coverage``
-PK:    (identity, league_code, coverage_level, game_id, target, season,
-       season_type, dataset, col_name)
+  ``core.season_coverages`` -- one row per (identity, league, target, season,
+    season_type, dataset, col_name) for per-season datasets.
+
+  ``core.game_coverages``   -- one row per (identity, league, game_id, target,
+    season, season_type, dataset, col_name) for per-game datasets.
 """
 
 from __future__ import annotations
@@ -23,14 +23,31 @@ from src.lib.postgres import db_connection, quote_col
 
 logger = logging.getLogger(__name__)
 
-_COVERAGE_META = get_table("core.coverage")
-_COVERAGE_SCHEMA = "core"
-_COVERAGE_TABLE = f"{_COVERAGE_SCHEMA}.coverage"
-_COVERAGE_PK_COLS = _COVERAGE_META.get("primary_key") or []
-_COVERAGE_CONFLICT = ", ".join(quote_col(c) for c in _COVERAGE_PK_COLS)
 
-# Sentinel game_id for season-level coverage (all games in season).
-_SEASON_GAME_ID = "0"
+# ============================================================================
+# Helpers
+# ============================================================================
+
+
+def _coverage_table(coverage_level: str) -> str:
+    """Return the qualified table name for a coverage level."""
+    if coverage_level == "season":
+        return "core.season_coverages"
+    elif coverage_level == "game":
+        return "core.game_coverages"
+    else:
+        raise ValueError(f"Unknown coverage level: {coverage_level!r}")
+
+
+def _coverage_pk_cols(coverage_level: str) -> list[str]:
+    """Return the PK column list for a coverage level, from schema.py."""
+    meta = get_table(_coverage_table(coverage_level))
+    return meta.get("primary_key") or []
+
+
+def _coverage_conflict_sql(coverage_level: str) -> str:
+    """Return a quoted, comma-separated PK string for ON CONFLICT."""
+    return ", ".join(quote_col(c) for c in _coverage_pk_cols(coverage_level))
 
 
 # ============================================================================
@@ -58,38 +75,59 @@ def is_coverage_current(
     if not col_names:
         return False
 
-    game_filter = "AND game_id = %s" if game_id else ""
-    params: list = [
-        identity_code,
-        league_code,
-        coverage_level,
-        target,
-        season,
-        season_type,
-        dataset,
-        col_names,
-    ]
-    if game_id:
-        params.insert(7, game_id)
+    table = _coverage_table(coverage_level)
 
-    with conn.cursor() as cur:
-        cur.execute(
-            f"""
+    if coverage_level == "game":
+        if game_id is None:
+            return False
+        query = f"""
             SELECT col_name
-              FROM {_COVERAGE_TABLE}
+              FROM {table}
              WHERE identity = %s
                AND league_code = %s
-               AND coverage_level = %s
+               AND target   = %s
+               AND season   = %s
+               AND season_type = %s
+               AND game_id  = %s
+               AND dataset  = %s
+               AND covered  = true
+               AND col_name = ANY(%s)
+            """
+        params: list[Any] = [
+            identity_code,
+            league_code,
+            target,
+            season,
+            season_type,
+            game_id,
+            dataset,
+            col_names,
+        ]
+    else:
+        query = f"""
+            SELECT col_name
+              FROM {table}
+             WHERE identity = %s
+               AND league_code = %s
                AND target   = %s
                AND season   = %s
                AND season_type = %s
                AND dataset  = %s
-               {game_filter}
                AND covered  = true
                AND col_name = ANY(%s)
-            """,
-            params,
-        )
+            """
+        params = [
+            identity_code,
+            league_code,
+            target,
+            season,
+            season_type,
+            dataset,
+            col_names,
+        ]
+
+    with conn.cursor() as cur:
+        cur.execute(query, params)
         covered = {row[0] for row in cur.fetchall()}
 
     return covered == set(col_names)
@@ -110,9 +148,13 @@ def upsert_coverage(
     group: Dict[str, Any],
     *,
     coverage_level: str = "season",
-    game_id: str = _SEASON_GAME_ID,
+    game_id: Union[str, None] = None,
 ) -> None:
-    """Upsert coverage rows for every col_name in this call group."""
+    """Upsert coverage rows for every col_name in this call group.
+
+    For season-level coverage, ``game_id`` is omitted (column does not
+    exist on the table).  For game-level coverage, ``game_id`` is required.
+    """
     dataset = group.get("dataset", "")
     columns = group.get("columns") or {}
     col_names = list(columns.keys())
@@ -120,30 +162,59 @@ def upsert_coverage(
     if not col_names:
         return
 
+    table = _coverage_table(coverage_level)
+    conflict_sql = _coverage_conflict_sql(coverage_level)
+
     with conn.cursor() as cur:
         for col_name in col_names:
-            cur.execute(
-                f"""
-                INSERT INTO {_COVERAGE_TABLE} (
-                    identity, league_code, coverage_level, game_id,
-                    target, season, season_type, dataset, col_name,
-                    updated_at, covered
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), true)
-                ON CONFLICT ({_COVERAGE_CONFLICT})
-                DO UPDATE SET updated_at = NOW(), covered = true
-                """,
-                (
-                    identity_code,
-                    league_code,
-                    coverage_level,
-                    game_id,
-                    target,
-                    season,
-                    season_type,
-                    dataset,
-                    col_name,
-                ),
-            )
+            if coverage_level == "season":
+                cur.execute(
+                    f"""
+                    INSERT INTO {table} (
+                        identity, league_code,
+                        target, season, season_type,
+                        dataset, col_name,
+                        updated_at, covered
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,NOW(),true)
+                    ON CONFLICT ({conflict_sql})
+                    DO UPDATE SET updated_at = NOW(), covered = true
+                    """,
+                    (
+                        identity_code,
+                        league_code,
+                        target,
+                        season,
+                        season_type,
+                        dataset,
+                        col_name,
+                    ),
+                )
+            else:
+                if game_id is None:
+                    raise ValueError("game_id required for game-level coverage upsert")
+                cur.execute(
+                    f"""
+                    INSERT INTO {table} (
+                        identity, league_code,
+                        target, season, season_type,
+                        game_id,
+                        dataset, col_name,
+                        updated_at, covered
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,NOW(),true)
+                    ON CONFLICT ({conflict_sql})
+                    DO UPDATE SET updated_at = NOW(), covered = true
+                    """,
+                    (
+                        identity_code,
+                        league_code,
+                        target,
+                        season,
+                        season_type,
+                        game_id,
+                        dataset,
+                        col_name,
+                    ),
+                )
     conn.commit()
 
 
@@ -168,6 +239,9 @@ def seed_coverage(
     """
     from src.lib.leagues_resolver import get_all_canonical_season_types
 
+    table = _coverage_table(coverage_level)
+    conflict_sql = _coverage_conflict_sql(coverage_level)
+
     inserted = 0
     all_types = get_all_canonical_season_types(league_code)
 
@@ -176,7 +250,6 @@ def seed_coverage(
             for season in seasons:
                 for st_key in all_types:
                     # Discover games for game-level coverage
-                    game_ids: List[str] = [str(_SEASON_GAME_ID)]
                     if coverage_level == "game":
                         cur.execute(
                             """SELECT game_id FROM core.games
@@ -184,9 +257,14 @@ def seed_coverage(
                                       AND season_type = %s""",
                             (league_code, season, st_key),
                         )
-                        game_ids = [str(row[0]) for row in cur.fetchall()]
+                        game_ids: list[str] | None = [
+                            str(row[0]) for row in cur.fetchall()
+                        ]
                         if not game_ids:
                             continue
+                    else:
+                        # season_coverages has no game_id column
+                        game_ids = None
 
                     for col_name, col_def in DB_COLUMNS.items():
                         dm = col_def.get("dataset_mapping")
@@ -216,22 +294,20 @@ def seed_coverage(
                                         ):
                                             continue
 
-                                        for game_id in game_ids:
+                                        if game_ids is None:
+                                            # season_coverages: one row, no game_id
                                             cur.execute(
                                                 f"""
-                                                INSERT INTO {_COVERAGE_TABLE} (
+                                                INSERT INTO {table} (
                                                     identity, league_code,
-                                                    coverage_level, game_id,
                                                     target, season, season_type,
                                                     dataset, col_name, covered
-                                                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,false)
-                                                ON CONFLICT ({_COVERAGE_CONFLICT}) DO NOTHING
+                                                ) VALUES (%s,%s,%s,%s,%s,%s,%s,false)
+                                                ON CONFLICT ({conflict_sql}) DO NOTHING
                                                 """,
                                                 (
                                                     identity_code,
                                                     league_code,
-                                                    coverage_level,
-                                                    game_id,
                                                     target,
                                                     season,
                                                     st_key,
@@ -239,7 +315,31 @@ def seed_coverage(
                                                     col_name,
                                                 ),
                                             )
-                                            inserted += cur.rowcount
+                                            inserted += 1
+                                        else:
+                                            for game_id in game_ids:
+                                                cur.execute(
+                                                    f"""
+                                                    INSERT INTO {table} (
+                                                        identity, league_code,
+                                                        target, season, season_type,
+                                                        game_id,
+                                                        dataset, col_name, covered
+                                                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,false)
+                                                    ON CONFLICT ({conflict_sql}) DO NOTHING
+                                                    """,
+                                                    (
+                                                        identity_code,
+                                                        league_code,
+                                                        target,
+                                                        season,
+                                                        st_key,
+                                                        game_id,
+                                                        ds_name,
+                                                        col_name,
+                                                    ),
+                                                )
+                                                inserted += 1
             conn.commit()
 
     return inserted
@@ -250,8 +350,8 @@ def seed_coverage(
 # ============================================================================
 
 
-def prune_coverage(league_code: str) -> int:
-    """Delete coverage rows that are no longer valid.
+def _prune_coverage_table(league_code: str, table: str) -> int:
+    """Delete stale coverage rows from a single coverage table.
 
     Removes rows where:
       - (identity, dataset, target, col_name) no longer in config
@@ -286,7 +386,7 @@ def prune_coverage(league_code: str) -> int:
         with conn.cursor() as cur:
             cur.execute(
                 f"SELECT identity, dataset, target, col_name, season "
-                f"FROM {_COVERAGE_TABLE} WHERE league_code = %s",
+                f"FROM {table} WHERE league_code = %s",
                 (league_code,),
             )
             to_delete = [
@@ -302,7 +402,7 @@ def prune_coverage(league_code: str) -> int:
             for identity, ds, target, col, season in to_delete:
                 cur.execute(
                     f"""
-                    DELETE FROM {_COVERAGE_TABLE}
+                    DELETE FROM {table}
                     WHERE league_code = %s
                       AND identity = %s
                       AND dataset = %s
@@ -316,5 +416,19 @@ def prune_coverage(league_code: str) -> int:
         conn.commit()
 
     if deleted:
-        logger.info("Pruned %d stale coverage rows for %s", deleted, league_code)
+        table_short = table.split(".")[-1]
+        logger.info(
+            "Pruned %d stale rows from %s for %s",
+            deleted,
+            table_short,
+            league_code,
+        )
     return deleted
+
+
+def prune_coverage(league_code: str) -> int:
+    """Delete stale coverage rows from both coverage tables."""
+    total = 0
+    total += _prune_coverage_table(league_code, "core.season_coverages")
+    total += _prune_coverage_table(league_code, "core.game_coverages")
+    return total

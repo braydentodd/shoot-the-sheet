@@ -37,7 +37,7 @@ from psycopg2 import sql
 from psycopg2.extras import RealDictCursor
 
 from src.definitions.datasets import DATASETS
-from src.definitions.db_columns import DB_COLUMNS
+from src.definitions.db_columns import DB_COLUMNS, DatasetMapping
 from src.definitions.execution import GAME_LOOKBACK_DAYS
 from src.definitions.leagues import LEAGUES
 from src.definitions.pipeline import PIPELINE
@@ -55,6 +55,7 @@ from src.lib.coverage_tracker import (
     seed_coverage,
     upsert_coverage,
 )
+from src.lib.error_recorder import log_error_simple
 from src.lib.executor import ExecutionContext, execute_group
 from src.lib.leagues_resolver import (
     _league_or_raise,
@@ -95,7 +96,7 @@ def _load_source(source_code: str):
 
 def _resolve_pbp_column_map(
     league_code: str, identity_code: str
-) -> Dict[str, Dict[str, Dict]]:
+) -> Dict[str, Dict[str, "DatasetMapping"]]:
     """Build target -> col_name -> pbp_source config from DB_COLUMNS.
 
     Returns:
@@ -105,11 +106,12 @@ def _resolve_pbp_column_map(
     Only includes columns that have a ``"pbp_data"`` entry in their
     ``dataset_mapping`` for this league+identity combination.
     """
-    result: Dict[str, Dict[str, Dict]] = {}
+    result: Dict[str, Dict[str, DatasetMapping]] = {}
     for col_name, col_meta in DB_COLUMNS.items():
-        dm = col_meta.get("dataset_mapping", {})
-        league_sources = dm.get(league_code, {})
-        identity_sources = league_sources.get(identity_code, {})
+        dm = col_meta.get("dataset_mapping")
+        if dm is None:
+            continue
+        identity_sources = dm.get(league_code, {}).get(identity_code, {})
         if not isinstance(identity_sources, dict):
             continue
         for target, target_sources in identity_sources.items():
@@ -135,6 +137,7 @@ def _run_groups(
     team_ids: Dict[str, int],
     failed: List[Dict[str, Any]],
     *,
+    phase: str,
     league_code: str,
     identity_code: str,
     dataset: str,
@@ -166,7 +169,7 @@ def _run_groups(
 
         if not groups:
             ds_cfg = DATASETS.get(identity_code, {}).get(dataset, {})
-            if ds_cfg.get("discovery_tables"):
+            if ds_cfg.get("target_tables"):
                 groups = [
                     {
                         "dataset": dataset,
@@ -210,6 +213,13 @@ def _run_groups(
             except Exception as exc:
                 logger.exception("Group %s fetch failed: %s", dataset_name, exc)
                 failed.append({"dataset": dataset_name, "error": str(exc)})
+                log_error_simple(
+                    phase,
+                    f"Group fetch failed: identity={identity_code} "
+                    f"league={league_code} target={table_name} "
+                    f"dataset={dataset_name} -- {exc}",
+                    exc_info=exc,
+                )
                 continue
 
             if result is None:
@@ -226,6 +236,7 @@ def _run_groups(
                     entity_id_field=api_field_names["target_id"][target],
                     db_schema=league_code,
                     identity_code=identity_code,
+                    phase=phase,
                     api_fetcher=shared_fetcher,
                     team_ids=team_ids,
                     max_consecutive_failures=api_config.get(
@@ -252,6 +263,13 @@ def _run_groups(
                             "target": target,
                             "error": str(exc),
                         }
+                    )
+                    log_error_simple(
+                        phase,
+                        f"Group target failed: identity={identity_code} "
+                        f"league={league_code} target={target} "
+                        f"dataset={dataset_name} -- {exc}",
+                        exc_info=exc,
                     )
 
             if group_succeeded and on_target_finished is not None:
@@ -282,6 +300,54 @@ def _get_datasets_by_phase(phase_name: str) -> Dict[str, List[str]]:
             if ds_def.get("phase") == phase_name:
                 result.setdefault(identity_code, []).append(ds_name)
     return result
+
+
+# Tables written by _discover_entities' "profile" pass (one row per entity)
+# versus its "roster" pass (one row per relationship). Used to bucket a
+# dataset's declared target_tables without hardcoding per-phase table names.
+_PROFILE_TABLES = frozenset({"players", "teams"})
+_ROSTER_TABLES = frozenset({"teams_players", "leagues_teams", "countries_players"})
+
+
+def _generic_targets_for_dataset(
+    identity_code: str, dataset_name: str, identity_source: str
+) -> List[str]:
+    """Return the bare staging table names a dataset writes to via the
+    generic per-row column-mapping / entity-extraction path.
+
+    Always derived from ``DATASETS[identity_code][dataset_name]['target_tables']``
+    -- the single source of truth for what a dataset writes to. Never
+    hardcode per-phase target lists in the orchestrator; add or fix the
+    dataset's ``target_tables`` entry instead.
+
+    Tables declared in ``target_tables`` are filtered to those the source's
+    ``API_FIELD_NAMES['target_id']`` can resolve an entity key for. A table
+    without a ``target_id`` entry cannot be populated by the generic
+    per-row extraction path yet (e.g. ``games``, which needs cross-row
+    home/away derivation the extractor doesn't support) -- it is skipped
+    here with a warning rather than raising, so the rest of the dataset's
+    tables keep working while the gap stays visible in logs.
+    """
+    ds_cfg = DATASETS.get(identity_code, {}).get(dataset_name, {})
+    target_tables = ds_cfg.get("target_tables") or []
+    config_mod, _ = _load_source(identity_source)
+    target_id_map = getattr(config_mod, "API_FIELD_NAMES", {}).get("target_id", {})
+
+    resolved: List[str] = []
+    for qualified in target_tables:
+        table = qualified.split(".", 1)[1] if "." in qualified else qualified
+        if table in target_id_map:
+            resolved.append(table)
+        else:
+            logger.warning(
+                "%s.%s declares target_table '%s' but %s has no target_id "
+                "mapping for it -- generic per-row write not implemented yet, skipping",
+                identity_code,
+                dataset_name,
+                table,
+                identity_source,
+            )
+    return resolved
 
 
 def _load_team_ids(league_code: str) -> Dict[str, int]:
@@ -368,12 +434,6 @@ def _discover_entities(
         return 0
 
     config_mod, client_mod = _load_source(identity_source)
-    targets = ["players"] if phase_name == "maintain_teams_players" else ["teams"]
-    roster_targets = (
-        ["teams_players"]
-        if phase_name == "maintain_teams_players"
-        else ["leagues_teams"]
-    )
 
     from datetime import datetime, timezone
 
@@ -389,6 +449,12 @@ def _discover_entities(
         prune_tables = ds_cfg.get("prune_tables")
         prune_start = datetime.now(timezone.utc) if prune_tables else None
 
+        resolved_targets = _generic_targets_for_dataset(
+            identity_code, dataset_name, identity_source
+        )
+        targets = [t for t in resolved_targets if t in _PROFILE_TABLES]
+        roster_targets = [t for t in resolved_targets if t in _ROSTER_TABLES]
+
         # Profile columns → players / teams staging
         for target in targets:
             total_rows += _run_groups(
@@ -399,6 +465,7 @@ def _discover_entities(
                 season_type_name=season_type_name,
                 team_ids=team_ids if ds_cfg.get("execution_tier") == "per_team" else {},
                 failed=failed,
+                phase=phase_name,
                 league_code=league_code,
                 identity_code=identity_code,
                 dataset=dataset_name,
@@ -422,6 +489,7 @@ def _discover_entities(
                 season_type_name=season_type_name,
                 team_ids=team_ids,
                 failed=failed,
+                phase=phase_name,
                 league_code=league_code,
                 identity_code=identity_code,
                 dataset=dataset_name,
@@ -494,7 +562,10 @@ def _maintain_seasons(
 
     team_ids = _load_team_ids(league_code)
     all_season_types = get_all_canonical_season_types(league_code)
-    stats_targets = ["player_seasons", "team_seasons"]
+    dataset_targets = {
+        ds: _generic_targets_for_dataset(identity_code, ds, identity_source)
+        for ds in dataset_names
+    }
     active_types = _active_types_cache.get(league_code, [])
 
     # ── Part A: active types x current season (no coverage check) ──────────
@@ -512,7 +583,7 @@ def _maintain_seasons(
                 identity_source, league_code, st_key
             )
             for dataset_name in dataset_names:
-                for target in stats_targets:
+                for target in dataset_targets[dataset_name]:
                     groups = build_call_groups(
                         season,
                         identity_code,
@@ -524,6 +595,7 @@ def _maintain_seasons(
                     if not groups:
                         continue
                     total_rows += _execute_stats_groups(
+                        phase="maintain_seasons",
                         league_code=league_code,
                         target=target,
                         season_label=season,
@@ -538,7 +610,7 @@ def _maintain_seasons(
                         use_coverage=True,
                     )
 
-    # ── Part B: coverage backfill (all seasons x all types) ────────────────
+    # ── Part B: coverage backfill (all seasons x all types) ────────────────────────
     for dataset_name in dataset_names:
         for season_label in season_range:
             for st_key in all_season_types:
@@ -547,7 +619,7 @@ def _maintain_seasons(
                 season_type_name = get_source_season_type_code(
                     identity_source, league_code, st_key
                 )
-                for target in stats_targets:
+                for target in dataset_targets[dataset_name]:
                     groups = build_call_groups(
                         season_label,
                         identity_code,
@@ -575,6 +647,7 @@ def _maintain_seasons(
                     if not filtered_groups:
                         continue
                     total_rows += _execute_stats_groups(
+                        phase="maintain_seasons",
                         league_code=league_code,
                         target=target,
                         season_label=season_label,
@@ -624,7 +697,10 @@ def _maintain_games(
         return 0
 
     all_season_types = get_all_canonical_season_types(league_code)
-    game_targets = ["player_games", "team_games"]
+    dataset_targets = {
+        ds: _generic_targets_for_dataset(identity_code, ds, identity_source)
+        for ds in dataset_names
+    }
     active_types = _active_types_cache.get(league_code, [])
 
     # ── Part A: active types x current season (no coverage check) ──────────
@@ -642,7 +718,7 @@ def _maintain_games(
                 identity_source, league_code, st_key
             )
             for dataset_name in dataset_names:
-                for target in game_targets:
+                for target in dataset_targets[dataset_name]:
                     groups = build_call_groups(
                         season,
                         identity_code,
@@ -653,7 +729,7 @@ def _maintain_games(
                     )
                     if not groups:
                         ds_cfg = DATASETS.get(identity_code, {}).get(dataset_name, {})
-                        if ds_cfg.get("discovery_tables"):
+                        if ds_cfg.get("target_tables"):
                             groups = [
                                 {
                                     "dataset": dataset_name,
@@ -665,6 +741,7 @@ def _maintain_games(
                         else:
                             continue
                     total_rows += _execute_stats_groups(
+                        phase="maintain_games",
                         league_code=league_code,
                         target=target,
                         season_label=season,
@@ -679,7 +756,7 @@ def _maintain_games(
                         use_coverage=True,
                     )
 
-    # ── Part B: coverage backfill (all seasons x all types) ────────────────
+    # ── Part B: coverage backfill (all seasons x all types) ────────────
     for dataset_name in dataset_names:
         for season_label in season_range:
             for st_key in all_season_types:
@@ -688,7 +765,7 @@ def _maintain_games(
                 season_type_name = get_source_season_type_code(
                     identity_source, league_code, st_key
                 )
-                for target in game_targets:
+                for target in dataset_targets[dataset_name]:
                     groups = build_call_groups(
                         season_label,
                         identity_code,
@@ -716,6 +793,7 @@ def _maintain_games(
                     if not filtered_groups:
                         continue
                     total_rows += _execute_stats_groups(
+                        phase="maintain_games",
                         league_code=league_code,
                         target=target,
                         season_label=season_label,
@@ -734,12 +812,18 @@ def _maintain_games(
 
 
 # ============================================================================
+# _populate_games_from_gamestats  (derives staging.games from LeagueGameLog)
+# ============================================================================
+
+
+# ============================================================================
 # stats execution helper
 # ============================================================================
 
 
 def _execute_stats_groups(
     *,
+    phase: str,
     league_code: str,
     target: str,
     season_label: str,
@@ -807,6 +891,7 @@ def _execute_stats_groups(
         season_type_name=season_type_name,
         team_ids=team_ids if ds_cfg.get("execution_tier") == "per_team" else {},
         failed=failed,
+        phase=phase,
         league_code=league_code,
         identity_code=identity_code,
         dataset=dataset,
@@ -846,7 +931,10 @@ def _maintain_profiles(
     config_mod, client_mod = _load_source(identity_source)
 
     for dataset_name in dataset_names:
-        for target in ["teams", "players"]:
+        resolved_targets = _generic_targets_for_dataset(
+            identity_code, dataset_name, identity_source
+        )
+        for target in resolved_targets:
             logger.info(
                 phase_marker(
                     "maintain_profiles",
@@ -861,6 +949,7 @@ def _maintain_profiles(
                 season_type_name=season_type_name,
                 team_ids=team_ids,
                 failed=failed,
+                phase="maintain_profiles",
                 league_code=league_code,
                 identity_code=identity_code,
                 api_field_names=config_mod.API_FIELD_NAMES
@@ -1637,7 +1726,7 @@ def run_etl(
     """Run all ETL phase clusters for a league or all leagues.
 
     *stage* restricts execution to a subset of clusters:
-        ``"ingest"``  — execution_start + per_league + per_identity
+        ``"ingest"``  — execution_start + league_setup + league_ingest
         ``"promote"`` — execution_end
         ``None``      — full pipeline (default)
     """
@@ -1681,6 +1770,20 @@ def _run_cluster(cluster: str, league_code: str) -> None:
         logger.exception(
             "ETL run failed for league %s in cluster %s.", league_code, cluster
         )
+        # Defensively DB-log so the crash is durable even if the cluster-level
+        # console log scrolls out of view.
+        # Wrap in try/except to avoid masking the original exception if the
+        # DB itself is down (which may have *caused* the crash).
+        try:
+            log_error_simple(
+                cluster,
+                f"Cluster aborted: league={league_code} cluster={cluster} "
+                f"-- see traceback above",
+            )
+        except Exception:
+            logger.warning(
+                "Failed to record cluster error to core.errors (DB may be unavailable)."
+            )
 
 
 def _run_phases(
@@ -1715,7 +1818,22 @@ def _run_phases(
 
     for phase in phases:
         fn = _resolve_phase(phase)
-        total_rows += fn(ctx)
+        try:
+            total_rows += fn(ctx)
+        except Exception as exc:
+            logger.exception("Phase %s failed for league %s.", phase, league_code)
+            failed.append({"phase": phase, "error": str(exc)})
+            log_error_simple(
+                phase,
+                f"Phase failed: league={league_code} cluster={cluster} "
+                f"phase={phase} -- {exc}",
+                exc_info=exc,
+            )
+            # Continue to next phase instead of aborting the entire cluster.
+            # Downstream phases that depend on this phase's output will fail
+            # on their own terms (missing data -> natural error), while
+            # independent phases still run.
+            continue
 
     logger.info("ETL complete: %d total rows written/pruned", total_rows)
 
@@ -1756,9 +1874,9 @@ def _phase_detect_season_activity(ctx: dict) -> int:
 
         with db_connection() as conn:
             with conn.cursor() as cur:
-                # Reset coverage for active types in current season
+                # Reset season-level coverage for active types in current season
                 cur.execute(
-                    """UPDATE coverage SET covered = false
+                    """UPDATE core.season_coverages SET covered = false
                         WHERE league_code = %s AND season = %s
                           AND season_type = ANY(%s)""",
                     (league_code, season, active),
@@ -1767,11 +1885,10 @@ def _phase_detect_season_activity(ctx: dict) -> int:
 
                 # Reset game-level coverage for games within the lookback window
                 cur.execute(
-                    """UPDATE coverage SET covered = false
+                    """UPDATE core.game_coverages SET covered = false
                         WHERE league_code = %s
-                          AND coverage_level = 'game'
                           AND game_id IN (
-                              SELECT game_id FROM games
+                              SELECT game_id FROM core.games
                                WHERE league_code = %s
                                  AND season = %s
                                  AND season_type = ANY(%s)
@@ -1963,7 +2080,9 @@ def _phase_maintain_pbp(ctx: dict) -> int:
                     SELECT g.ext_game_id, g.ext_home_team_id, g.ext_away_team_id,
                            cg.game_id, cg.season, cg.season_type
                     FROM staging.games g
-                    JOIN core.games cg ON cg.game_id = g.game_id
+                    JOIN core.identities_games ig
+                      ON ig.identity = g.identity AND ig.ext_id = g.ext_game_id
+                    JOIN core.games cg ON cg.game_id = ig.game_id
                     WHERE g.identity = %s
                       AND g.league_code = %s
                       AND cg.date >= %s
@@ -1986,43 +2105,47 @@ def _phase_maintain_pbp(ctx: dict) -> int:
         )
 
         # ── Part B: backfill games (coverage-gated) ────────────────────────
+        # Pull every backfill-candidate game (outside the lookback window),
+        # then use the shared is_coverage_current() helper -- same one
+        # _maintain_seasons/_maintain_games use -- to keep only games where
+        # at least one PBP target is not yet fully covered.
         with db_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                # Find games (outside lookback window) where ANY PBP column
-                # for this identity is still uncovered at game level.
                 cur.execute(
                     """
-                    SELECT DISTINCT g.ext_game_id, g.ext_home_team_id,
-                            g.ext_away_team_id, cg.game_id,
-                            cg.season, cg.season_type
+                    SELECT g.ext_game_id, g.ext_home_team_id, g.ext_away_team_id,
+                           cg.game_id, cg.season, cg.season_type
                     FROM staging.games g
-                    JOIN core.games cg ON cg.game_id = g.game_id
-                    LEFT JOIN core.coverage cv ON cv.identity = g.identity
-                        AND cv.league_code = g.league_code
-                        AND cv.coverage_level = 'game'
-                        AND cv.game_id = cg.game_id::text
-                        AND cv.dataset = %s
-                        AND cv.target = ANY(%s)
-                        AND cv.covered = true
+                    JOIN core.identities_games ig
+                      ON ig.identity = g.identity AND ig.ext_id = g.ext_game_id
+                    JOIN core.games cg ON cg.game_id = ig.game_id
                     WHERE g.identity = %s
                       AND g.league_code = %s
                       AND cg.date < %s
-                    GROUP BY g.ext_game_id, g.ext_home_team_id,
-                             g.ext_away_team_id, cg.game_id,
-                             cg.season, cg.season_type
-                    HAVING COUNT(cv.covered) FILTER (WHERE cv.covered = true)
-                           < COUNT(DISTINCT cv.col_name)
                     ORDER BY g.ext_game_id
                     """,
-                    (
-                        dataset_name,
-                        targets,
-                        identity_code,
-                        league_code,
-                        lookback_date,
-                    ),
+                    (identity_code, league_code, lookback_date),
                 )
-                backfill_games = cur.fetchall()
+                backfill_candidates = cur.fetchall()
+
+            backfill_games = [
+                game
+                for game in backfill_candidates
+                if any(
+                    not is_coverage_current(
+                        conn,
+                        league_code,
+                        target,
+                        game["season"],
+                        game["season_type"],
+                        identity_code,
+                        {"dataset": dataset_name, "columns": pbp_column_map[target]},
+                        coverage_level="game",
+                        game_id=str(game["game_id"]),
+                    )
+                    for target in targets
+                )
+            ]
 
         total_rows += _process_pbp_games(
             backfill_games,
@@ -2051,7 +2174,7 @@ def _process_pbp_games(
     league_code: str,
     season: str,
     dataset_name: str,
-    pbp_column_map: Dict[str, Dict[str, Dict]],
+    pbp_column_map: Dict[str, Dict[str, DatasetMapping]],
     pk_map: Dict[str, List[str]],
     failed: List[Dict[str, Any]],
     pbp_fetcher,
@@ -2191,6 +2314,12 @@ def _process_pbp_games(
                     "error": str(e),
                 }
             )
+            log_error_simple(
+                "maintain_pbp",
+                f"PBP game processing failed: identity={identity_code} "
+                f"league={league_code} game_id={ext_game_id} -- {e}",
+                exc_info=e,
+            )
             continue
 
     return total_rows
@@ -2293,7 +2422,10 @@ def _phase_prune_countries(ctx: dict) -> int:
 
 def _phase_prune_coverage(ctx: dict) -> int:
     logger.info(phase_marker("prune_coverage"))
-    return prune_coverage(ctx["league_code"])
+    total = 0
+    for lcode in LEAGUES:
+        total += prune_coverage(lcode)
+    return total
 
 
 PHASE_HANDLERS: Dict[str, Callable] = {

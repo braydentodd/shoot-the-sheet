@@ -27,10 +27,13 @@ distinct from simple event counting and have no ``dataset_mapping`` entries
 yet in DB_COLUMNS; they are tracked as follow-up work.
 """
 
+from __future__ import annotations
+
 import logging
 from collections import defaultdict
 from typing import Dict, List, Mapping, Optional
 
+from src.definitions.db_columns import DatasetMapping
 from src.definitions.pbp_events import PBP_STAT_RULES, Event
 from src.lib.extract import extract_value_from_raw_dict
 
@@ -51,7 +54,7 @@ def map_accumulator_to_staging(
     result_sets: Mapping[str, List[Dict]],
     identity_code: str,
     ext_game_id: str,
-    pbp_column_map: Dict[str, Dict[str, Dict]],
+    pbp_column_map: Dict[str, Dict[str, "DatasetMapping"]],
 ) -> Dict[str, List[Dict]]:
     """Map accumulator result sets to staging-ready rows via DB_COLUMNS config.
 

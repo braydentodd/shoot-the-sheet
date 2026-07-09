@@ -22,8 +22,19 @@ Keys in ``source_mapping`` fall into two categories:
     * **Pass-through keys** — forwarded directly as API call parameters
       (e.g. pt_measure_type, measure_type_detailed_defense).
 
-``discovery_tables`` and ``prune_tables`` are schema-qualified staging table
-names (e.g. ``"staging.teams"``), matching ``src.definitions.schema.SCHEMAS``.
+``target_tables`` is the authoritative, schema-qualified list of every
+staging table a dataset writes rows into (e.g. ``"staging.teams"``),
+matching ``src.definitions.schema.SCHEMAS``. The orchestrator always
+derives its write targets from this field -- it must never be
+hardcoded per-phase. A table appears here even when the dataset
+supplies no ``db_columns.py``-mapped field for it (e.g. pure
+existence/junction tables such as ``staging.leagues_teams``, or tables
+whose identity/FK columns are resolved outside the generic column
+mapping system, such as ``staging.games``).
+
+``prune_tables`` is the schema-qualified list of staging tables that
+should be truncated of stale rows (rows not touched by the current
+run) after this dataset's fetch completes.
 
 This mirrors the ``dataset_mapping`` pattern in ``db_columns.py``.
 """
@@ -86,7 +97,7 @@ class Dataset(TypedDict):
         coverage: Coverage level for backfill behavior.
         execution_tier: API execution level (per_league, per_team, per_player, per_game).
         source_mapping: Source-specific API parameters.
-        discovery_tables: Schema-qualified staging tables to check for new entities.
+        target_tables: Schema-qualified staging tables this dataset writes to.
         prune_tables: Schema-qualified staging tables to truncate before loading.
         row_filters: Post-fetch row filters.
     """
@@ -98,7 +109,7 @@ class Dataset(TypedDict):
     coverage: Coverage
     execution_tier: ExecutionTier
     source_mapping: SourceMapping
-    discovery_tables: Union[List[str], None]
+    target_tables: Union[List[str], None]
     prune_tables: Union[List[str], None]
     row_filters: Union[List[RowFilter], None]
 
@@ -113,7 +124,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "phase": "detect_season_activity",
             "execution_tier": "per_league",
             "row_filters": None,
-            "discovery_tables": None,
+            "target_tables": None,
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -140,7 +151,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
                     "value_template": "{season_end_year}",
                 },
             ],
-            "discovery_tables": ["staging.teams", "staging.leagues_teams"],
+            "target_tables": ["staging.teams", "staging.leagues_teams"],
             "prune_tables": ["staging.leagues_teams"],
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -155,7 +166,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "phase": "maintain_teams_players",
             "execution_tier": "per_team",
             "row_filters": None,
-            "discovery_tables": ["staging.players", "staging.teams_players"],
+            "target_tables": ["staging.players", "staging.teams_players"],
             "prune_tables": ["staging.teams_players"],
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -170,7 +181,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "coverage": "normal",
             "execution_tier": "per_league",
             "row_filters": None,
-            "discovery_tables": ["staging.teams", "staging.team_seasons"],
+            "target_tables": ["staging.teams", "staging.team_seasons"],
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -187,7 +198,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "coverage": "normal",
             "execution_tier": "per_league",
             "row_filters": None,
-            "discovery_tables": ["staging.teams", "staging.team_seasons"],
+            "target_tables": ["staging.teams", "staging.team_seasons"],
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -205,7 +216,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "coverage": "normal",
             "execution_tier": "per_league",
             "row_filters": None,
-            "discovery_tables": ["staging.teams", "staging.team_seasons"],
+            "target_tables": ["staging.teams", "staging.team_seasons"],
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -224,7 +235,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "coverage": "normal",
             "execution_tier": "per_league",
             "row_filters": None,
-            "discovery_tables": ["staging.teams", "staging.team_seasons"],
+            "target_tables": ["staging.teams", "staging.team_seasons"],
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -243,7 +254,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "coverage": "normal",
             "execution_tier": "per_league",
             "row_filters": None,
-            "discovery_tables": ["staging.teams", "staging.team_seasons"],
+            "target_tables": ["staging.teams", "staging.team_seasons"],
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -261,7 +272,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "coverage": "normal",
             "execution_tier": "per_league",
             "row_filters": None,
-            "discovery_tables": ["staging.teams", "staging.team_seasons"],
+            "target_tables": ["staging.teams", "staging.team_seasons"],
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -278,7 +289,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "coverage": "normal",
             "execution_tier": "per_league",
             "row_filters": None,
-            "discovery_tables": ["staging.teams", "staging.team_seasons"],
+            "target_tables": ["staging.teams", "staging.team_seasons"],
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -296,7 +307,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "coverage": "normal",
             "execution_tier": "per_team",
             "row_filters": None,
-            "discovery_tables": ["staging.players", "staging.player_seasons"],
+            "target_tables": ["staging.players", "staging.player_seasons"],
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -313,7 +324,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "coverage": "normal",
             "execution_tier": "per_team",
             "row_filters": None,
-            "discovery_tables": ["staging.players", "staging.player_seasons"],
+            "target_tables": ["staging.players", "staging.player_seasons"],
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -331,7 +342,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "coverage": "normal",
             "execution_tier": "per_team",
             "row_filters": None,
-            "discovery_tables": ["staging.players", "staging.player_seasons"],
+            "target_tables": ["staging.players", "staging.player_seasons"],
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -350,7 +361,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "coverage": "normal",
             "execution_tier": "per_team",
             "row_filters": None,
-            "discovery_tables": ["staging.players", "staging.player_seasons"],
+            "target_tables": ["staging.players", "staging.player_seasons"],
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -369,7 +380,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "coverage": "normal",
             "execution_tier": "per_team",
             "row_filters": None,
-            "discovery_tables": ["staging.players", "staging.player_seasons"],
+            "target_tables": ["staging.players", "staging.player_seasons"],
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -386,7 +397,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "coverage": "normal",
             "execution_tier": "per_team",
             "row_filters": None,
-            "discovery_tables": ["staging.players", "staging.player_seasons"],
+            "target_tables": ["staging.players", "staging.player_seasons"],
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -403,7 +414,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "coverage": "normal",
             "execution_tier": "per_team",
             "row_filters": None,
-            "discovery_tables": ["staging.players", "staging.player_seasons"],
+            "target_tables": ["staging.players", "staging.player_seasons"],
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -420,7 +431,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "coverage": "normal",
             "execution_tier": "per_league",
             "row_filters": None,
-            "discovery_tables": [
+            "target_tables": [
                 "staging.teams",
                 "staging.games",
                 "staging.team_games",
@@ -441,9 +452,8 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "coverage": "normal",
             "execution_tier": "per_league",
             "row_filters": None,
-            "discovery_tables": [
+            "target_tables": [
                 "staging.players",
-                "staging.games",
                 "staging.player_games",
             ],
             "prune_tables": None,
@@ -462,8 +472,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "coverage": "normal",
             "execution_tier": "per_game",
             "row_filters": None,
-            "discovery_tables": [
-                "staging.games",
+            "target_tables": [
                 "staging.player_games",
                 "staging.team_games",
             ],
@@ -482,7 +491,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "coverage": "all_years",
             "execution_tier": "per_league",
             "row_filters": None,
-            "discovery_tables": ["staging.players"],
+            "target_tables": ["staging.players"],
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -498,7 +507,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "coverage": "all_years",
             "execution_tier": "per_league",
             "row_filters": None,
-            "discovery_tables": ["staging.players"],
+            "target_tables": ["staging.players"],
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "EEEE"},
@@ -514,7 +523,11 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "phase": "maintain_profiles",
             "execution_tier": "per_league",
             "row_filters": None,
-            "discovery_tables": ["staging.players", "staging.countries_players"],
+            "target_tables": [
+                "staging.players",
+                "staging.countries_players",
+                "staging.teams_players",
+            ],
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -529,7 +542,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "phase": "maintain_profiles",
             "execution_tier": "per_team",
             "row_filters": None,
-            "discovery_tables": None,
+            "target_tables": ["staging.teams", "staging.leagues_teams"],
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},

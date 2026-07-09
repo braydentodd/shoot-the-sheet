@@ -16,6 +16,7 @@ from typing import Any, Callable, Dict, Union
 
 from src.definitions.datasets import DATASETS
 from src.definitions.leagues import LEAGUES
+from src.lib.error_recorder import log_error_simple
 from src.lib.rate_limiter import get_rate_limiter
 from src.lib.season_formatter import format_season_param, parse_season_end_year
 from src.lib.source_resolver import (
@@ -67,6 +68,10 @@ def _patch_nba_api_headers() -> None:
 _dataset_class_cache: Dict[str, Any] = {}
 
 
+# Deduplication set for LOAD-1: only log each missing dataset once per process.
+_missing_dataset_classes: set[str] = set()
+
+
 def load_dataset_class(dataset_name: str) -> Union[Any, None]:
     """Dynamically import and cache an nba_api dataset class by name.
 
@@ -80,6 +85,13 @@ def load_dataset_class(dataset_name: str) -> Union[Any, None]:
         module = importlib.import_module(module_path)
     except ImportError:
         logger.warning("Could not import dataset module: %s", module_path)
+        if dataset_name not in _missing_dataset_classes:
+            _missing_dataset_classes.add(dataset_name)
+            log_error_simple(
+                "build_schema",
+                f"Missing nba_api dataset class: module={module_path} "
+                f"dataset={dataset_name} -- ImportError",
+            )
         return None
 
     # Find the dataset class: look for a class whose lowercase name matches
@@ -93,6 +105,13 @@ def load_dataset_class(dataset_name: str) -> Union[Any, None]:
 
     if cls is None:
         logger.warning("No class found in %s", module_path)
+        if dataset_name not in _missing_dataset_classes:
+            _missing_dataset_classes.add(dataset_name)
+            log_error_simple(
+                "build_schema",
+                f"Missing nba_api dataset class: module={module_path} "
+                f"dataset={dataset_name} -- no class found",
+            )
         return None
 
     _dataset_class_cache[dataset_name] = cls
@@ -351,5 +370,12 @@ def detect_recent_games(
             season_type,
             lookback_days,
             exc,
+        )
+        log_error_simple(
+            "detect_season_activity",
+            f"Season detector API call failed: identity={identity_code} "
+            f"league={league_code} dataset={dataset_name} "
+            f"season_type={season_type} -- {exc}",
+            exc_info=exc,
         )
         return None

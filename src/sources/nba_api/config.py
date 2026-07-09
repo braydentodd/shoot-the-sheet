@@ -83,6 +83,7 @@ API_FIELD_NAMES: Dict[str, Dict[str, Any]] = {
         "team_seasons": "TEAM_ID",
         "team_games": "TEAM_ID",
         "leagues_teams": "TEAM_ID",
+        "games": "GAME_ID",
     },
     "id_aliases": {
         "PLAYER_ID": ["PERSON_ID", "VS_PLAYER_ID", "personId"],

@@ -174,8 +174,10 @@ def extract_columns_from_result(
                 continue
 
         id_idx = headers.index(id_field)
+        rows = rs["rowSet"]
 
-        for row in rs["rowSet"]:
+        # Phase 1: per-row extraction (skip cross_row columns -- handled in phase 2)
+        for row in rows:
             entity_id = row[id_idx]
             if entity_id is None:
                 continue
@@ -184,6 +186,9 @@ def extract_columns_from_result(
             for col_name, source in columns.items():
                 # Skip columns with pipeline or multi_call sources
                 if "pipeline" in source:
+                    continue
+                # Skip cross_row columns -- handled in phase 2 below
+                if source.get("cross_row"):
                     continue
 
                 # Per-column result_set routing: skip resultSets not matching the column's result_set
@@ -199,6 +204,55 @@ def extract_columns_from_result(
                 # Prefer non-None values across multiple result sets
                 if val is not None or col_name not in existing:
                     existing[col_name] = val
+
+        # Phase 2: cross-row extraction (group-based within this result set)
+        cross_cols = [
+            (cn, src)
+            for cn, src in columns.items()
+            if src.get("cross_row")
+            and (not src.get("result_set") or src["result_set"] == rs["name"])
+        ]
+        if cross_cols and rows:
+            for col_name, source in cross_cols:
+                cr = source["cross_row"]
+                try:
+                    group_by_idx = headers.index(cr["group_by"])
+                    match_idx = headers.index(cr["match_field"])
+                except ValueError:
+                    logger.debug(
+                        "cross_row column %r: required header not found "
+                        "(group_by=%r, match_field=%r)",
+                        col_name,
+                        cr["group_by"],
+                        cr["match_field"],
+                    )
+                    continue
+
+                # Group all rows by group_by field
+                groups: Dict[Any, List[List]] = {}
+                for row in rows:
+                    key = row[group_by_idx]
+                    if key is not None:
+                        groups.setdefault(key, []).append(row)
+
+                # For each group, find the matching row and extract
+                for key, group_rows in groups.items():
+                    if not group_rows:
+                        continue
+                    # entity_id comes from the group_by value (same column as id_field
+                    # in practice, e.g. both are GAME_ID).  Use the first row's id_idx
+                    # value so the key matches phase 1 extraction.
+                    entity_id = group_rows[0][id_idx]
+                    for row in group_rows:
+                        match_val = (
+                            str(row[match_idx]) if row[match_idx] is not None else ""
+                        )
+                        if cr["match_contains"] in match_val:
+                            existing = all_entities.setdefault(entity_id, {})
+                            val = extract_field(row, headers, source)
+                            if val is not None or col_name not in existing:
+                                existing[col_name] = val
+                            break
 
     return all_entities
 

@@ -201,7 +201,7 @@ def write_entity_rows(
 
     _profile_tables = {"players", "teams"}
     _roster_tables = {"teams_players", "leagues_teams", "countries_players"}
-    _stats_tables = {"player_seasons", "team_seasons"}
+    _stats_tables = {"player_seasons", "team_seasons", "games"}
     _game_tables = {"team_games", "player_games"}
 
     if table_name in _profile_tables:

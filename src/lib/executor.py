@@ -20,6 +20,7 @@ from typing import Any, Callable, Dict, List, Union
 from src.definitions.datasets import DATASETS
 from src.definitions.execution import ENTITY_CHUNK_SIZE
 from src.definitions.leagues import LEAGUES
+from src.lib.error_recorder import log_error_simple
 from src.lib.extract import (
     extract_columns_from_result,
     get_pipeline_columns,
@@ -58,6 +59,7 @@ class ExecutionContext:
     entity_id_field: str
     db_schema: str
     identity_code: str
+    phase: str
     api_fetcher: Callable
     team_ids: Dict[str, int] = field(default_factory=dict)
     max_consecutive_failures: int = 5
@@ -216,6 +218,14 @@ def _execute_multi_season_league_wide(
                     entity_values_by_year[entity_id][year] = row_data.get(col_name)
         except Exception as exc:
             logger.warning("Multi-season %s year %d failed: %s", dataset, year, exc)
+            failed.append({"dataset": dataset, "year": year, "error": str(exc)})
+            log_error_simple(
+                ctx.phase,
+                f"Multi-season year fetch failed: identity={ctx.identity_code} "
+                f"league={ctx.db_schema} target={ctx.target} dataset={dataset} "
+                f"year={year} -- {exc}",
+                exc_info=exc,
+            )
             continue
 
     final_rows: Dict[int, Dict[str, Any]] = {}
@@ -270,6 +280,13 @@ def _execute_league_wide(
         except Exception as exc:
             logger.error("League-wide %s failed: %s", dataset, exc)
             failed.append({"dataset": dataset, "params": params, "error": str(exc)})
+            log_error_simple(
+                ctx.phase,
+                f"League-wide fetch failed: identity={ctx.identity_code} "
+                f"league={ctx.db_schema} target={ctx.target} dataset={dataset} "
+                f"-- {exc}",
+                exc_info=exc,
+            )
             return 0
 
         if result is None:
@@ -306,14 +323,17 @@ def _single_entity_fetcher(
     id_param: str,
     identity_value: Any,
 ) -> Any:
-    """Fetch wrapper that injects the current entity identity into API params."""
+    """Fetch wrapper that injects the current entity identity into API params.
+
+    BUG-1 fixed: no longer blanket-swallows exceptions. Real failures
+    propagate to the per-entity loop's abort/log path. KeyboardInterrupt
+    and SystemExit are still re-raised immediately.
+    """
     call_params = {**extra_params, id_param: identity_value}
     try:
         return ctx.api_fetcher(ds, call_params)
     except (KeyboardInterrupt, SystemExit):
         raise
-    except Exception:
-        return {"resultSets": []}
 
 
 def _execute_pipeline_per_entity(
@@ -363,6 +383,14 @@ def _execute_pipeline_per_entity(
                 consecutive_failures, ctx.max_consecutive_failures, dataset
             ):
                 failed.append({"column": col_name, "error": str(exc)})
+                log_error_simple(
+                    ctx.phase,
+                    f"Pipeline column aborted after repeated failures: "
+                    f"identity={ctx.identity_code} league={ctx.db_schema} "
+                    f"target={ctx.target} column={col_name} dataset={dataset} "
+                    f"-- {exc}",
+                    exc_info=exc,
+                )
                 break
             continue
 
@@ -407,10 +435,9 @@ def _execute_pipeline_column(
         return _execute_pipeline_per_entity(col_name, source, ctx, failed, conn=conn)
 
     def pipeline_fetcher(ds, extra_params, tr):
-        try:
-            return ctx.api_fetcher(ds, extra_params)
-        except Exception:
-            return {"resultSets": []}
+        # BUG-2 fixed: no longer blanket-swallows exceptions.
+        # Let real failures propagate to the outer try/except below.
+        return ctx.api_fetcher(ds, extra_params)
 
     try:
         result = execute_pipeline(
@@ -425,6 +452,13 @@ def _execute_pipeline_column(
     except Exception as exc:
         logger.error("Pipeline %s failed: %s", col_name, exc)
         failed.append({"column": col_name, "error": str(exc)})
+        log_error_simple(
+            ctx.phase,
+            f"Pipeline column failed: identity={ctx.identity_code} "
+            f"league={ctx.db_schema} target={ctx.target} column={col_name} "
+            f"-- {exc}",
+            exc_info=exc,
+        )
         return 0
 
     if not result:
@@ -508,6 +542,14 @@ def _execute_per_entity(
                 consecutive_failures, ctx.max_consecutive_failures, dataset
             ):
                 failed.append({"dataset": dataset, "error": str(exc)})
+                log_error_simple(
+                    ctx.phase,
+                    f"Per-entity fetch aborted after repeated failures: "
+                    f"identity={ctx.identity_code} league={ctx.db_schema} "
+                    f"target={ctx.target} dataset={dataset} "
+                    f"{id_param}={identity_value} -- {exc}",
+                    exc_info=exc,
+                )
                 break
             continue
 

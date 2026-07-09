@@ -1,13 +1,14 @@
 Short term:
-- [ ] review db_columns for multiple/correct dataset_mapping calls (name for teams needs profile/rosters source)
+- [ ] pbp db_columns data assignments
+- [ ] pbpstats + nba live pbp endpoint replacing playbyplayv3
 - [ ] review pbp standardization
 - [ ] implement lineup tracking
+- [ ] game accums possible for db_columns seasons tables
 - [ ] set up github actions
 
 Long term:
-- [ ] Find a RAPM source
+- [ ] build RAPM model
 - [ ] Find a contracts source
 - [ ] Find an injuries source
-- [ ] set up db column comments
 - [ ] rewrite all comments/documentation
 - [ ] crowdsource data?

@@ -410,8 +410,8 @@ def _validate_transform_references() -> List[str]:
     return errors
 
 
-def _validate_discovery_tables() -> List[str]:
-    """Validate that every discovery_tables entry exists in SCHEMAS registry."""
+def _validate_target_tables() -> List[str]:
+    """Validate that every target_tables entry exists in SCHEMAS registry."""
     from src.definitions.datasets import DATASETS
     from src.definitions.schema import iter_tables
 
@@ -420,16 +420,69 @@ def _validate_discovery_tables() -> List[str]:
 
     for identity_code, datasets in DATASETS.items():
         for dataset_name, ds_def in datasets.items():
-            discovery_tables = ds_def.get("discovery_tables")
-            if not discovery_tables:
+            target_tables = ds_def.get("target_tables")
+            if not target_tables:
                 continue
 
-            for table_name in discovery_tables:
+            for table_name in target_tables:
                 if table_name not in valid_qualified:
                     errors.append(
-                        f'DATASETS["{identity_code}"]["{dataset_name}"] discovery_tables: '
+                        f'DATASETS["{identity_code}"]["{dataset_name}"] target_tables: '
                         f"table '{table_name}' not found in SCHEMAS registry"
                     )
+
+    return errors
+
+
+def _validate_target_tables_cover_dataset_mapping() -> List[str]:
+    """Validate that every table a dataset populates via DB_COLUMNS is
+    declared in that dataset's ``target_tables``.
+
+    DB_COLUMNS['col']['dataset_mapping'][league][identity][table][dataset]
+    is the reverse-index source of truth for *data-bearing* writes. Every
+    (identity, dataset, table) triple discovered there must appear in
+    DATASETS[identity][dataset]['target_tables'], otherwise the dataset's
+    declared write surface has silently drifted out of sync with the
+    columns that actually target it (this is the class of bug that left
+    ``staging.games`` out of ``_maintain_games``'s hardcoded target list
+    despite ``DB_COLUMNS['date']`` mapping into it).
+
+    Note: this check is one-directional. ``target_tables`` may legally
+    contain tables with NO db_columns.py mapping at all (pure
+    existence/junction tables like ``staging.leagues_teams``, or tables
+    whose identity/FK columns are resolved outside the generic column
+    system, like ``staging.games``). Those are not flagged here.
+    """
+    from src.definitions.datasets import DATASETS
+    from src.definitions.db_columns import DB_COLUMNS
+
+    errors: List[str] = []
+
+    for col_name, col_def in DB_COLUMNS.items():
+        mapping = col_def.get("dataset_mapping")
+        if not mapping:
+            continue
+
+        for league_code, league_map in mapping.items():
+            for identity_code, identity_map in league_map.items():
+                ds_registry = DATASETS.get(identity_code, {})
+                for table_name, table_map in identity_map.items():
+                    for dataset_name in table_map.keys():
+                        ds_def = ds_registry.get(dataset_name)
+                        if ds_def is None:
+                            # Reported separately by
+                            # _validate_dataset_mapping_references.
+                            continue
+                        target_tables = ds_def.get("target_tables") or []
+                        qualified = f"staging.{table_name}"
+                        if qualified not in target_tables:
+                            errors.append(
+                                f'DATASETS["{identity_code}"]["{dataset_name}"] '
+                                f"target_tables is missing '{qualified}', which is "
+                                f"populated by DB_COLUMNS['{col_name}'] "
+                                f'dataset_mapping["{league_code}"]["{identity_code}"]'
+                                f'["{table_name}"]["{dataset_name}"]'
+                            )
 
     return errors
 
@@ -496,6 +549,85 @@ def _validate_rate_limit_sources() -> List[str]:
     return errors
 
 
+def _validate_cross_row_config() -> List[str]:
+    """Validate every ``cross_row`` config in DB_COLUMNS.
+
+    Checks that each ``cross_row`` dict has the required fields:
+    ``group_by``, ``match_field``, ``match_contains``.
+    Also warns if ``cross_row`` is used without a ``result_set``
+    (cross-row derivation is inherently result-set-scoped).
+    """
+    from src.definitions.db_columns import DB_COLUMNS
+
+    errors: List[str] = []
+    allowed_keys = frozenset({"group_by", "match_field", "match_contains"})
+
+    for col_name, col_def in DB_COLUMNS.items():
+        mapping = col_def.get("dataset_mapping")
+        if not mapping:
+            continue
+
+        # Walk the nested structure: league -> identity -> table -> dataset -> source
+        for league_code, league_map in mapping.items():
+            if not isinstance(league_map, dict):
+                continue
+            for identity_code, identity_map in league_map.items():
+                if not isinstance(identity_map, dict):
+                    continue
+                for table_name, table_map in identity_map.items():
+                    if not isinstance(table_map, dict):
+                        continue
+                    for dataset_name, ds_mapping in table_map.items():
+                        if not isinstance(ds_mapping, dict):
+                            continue
+                        cr = ds_mapping.get("cross_row")
+                        if cr is None:
+                            continue
+                        if not isinstance(cr, dict):
+                            errors.append(
+                                f'DB_COLUMNS["{col_name}"] '
+                                f'dataset_mapping["{league_code}"]'
+                                f'["{identity_code}"]["{table_name}"]'
+                                f'["{dataset_name}"]["cross_row"] '
+                                f"is {type(cr).__name__}, expected dict"
+                            )
+                            continue
+
+                        for key in allowed_keys:
+                            if key not in cr:
+                                errors.append(
+                                    f'DB_COLUMNS["{col_name}"] '
+                                    f'dataset_mapping["{league_code}"]'
+                                    f'["{identity_code}"]["{table_name}"]'
+                                    f'["{dataset_name}"]["cross_row"] '
+                                    f"missing required key {key!r}"
+                                )
+
+                        unknown = set(cr.keys()) - allowed_keys
+                        if unknown:
+                            errors.append(
+                                f'DB_COLUMNS["{col_name}"] '
+                                f'dataset_mapping["{league_code}"]'
+                                f'["{identity_code}"]["{table_name}"]'
+                                f'["{dataset_name}"]["cross_row"] '
+                                f"unknown key(s): {sorted(unknown)}"
+                            )
+
+                        # cross_row inherently requires a result_set to scope
+                        # which API result to group across
+                        if not ds_mapping.get("result_set"):
+                            errors.append(
+                                f'DB_COLUMNS["{col_name}"] '
+                                f'dataset_mapping["{league_code}"]'
+                                f'["{identity_code}"]["{table_name}"]'
+                                f'["{dataset_name}"] '
+                                f"has cross_row but no result_set -- "
+                                f"cross-row derivation is result-set-scoped"
+                            )
+
+    return errors
+
+
 def validate_config() -> List[str]:
     from src.definitions.db_columns import DB_COLUMNS
 
@@ -508,8 +640,10 @@ def validate_config() -> List[str]:
     errors.extend(_validate_league_stage_definitions())
     errors.extend(_validate_dataset_mapping_references())
     errors.extend(_validate_transform_references())
-    errors.extend(_validate_discovery_tables())
+    errors.extend(_validate_target_tables())
+    errors.extend(_validate_target_tables_cover_dataset_mapping())
     errors.extend(_validate_result_sets())
+    errors.extend(_validate_cross_row_config())
     errors.extend(_validate_rate_limit_sources())
 
     return errors

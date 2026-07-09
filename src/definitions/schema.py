@@ -522,11 +522,36 @@ SCHEMAS: Dict[str, Dict[str, Table]] = {
                 {"name": "date_idx", "columns": ["date"]},
             ],
         },
-        "coverage": {
+        "season_coverages": {
             "primary_key": [
                 "identity",
                 "league_code",
-                "coverage_level",
+                "target",
+                "season",
+                "season_type",
+                "dataset",
+                "col_name",
+            ],
+            "foreign_keys": [
+                {
+                    "columns": ["league_code"],
+                    "ref_schema": "core",
+                    "ref_table": "leagues",
+                    "ref_columns": ["code"],
+                    "strategy": "profile_lookup",
+                    "on_update": "CASCADE",
+                    "on_delete": "CASCADE",
+                },
+            ],
+            "unique_constraints": None,
+            "indexes": [
+                {"name": "covered_idx", "columns": ["covered"]},
+            ],
+        },
+        "game_coverages": {
+            "primary_key": [
+                "identity",
+                "league_code",
                 "game_id",
                 "target",
                 "season",
@@ -564,9 +589,7 @@ SCHEMAS: Dict[str, Dict[str, Table]] = {
             "foreign_keys": None,
             "unique_constraints": None,
             "indexes": [
-                {"name": "idx_errors_timestamp", "columns": ["timestamp"]},
                 {"name": "idx_errors_phase", "columns": ["phase"]},
-                {"name": "idx_errors_identity", "columns": ["identity"]},
             ],
         },
     },
