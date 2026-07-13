@@ -87,6 +87,27 @@ def extract_derived_field(
         transform_name = source.get("transform", "safe_str")
         return apply_transform(value, transform_name, params=source.get("params"))
 
+    # Boolean equality check (e.g. gameStatus == 3 -> True)
+    if "equals" in derived:
+        field_name = derived.get("field")
+        if not field_name or field_name not in headers:
+            return None
+        raw_value = row[headers.index(field_name)]
+        return raw_value == derived["equals"]
+
+    # Dict lookup with default fallback (e.g. gameLabel -> season_type)
+    map_dict = derived.get("map")
+    if map_dict is not None:
+        field_name = derived.get("field")
+        if not field_name or field_name not in headers:
+            return None
+        raw_value = row[headers.index(field_name)]
+        if isinstance(raw_value, (dict, list)):
+            return derived.get("default")
+        return map_dict.get(
+            str(raw_value) if raw_value is not None else "", derived.get("default")
+        )
+
     # Numeric math
     math_expr = derived.get("math")
     if not math_expr:
@@ -286,30 +307,69 @@ def extract_value_from_raw_dict(
     Applies transforms and scaling just like extract_field/extract_derived_field.
     """
     derived = source.get("derived")
-    if derived and derived.get("math"):
-        math_expr = derived["math"]
-        fields = derived.get("fields", [])
-        locals_dict: Dict[str, float] = {}
-        valid = True
-        for field_name in fields:
-            raw = raw_dict.get(field_name)
-            if raw is None:
-                valid = False
-                break
+    if derived:
+        # Boolean equality check (e.g. gameStatus == 3 -> True)
+        if "equals" in derived:
+            field_name = derived.get("field")
+            if not field_name:
+                return None
+            raw_value = raw_dict.get(field_name)
+            return raw_value == derived["equals"]
+
+        # Dict lookup with default fallback (e.g. gameLabel -> season_type)
+        map_dict = derived.get("map")
+        if map_dict is not None:
+            field_name = derived.get("field")
+            if not field_name:
+                return None
+            raw_value = raw_dict.get(field_name)
+            if isinstance(raw_value, (dict, list)):
+                return derived.get("default")
+            return map_dict.get(
+                str(raw_value) if raw_value is not None else "", derived.get("default")
+            )
+
+        # String concatenation
+        concat_fields = derived.get("concat")
+        if concat_fields:
+            separator = derived.get("separator", " ")
+            parts = []
+            for f in concat_fields:
+                raw = raw_dict.get(f)
+                if raw is None:
+                    raw = ""
+                parts.append(str(raw))
+            value = separator.join(parts)
+            if not value.strip():
+                return None
+            transform_name = source.get("transform", "safe_str")
+            return apply_transform(value, transform_name, params=source.get("params"))
+
+        # Numeric math
+        math_expr = derived.get("math")
+        if math_expr:
+            fields = derived.get("fields", [])
+            locals_dict: Dict[str, float] = {}
+            valid = True
+            for field_name in fields:
+                raw = raw_dict.get(field_name)
+                if raw is None:
+                    valid = False
+                    break
+                try:
+                    locals_dict[field_name] = float(raw)
+                except (ValueError, TypeError):
+                    valid = False
+                    break
+            if not valid:
+                return None
             try:
-                locals_dict[field_name] = float(raw)
-            except (ValueError, TypeError):
-                valid = False
-                break
-        if not valid:
-            return None
-        try:
-            value = eval_math_expr(math_expr, locals_dict)
-        except Exception:
-            return None
-        transform_name = source.get("transform", "safe_int")
-        scale = source.get("scale", 1)
-        return apply_transform(value, transform_name, scale, source.get("params"))
+                value = eval_math_expr(math_expr, locals_dict)
+            except Exception:
+                return None
+            transform_name = source.get("transform", "safe_int")
+            scale = source.get("scale", 1)
+            return apply_transform(value, transform_name, scale, source.get("params"))
 
     field = source.get("field")
     if not field:
