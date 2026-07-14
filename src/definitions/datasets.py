@@ -96,13 +96,10 @@ class Dataset(TypedDict):
         phase: ETL phase that triggers this dataset.
         coverage: Coverage level for backfill behavior.
         execution_tier: API execution level (per_league, per_team, per_player, per_game).
-<<<<<<< HEAD
-=======
         per_season_type: Whether the dataset returns data for one season
             type at a time (True) or all season types in one call (False).
             When True, the orchestrator calls the dataset once per season type.
             When False, it is called once and the response covers all types.
->>>>>>> 35a95db (restored to correct scheduler)
         source_mapping: Source-specific API parameters.
         target_tables: Schema-qualified staging tables this dataset writes to.
         prune_tables: Schema-qualified staging tables to truncate before loading.
@@ -115,10 +112,7 @@ class Dataset(TypedDict):
     phase: Phase
     coverage: Coverage
     execution_tier: ExecutionTier
-<<<<<<< HEAD
-=======
     per_season_type: bool
->>>>>>> 35a95db (restored to correct scheduler)
     source_mapping: SourceMapping
     target_tables: Union[List[str], None]
     prune_tables: Union[List[str], None]
@@ -127,8 +121,6 @@ class Dataset(TypedDict):
 
 DATASETS: Dict[str, Dict[str, Dataset]] = {
     "nba_id": {
-<<<<<<< HEAD
-=======
         "league_schedule": {
             "min_season": None,
             "max_season": None,
@@ -145,7 +137,6 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
                 "class_name": "scheduleleaguev2",
             },
         },
->>>>>>> 35a95db (restored to correct scheduler)
         "recent_games": {
             "coverage": "current",
             "min_season": None,
@@ -153,10 +144,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "source": "nba_api",
             "phase": "detect_season_activity",
             "execution_tier": "per_league",
-<<<<<<< HEAD
-=======
             "per_season_type": True,
->>>>>>> 35a95db (restored to correct scheduler)
             "row_filters": None,
             "target_tables": None,
             "prune_tables": None,
@@ -173,10 +161,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "source": "nba_api",
             "phase": "maintain_leagues_teams",
             "execution_tier": "per_league",
-<<<<<<< HEAD
-=======
             "per_season_type": False,
->>>>>>> 35a95db (restored to correct scheduler)
             "row_filters": [
                 {
                     "field": "MIN_YEAR",
@@ -203,10 +188,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "source": "nba_api",
             "phase": "maintain_teams_players",
             "execution_tier": "per_team",
-<<<<<<< HEAD
-=======
             "per_season_type": False,
->>>>>>> 35a95db (restored to correct scheduler)
             "row_filters": None,
             "target_tables": ["staging.players", "staging.teams_players"],
             "prune_tables": ["staging.teams_players"],
@@ -222,10 +204,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "phase": "maintain_seasons",
             "coverage": "normal",
             "execution_tier": "per_league",
-<<<<<<< HEAD
-=======
             "per_season_type": True,
->>>>>>> 35a95db (restored to correct scheduler)
             "row_filters": None,
             "target_tables": ["staging.teams", "staging.team_seasons"],
             "prune_tables": None,
@@ -243,10 +222,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "phase": "maintain_seasons",
             "coverage": "normal",
             "execution_tier": "per_league",
-<<<<<<< HEAD
-=======
             "per_season_type": True,
->>>>>>> 35a95db (restored to correct scheduler)
             "row_filters": None,
             "target_tables": ["staging.teams", "staging.team_seasons"],
             "prune_tables": None,
@@ -265,10 +241,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "phase": "maintain_seasons",
             "coverage": "normal",
             "execution_tier": "per_league",
-<<<<<<< HEAD
-=======
             "per_season_type": True,
->>>>>>> 35a95db (restored to correct scheduler)
             "row_filters": None,
             "target_tables": ["staging.teams", "staging.team_seasons"],
             "prune_tables": None,
@@ -288,10 +261,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "phase": "maintain_seasons",
             "coverage": "normal",
             "execution_tier": "per_league",
-<<<<<<< HEAD
-=======
             "per_season_type": True,
->>>>>>> 35a95db (restored to correct scheduler)
             "row_filters": None,
             "target_tables": ["staging.teams", "staging.team_seasons"],
             "prune_tables": None,
@@ -311,10 +281,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "phase": "maintain_seasons",
             "coverage": "normal",
             "execution_tier": "per_league",
-<<<<<<< HEAD
-=======
             "per_season_type": True,
->>>>>>> 35a95db (restored to correct scheduler)
             "row_filters": None,
             "target_tables": ["staging.teams", "staging.team_seasons"],
             "prune_tables": None,
@@ -333,10 +300,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "phase": "maintain_seasons",
             "coverage": "normal",
             "execution_tier": "per_league",
-<<<<<<< HEAD
-=======
             "per_season_type": True,
->>>>>>> 35a95db (restored to correct scheduler)
             "row_filters": None,
             "target_tables": ["staging.teams", "staging.team_seasons"],
             "prune_tables": None,
@@ -354,10 +318,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "phase": "maintain_seasons",
             "coverage": "normal",
             "execution_tier": "per_league",
-<<<<<<< HEAD
-=======
             "per_season_type": True,
->>>>>>> 35a95db (restored to correct scheduler)
             "row_filters": None,
             "target_tables": ["staging.teams", "staging.team_seasons"],
             "prune_tables": None,
@@ -376,10 +337,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "phase": "maintain_seasons",
             "coverage": "normal",
             "execution_tier": "per_team",
-<<<<<<< HEAD
-=======
             "per_season_type": True,
->>>>>>> 35a95db (restored to correct scheduler)
             "row_filters": None,
             "target_tables": ["staging.players", "staging.player_seasons"],
             "prune_tables": None,
@@ -397,10 +355,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "phase": "maintain_seasons",
             "coverage": "normal",
             "execution_tier": "per_team",
-<<<<<<< HEAD
-=======
             "per_season_type": True,
->>>>>>> 35a95db (restored to correct scheduler)
             "row_filters": None,
             "target_tables": ["staging.players", "staging.player_seasons"],
             "prune_tables": None,
@@ -419,10 +374,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "phase": "maintain_seasons",
             "coverage": "normal",
             "execution_tier": "per_team",
-<<<<<<< HEAD
-=======
             "per_season_type": True,
->>>>>>> 35a95db (restored to correct scheduler)
             "row_filters": None,
             "target_tables": ["staging.players", "staging.player_seasons"],
             "prune_tables": None,
@@ -442,10 +394,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "phase": "maintain_seasons",
             "coverage": "normal",
             "execution_tier": "per_team",
-<<<<<<< HEAD
-=======
             "per_season_type": True,
->>>>>>> 35a95db (restored to correct scheduler)
             "row_filters": None,
             "target_tables": ["staging.players", "staging.player_seasons"],
             "prune_tables": None,
@@ -465,10 +414,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "phase": "maintain_seasons",
             "coverage": "normal",
             "execution_tier": "per_team",
-<<<<<<< HEAD
-=======
             "per_season_type": True,
->>>>>>> 35a95db (restored to correct scheduler)
             "row_filters": None,
             "target_tables": ["staging.players", "staging.player_seasons"],
             "prune_tables": None,
@@ -486,10 +432,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "phase": "maintain_seasons",
             "coverage": "normal",
             "execution_tier": "per_team",
-<<<<<<< HEAD
-=======
             "per_season_type": True,
->>>>>>> 35a95db (restored to correct scheduler)
             "row_filters": None,
             "target_tables": ["staging.players", "staging.player_seasons"],
             "prune_tables": None,
@@ -507,10 +450,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "phase": "maintain_seasons",
             "coverage": "normal",
             "execution_tier": "per_team",
-<<<<<<< HEAD
-=======
             "per_season_type": True,
->>>>>>> 35a95db (restored to correct scheduler)
             "row_filters": None,
             "target_tables": ["staging.players", "staging.player_seasons"],
             "prune_tables": None,
@@ -528,10 +468,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "phase": "maintain_games",
             "coverage": "normal",
             "execution_tier": "per_league",
-<<<<<<< HEAD
-=======
             "per_season_type": True,
->>>>>>> 35a95db (restored to correct scheduler)
             "row_filters": None,
             "target_tables": [
                 "staging.teams",
@@ -553,10 +490,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "phase": "maintain_games",
             "coverage": "normal",
             "execution_tier": "per_league",
-<<<<<<< HEAD
-=======
             "per_season_type": True,
->>>>>>> 35a95db (restored to correct scheduler)
             "row_filters": None,
             "target_tables": [
                 "staging.players",
@@ -577,10 +511,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "phase": "maintain_profiles",
             "coverage": "all_years",
             "execution_tier": "per_league",
-<<<<<<< HEAD
-=======
             "per_season_type": False,
->>>>>>> 35a95db (restored to correct scheduler)
             "row_filters": None,
             "target_tables": ["staging.players"],
             "prune_tables": None,
@@ -597,10 +528,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "phase": "maintain_profiles",
             "coverage": "all_years",
             "execution_tier": "per_league",
-<<<<<<< HEAD
-=======
             "per_season_type": False,
->>>>>>> 35a95db (restored to correct scheduler)
             "row_filters": None,
             "target_tables": ["staging.players"],
             "prune_tables": None,
@@ -640,10 +568,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "source": "nba_api",
             "phase": "maintain_profiles",
             "execution_tier": "per_team",
-<<<<<<< HEAD
-=======
             "per_season_type": True,
->>>>>>> 35a95db (restored to correct scheduler)
             "row_filters": None,
             "target_tables": ["staging.teams", "staging.leagues_teams"],
             "prune_tables": None,

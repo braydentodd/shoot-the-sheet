@@ -547,8 +547,6 @@ def _maintain_seasons(
                 f"active types={active_types} season={season}",
             )
         )
-<<<<<<< HEAD
-=======
         # Separate datasets by per_season_type
         sep_datasets = []
         non_sep_datasets = []
@@ -560,7 +558,6 @@ def _maintain_seasons(
                 non_sep_datasets.append(ds_name)
 
         # per_season_type=True: call once per active season type
->>>>>>> 35a95db (restored to correct scheduler)
         for st_key in active_types:
             if not is_season_type_valid_for(league_code, st_key, season):
                 continue
@@ -595,10 +592,6 @@ def _maintain_seasons(
                         use_coverage=True,
                     )
 
-<<<<<<< HEAD
-    # ── Part B: coverage backfill (all seasons x all types) ────────────────────────
-    for dataset_name in dataset_names:
-=======
         # per_season_type=False: call once (returns all types)
         if non_sep_datasets:
             first_valid_type = next(
@@ -654,7 +647,6 @@ def _maintain_seasons(
 
     # per_season_type=True: iterate all seasons x all types
     for dataset_name in sep_backfill:
->>>>>>> 35a95db (restored to correct scheduler)
         for season_label in season_range:
             for st_key in all_season_types:
                 if not is_season_type_valid_for(league_code, st_key, season_label):
@@ -705,8 +697,6 @@ def _maintain_seasons(
                         use_coverage=True,
                     )
 
-<<<<<<< HEAD
-=======
     # per_season_type=False: call once per season (returns all types)
     # Coverage is checked against first_valid_type only — the API returns
     # all types in one call, so one coverage check suffices.
@@ -768,7 +758,6 @@ def _maintain_seasons(
                     use_coverage=True,
                 )
 
->>>>>>> 35a95db (restored to correct scheduler)
     return total_rows
 
 
@@ -818,8 +807,6 @@ def _maintain_games(
                 f"active types={active_types} season={season}",
             )
         )
-<<<<<<< HEAD
-=======
         # Separate datasets by per_season_type
         sep_datasets = []
         non_sep_datasets = []
@@ -831,7 +818,6 @@ def _maintain_games(
                 non_sep_datasets.append(ds_name)
 
         # per_season_type=True: call once per active season type
->>>>>>> 35a95db (restored to correct scheduler)
         for st_key in active_types:
             if not is_season_type_valid_for(league_code, st_key, season):
                 continue
@@ -877,10 +863,6 @@ def _maintain_games(
                         use_coverage=True,
                     )
 
-<<<<<<< HEAD
-    # ── Part B: coverage backfill (all seasons x all types) ────────────
-    for dataset_name in dataset_names:
-=======
         # per_season_type=False: call once (returns all types)
         if non_sep_datasets:
             first_valid_type = next(
@@ -951,7 +933,6 @@ def _maintain_games(
 
     # per_season_type=True: iterate all seasons x all types
     for dataset_name in sep_backfill:
->>>>>>> 35a95db (restored to correct scheduler)
         for season_label in season_range:
             for st_key in all_season_types:
                 if not is_season_type_valid_for(league_code, st_key, season_label):
@@ -1002,8 +983,6 @@ def _maintain_games(
                         use_coverage=True,
                     )
 
-<<<<<<< HEAD
-=======
     # per_season_type=False: call once per season (returns all types)
     # Coverage is checked against first_valid_type only — the API returns
     # all types in one call, so one coverage check suffices.
@@ -1065,7 +1044,6 @@ def _maintain_games(
                     use_coverage=True,
                 )
 
->>>>>>> 35a95db (restored to correct scheduler)
     return total_rows
 
 
