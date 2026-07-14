@@ -3,8 +3,8 @@
 1. Triggered at the maintain_pbp phase in pipeline.
 2. Grabs every dataset with phase = 'maintain_pbp'
 3. Uses a source-specific handler to standardize the pbp data into the sts standard, expected pbp format (defined below)
-4. Parses the standard pbp format, creating 4 result_sets per game of accumulated values from game (games, teams, players, lineups)
-5. db_columns draws values from result_sets, going through the staging --> ready --> core process
+4. Parses the standard pbp format, creating 2 result_sets per game of accumulated values from game (teams, players)
+5. db_columns draws values from result_sets, going through the staging --> ready --> core process (partially implemented, need to go back through columns and populate any stats columns that can be derived from the pbp data that don't already have per game stats)
 
 standard pbp columns:
 
@@ -17,7 +17,7 @@ standard pbp columns:
 
 - secs
   - parse identity-specific timestamp format
-  - total accumulation as the game progresses regardless of period/ot
+  - total accumulation as the game progresses regardless of period
 
 - event_id
   - serial integer, per event (internal)
@@ -45,20 +45,14 @@ standard pbp columns:
     - direct action: a made 1-point free throw
     - complicated: default, but some leagues may have 1 free throw for 2/3 points rather than 2/3 free throws; should be defined in pbp if so, I would think. I believe G-League follow this
 
-  - ft1_miss
-    - direct action: a missed 1-point free throw
-
   - ft2_make
     - direct action: a made 2-point free throw
-
-  - ft2_miss
-    - direct action: a missed 2-point free throw
 
   - ft3_make
     - direct action: a made 3-point free throw
 
-  - ft3_miss
-    - direct action: a missed 3-point free throw
+  - ft1_miss
+    - direct action: a missed free throw
 
   - fg2_assist
     - secondary action to a team fg2_make: an assist (may not be provided in every source)
@@ -99,31 +93,22 @@ standard pbp columns:
   - period_end
     - game context: the end of a period
 
-  - ot_start
-    - game context: the start of overtime
-
-  - ot_end
-    - game context: the end of overtime
-
   - player_in
     - game context: player enters the game
-    - complicated: may need to be inferred by parsing ensuing events (players will assuredly either record an event (fg2a, d_reb, player_out, etc) within each period, allowing us to retroactively build the player_in events at the start of each period/ot; the first and last events in each period/ot, should be a player_in and player_out event, respectively, for all players on the court); most sources will not provide lineups at start of periods/ots or at any point
+    - complicated: may need to be inferred by parsing ensuing events (players will assuredly either record an event (fg2a, d_reb, player_out, etc) within each period, allowing us to retroactively build the player_in events at the start of each period; the first and last events in each period, should be a player_in and player_out event, respectively, for all players on the court); most sources will not provide lineups at start of periods or at any point
 
   - player_out
     - game context: player leaves the game
-    - complicated: sub outs, ejections, and always all players who were on the court at the end of a period/ot
+    - complicated: sub outs, ejections, and always all players who were on the court at the end of a period
 
   - jump_ball_win:
     - game context: a jump ball win
 
   - poss_start
-    - complicated: source may specify who has possession... will need to be decided by source; things that start a possession: jump_ball_win, opponent turnover, d_rebound, out_of_bounds followed by an opponent offensive event, period_start/ot_start (following team offensive event determine what team's poss_start it is)
+    - complicated: things that start a possession: jump_ball_win, opponent turnover, d_rebound, fga or fta followed by an opponent offensive event, period_start (following team offensive event determine what team's poss_start it is)
 
   - poss_end: 
-    - complicated: always directly precedes poss_start, unless it is period_start/ot_start; always at the end of period/ot
-
-  - out_of_bounds
-    - game context: ball goes out of bounds (may not be provided in every source, will need to be decided by source... this is not just out of bounds turnovers, but anytime ball goes out of bounds during live play); influences o_reb, d_reb, poss_ending_ft_trips
+    - complicated: always directly precedes poss_start, unless it is period_start; always at the end of period
 
 ===========
 
@@ -133,16 +118,10 @@ opp_team event: team_id != external team ID
 opp_player event: team_id != player's external team ID within a player's stints
 on_player event: team_id = player's external team ID within a player's stints
 
-games result_set (not sure exactly how we get these fields in any kind of consistent manner)
-  - game_id
-  - home_team_id
-  - away_team_id
-  - date
-
 teams result_set
   - game_id (external game ID)
   - team_id (external team ID)
-  - win = (((sum of fg2_make team events) * 2) + ((sum of fg3_make team events) * 3) + (sum of ft_make team events)) > (((sum of fg2_make opp_team events) * 2) + ((sum of fg3_make opp_team events) * 3) + (sum of ft_make opp_team events))
+  - points = (((sum of fg2_make team events) * 2) + ((sum of fg3_make team events) * 3) + (sum of ft_make team events)))
   - poss = (sum of new_poss team events)
   - secs = (last record's secs amount)
   - o_poss_secs = (sum of secs between poss_start team and poss_end team events)
@@ -216,6 +195,3 @@ players result_set
   - on_turnovers = (sum of turnover on_player events)
   - on_o_rebs = (sum of o_reb on_player events)
   - on_d_rebs = (sum of d_reb on_player events)
-
-lineups result_set:
-  - this one is by far the most complicated. I need lineup data. We currently don't have this in our db, it will need to be added. It is a massive undertaking, but for every combination of players on the court between both teams (home and away, so 10 players if a 5x5 league, 6 players if a 3x3 league... this is something that needs added to the leagues config... and actually probably to our leagues db table. we may be missing some fields in there that are in our leagues dict, but should be in there... let's take a look at that.) I would ideally like all of the fields in players_result_set for every player on the court accumulated across the game for each lineup combination (if the same 10 players are on the court for multiple different stints throughout the game, they can be combined). But I have no idea how to do this properly according to best practice, and if it is real feasible, or will just be data explosion. I only have an oracle free tier vm i am hosting this on.

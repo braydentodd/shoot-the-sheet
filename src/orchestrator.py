@@ -547,6 +547,20 @@ def _maintain_seasons(
                 f"active types={active_types} season={season}",
             )
         )
+<<<<<<< HEAD
+=======
+        # Separate datasets by per_season_type
+        sep_datasets = []
+        non_sep_datasets = []
+        for ds_name in dataset_names:
+            ds_cfg = DATASETS.get(identity_code, {}).get(ds_name, {})
+            if ds_cfg.get("per_season_type", True):
+                sep_datasets.append(ds_name)
+            else:
+                non_sep_datasets.append(ds_name)
+
+        # per_season_type=True: call once per active season type
+>>>>>>> 35a95db (restored to correct scheduler)
         for st_key in active_types:
             if not is_season_type_valid_for(league_code, st_key, season):
                 continue
@@ -581,8 +595,66 @@ def _maintain_seasons(
                         use_coverage=True,
                     )
 
+<<<<<<< HEAD
     # ── Part B: coverage backfill (all seasons x all types) ────────────────────────
     for dataset_name in dataset_names:
+=======
+        # per_season_type=False: call once (returns all types)
+        if non_sep_datasets:
+            first_valid_type = next(
+                (
+                    st
+                    for st in active_types
+                    if is_season_type_valid_for(league_code, st, season)
+                ),
+                None,
+            )
+            if first_valid_type is not None:
+                season_type_name = get_source_season_type_code(
+                    identity_source, league_code, first_valid_type
+                )
+                for dataset_name in non_sep_datasets:
+                    for target in dataset_targets[dataset_name]:
+                        groups = build_call_groups(
+                            season,
+                            identity_code,
+                            dataset=dataset_name,
+                            table_name=target,
+                            league_code=league_code,
+                            in_season=True,
+                        )
+                        if not groups:
+                            continue
+                        total_rows += _execute_stats_groups(
+                            phase="maintain_seasons",
+                            league_code=league_code,
+                            target=target,
+                            season_label=season,
+                            st_key=first_valid_type,
+                            season_type_name=season_type_name,
+                            identity_code=identity_code,
+                            identity_source=identity_source,
+                            dataset=dataset_name,
+                            filtered_groups=groups,
+                            team_ids=team_ids,
+                            failed=failed,
+                            use_coverage=True,
+                        )
+
+    # ── Part B: coverage backfill (all seasons x all types) ────────────────────────
+    # Separate datasets by per_season_type
+    sep_backfill = []
+    non_sep_backfill = []
+    for ds_name in dataset_names:
+        ds_cfg = DATASETS.get(identity_code, {}).get(ds_name, {})
+        if ds_cfg.get("per_season_type", True):
+            sep_backfill.append(ds_name)
+        else:
+            non_sep_backfill.append(ds_name)
+
+    # per_season_type=True: iterate all seasons x all types
+    for dataset_name in sep_backfill:
+>>>>>>> 35a95db (restored to correct scheduler)
         for season_label in season_range:
             for st_key in all_season_types:
                 if not is_season_type_valid_for(league_code, st_key, season_label):
@@ -633,6 +705,70 @@ def _maintain_seasons(
                         use_coverage=True,
                     )
 
+<<<<<<< HEAD
+=======
+    # per_season_type=False: call once per season (returns all types)
+    # Coverage is checked against first_valid_type only — the API returns
+    # all types in one call, so one coverage check suffices.
+    for dataset_name in non_sep_backfill:
+        for season_label in season_range:
+            first_valid = next(
+                (
+                    st
+                    for st in all_season_types
+                    if is_season_type_valid_for(league_code, st, season_label)
+                ),
+                None,
+            )
+            if first_valid is None:
+                continue
+            season_type_name = get_source_season_type_code(
+                identity_source, league_code, first_valid
+            )
+            for target in dataset_targets[dataset_name]:
+                groups = build_call_groups(
+                    season_label,
+                    identity_code,
+                    dataset=dataset_name,
+                    table_name=target,
+                    league_code=league_code,
+                    in_season=True,
+                )
+                if not groups:
+                    continue
+                with db_connection() as conn:
+                    filtered_groups = [
+                        g
+                        for g in groups
+                        if not is_coverage_current(
+                            conn,
+                            league_code,
+                            target,
+                            season_label,
+                            first_valid,
+                            identity_code,
+                            g,
+                        )
+                    ]
+                if not filtered_groups:
+                    continue
+                total_rows += _execute_stats_groups(
+                    phase="maintain_seasons",
+                    league_code=league_code,
+                    target=target,
+                    season_label=season_label,
+                    st_key=first_valid,
+                    season_type_name=season_type_name,
+                    identity_code=identity_code,
+                    identity_source=identity_source,
+                    dataset=dataset_name,
+                    filtered_groups=filtered_groups,
+                    team_ids=team_ids,
+                    failed=failed,
+                    use_coverage=True,
+                )
+
+>>>>>>> 35a95db (restored to correct scheduler)
     return total_rows
 
 
@@ -682,6 +818,20 @@ def _maintain_games(
                 f"active types={active_types} season={season}",
             )
         )
+<<<<<<< HEAD
+=======
+        # Separate datasets by per_season_type
+        sep_datasets = []
+        non_sep_datasets = []
+        for ds_name in dataset_names:
+            ds_cfg = DATASETS.get(identity_code, {}).get(ds_name, {})
+            if ds_cfg.get("per_season_type", True):
+                sep_datasets.append(ds_name)
+            else:
+                non_sep_datasets.append(ds_name)
+
+        # per_season_type=True: call once per active season type
+>>>>>>> 35a95db (restored to correct scheduler)
         for st_key in active_types:
             if not is_season_type_valid_for(league_code, st_key, season):
                 continue
@@ -727,8 +877,81 @@ def _maintain_games(
                         use_coverage=True,
                     )
 
+<<<<<<< HEAD
     # ── Part B: coverage backfill (all seasons x all types) ────────────
     for dataset_name in dataset_names:
+=======
+        # per_season_type=False: call once (returns all types)
+        if non_sep_datasets:
+            first_valid_type = next(
+                (
+                    st
+                    for st in active_types
+                    if is_season_type_valid_for(league_code, st, season)
+                ),
+                None,
+            )
+            if first_valid_type is not None:
+                season_type_name = get_source_season_type_code(
+                    identity_source, league_code, first_valid_type
+                )
+                for dataset_name in non_sep_datasets:
+                    for target in dataset_targets[dataset_name]:
+                        groups = build_call_groups(
+                            season,
+                            identity_code,
+                            dataset=dataset_name,
+                            table_name=target,
+                            league_code=league_code,
+                            in_season=True,
+                        )
+                        if not groups:
+                            ds_cfg = DATASETS.get(identity_code, {}).get(
+                                dataset_name, {}
+                            )
+                            if ds_cfg.get("target_tables"):
+                                groups = [
+                                    {
+                                        "dataset": dataset_name,
+                                        "params": {},
+                                        "tier": ds_cfg.get(
+                                            "execution_tier", "per_league"
+                                        ),
+                                        "columns": {},
+                                    }
+                                ]
+                            else:
+                                continue
+                        total_rows += _execute_stats_groups(
+                            phase="maintain_games",
+                            league_code=league_code,
+                            target=target,
+                            season_label=season,
+                            st_key=first_valid_type,
+                            season_type_name=season_type_name,
+                            identity_code=identity_code,
+                            identity_source=identity_source,
+                            dataset=dataset_name,
+                            filtered_groups=groups,
+                            team_ids={},
+                            failed=failed,
+                            use_coverage=True,
+                        )
+
+    # ── Part B: coverage backfill (all seasons x all types) ────────────
+    # Separate datasets by per_season_type
+    sep_backfill = []
+    non_sep_backfill = []
+    for ds_name in dataset_names:
+        ds_cfg = DATASETS.get(identity_code, {}).get(ds_name, {})
+        if ds_cfg.get("per_season_type", True):
+            sep_backfill.append(ds_name)
+        else:
+            non_sep_backfill.append(ds_name)
+
+    # per_season_type=True: iterate all seasons x all types
+    for dataset_name in sep_backfill:
+>>>>>>> 35a95db (restored to correct scheduler)
         for season_label in season_range:
             for st_key in all_season_types:
                 if not is_season_type_valid_for(league_code, st_key, season_label):
@@ -779,6 +1002,70 @@ def _maintain_games(
                         use_coverage=True,
                     )
 
+<<<<<<< HEAD
+=======
+    # per_season_type=False: call once per season (returns all types)
+    # Coverage is checked against first_valid_type only — the API returns
+    # all types in one call, so one coverage check suffices.
+    for dataset_name in non_sep_backfill:
+        for season_label in season_range:
+            first_valid = next(
+                (
+                    st
+                    for st in all_season_types
+                    if is_season_type_valid_for(league_code, st, season_label)
+                ),
+                None,
+            )
+            if first_valid is None:
+                continue
+            season_type_name = get_source_season_type_code(
+                identity_source, league_code, first_valid
+            )
+            for target in dataset_targets[dataset_name]:
+                groups = build_call_groups(
+                    season_label,
+                    identity_code,
+                    dataset=dataset_name,
+                    table_name=target,
+                    league_code=league_code,
+                    in_season=True,
+                )
+                if not groups:
+                    continue
+                with db_connection() as conn:
+                    filtered_groups = [
+                        g
+                        for g in groups
+                        if not is_coverage_current(
+                            conn,
+                            league_code,
+                            target,
+                            season_label,
+                            first_valid,
+                            identity_code,
+                            g,
+                        )
+                    ]
+                if not filtered_groups:
+                    continue
+                total_rows += _execute_stats_groups(
+                    phase="maintain_games",
+                    league_code=league_code,
+                    target=target,
+                    season_label=season_label,
+                    st_key=first_valid,
+                    season_type_name=season_type_name,
+                    identity_code=identity_code,
+                    identity_source=identity_source,
+                    dataset=dataset_name,
+                    filtered_groups=filtered_groups,
+                    team_ids={},
+                    failed=failed,
+                    use_coverage=True,
+                )
+
+>>>>>>> 35a95db (restored to correct scheduler)
     return total_rows
 
 
