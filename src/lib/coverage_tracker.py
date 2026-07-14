@@ -254,8 +254,7 @@ def seed_coverage(
                         cur.execute(
                             """SELECT game_id FROM core.games
                                     WHERE league_code = %s AND season = %s
-                                      AND season_type = %s
-                                      AND completed = true""",
+                                      AND season_type = %s""",
                             (league_code, season, st_key),
                         )
                         game_ids: list[str] | None = [

@@ -267,7 +267,7 @@ def _execute_league_wide(
         ds_cfg = DATASETS.get(ctx.identity_code, {}).get(dataset, {})
         multi_season_config = (
             {"aggregation": "most_recent_non_null"}
-            if ds_cfg.get("coverage") == "all_seasons"
+            if ds_cfg.get("coverage") == "all_years"
             else None
         )
         if multi_season_config:

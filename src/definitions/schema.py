@@ -54,8 +54,6 @@ DEFAULT_TYPE_TRANSFORMS: Dict[str, str] = {
     "VARCHAR": "safe_str",
     "TEXT": "safe_str",
     "CHAR": "safe_str",
-    "DATE": "parse_date",
-    "BOOLEAN": "safe_int",
 }
 
 

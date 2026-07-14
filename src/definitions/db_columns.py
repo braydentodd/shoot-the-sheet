@@ -46,7 +46,6 @@ Transform = Literal[
     "null_if_zero",
     "parse_inches",
     "parse_birthdate",
-    "parse_date",
     "format_season",
     "normalize_name",
     "match_country",
@@ -237,19 +236,7 @@ DB_COLUMNS: Dict[str, Column] = {
         ],
         "nullable": True,
         "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "games": {
-                        "league_schedule": {
-                            "field": "seasonYear",
-                            "transform": "safe_str",
-                            "result_set": "SeasonGames",
-                        }
-                    }
-                }
-            }
-        },
+        "dataset_mapping": None,
     },
     "season_type": {
         "type": "TEXT",
@@ -262,31 +249,7 @@ DB_COLUMNS: Dict[str, Column] = {
         ],
         "nullable": True,
         "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "games": {
-                        "league_schedule": {
-                            "derived": {
-                                "field": "gameLabel",
-                                "map": {
-                                    "East First Round": "playoffs",
-                                    "West First Round": "playoffs",
-                                    "East Conf. Semifinals": "playoffs",
-                                    "West Conf. Semifinals": "playoffs",
-                                    "East Conf. Finals": "playoffs",
-                                    "West Conf. Finals": "playoffs",
-                                    "NBA Finals": "playoffs",
-                                    "SoFi Play-In Tournament": "play_in",
-                                },
-                                "default": "regular_season",
-                            },
-                            "result_set": "SeasonGames",
-                        }
-                    }
-                }
-            }
-        },
+        "dataset_mapping": None,
     },
     "date": {
         "type": "DATE",
@@ -302,12 +265,7 @@ DB_COLUMNS: Dict[str, Column] = {
                         "team_game_stats": {
                             "field": "GAME_DATE",
                             "result_set": "LeagueGameLog",
-                        },
-                        "league_schedule": {
-                            "field": "gameDateEst",
-                            "transform": "parse_date",
-                            "result_set": "SeasonGames",
-                        },
+                        }
                     }
                 }
             }
@@ -334,19 +292,7 @@ DB_COLUMNS: Dict[str, Column] = {
         ],
         "nullable": False,
         "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "games": {
-                        "league_schedule": {
-                            "field": "gameId",
-                            "transform": "safe_str",
-                            "result_set": "SeasonGames",
-                        }
-                    }
-                }
-            }
-        },
+        "dataset_mapping": None,
     },
     "home_team_id": {
         "type": "BIGINT",
@@ -371,9 +317,14 @@ DB_COLUMNS: Dict[str, Column] = {
             "NBA": {
                 "nba_id": {
                     "games": {
-                        "league_schedule": {
-                            "field": "homeTeam_teamId",
-                            "result_set": "SeasonGames",
+                        "team_game_stats": {
+                            "field": "TEAM_ID",
+                            "result_set": "LeagueGameLog",
+                            "cross_row": {
+                                "group_by": "GAME_ID",
+                                "match_field": "MATCHUP",
+                                "match_contains": "vs.",
+                            },
                         }
                     }
                 }
@@ -389,9 +340,14 @@ DB_COLUMNS: Dict[str, Column] = {
             "NBA": {
                 "nba_id": {
                     "games": {
-                        "league_schedule": {
-                            "field": "awayTeam_teamId",
-                            "result_set": "SeasonGames",
+                        "team_game_stats": {
+                            "field": "TEAM_ID",
+                            "result_set": "LeagueGameLog",
+                            "cross_row": {
+                                "group_by": "GAME_ID",
+                                "match_field": "MATCHUP",
+                                "match_contains": "@",
+                            },
                         }
                     }
                 }
@@ -480,41 +436,7 @@ DB_COLUMNS: Dict[str, Column] = {
         ],
         "nullable": True,
         "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "games": {
-                        "league_schedule": {
-                            "field": "isNeutral",
-                            "result_set": "SeasonGames",
-                        }
-                    }
-                }
-            }
-        },
-    },
-    "completed": {
-        "type": "BOOLEAN",
-        "tables": [
-            "games",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "games": {
-                        "league_schedule": {
-                            "derived": {
-                                "field": "gameStatus",
-                                "equals": 3,
-                            },
-                            "result_set": "SeasonGames",
-                        }
-                    }
-                }
-            }
-        },
+        "dataset_mapping": None,
     },
     # ==================================================================
     # PROFILES

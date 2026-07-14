@@ -232,7 +232,7 @@ def build_call_groups(
         ds_cfg = DATASETS.get(identity_code, {}).get(ds, {})
         removed_refresh_mode = (
             "always"
-            if ds_cfg.get("coverage") in ("all_seasons", "current_season")
+            if ds_cfg.get("coverage") in ("all_years", "current")
             else "null_only"
         )
         groups.append(
@@ -280,7 +280,7 @@ def build_call_groups(
                     "columns": bucket["columns"],
                     "removed_refresh_mode": (
                         "always"
-                        if ds_cfg2.get("coverage") in ("all_seasons", "current_season")
+                        if ds_cfg2.get("coverage") in ("all_years", "current")
                         else "null_only"
                     ),
                 }
