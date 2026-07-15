@@ -57,6 +57,7 @@ from src.lib.coverage_tracker import (
 )
 from src.lib.error_recorder import log_error_simple
 from src.lib.executor import ExecutionContext, execute_group
+from src.lib.extract import apply_row_filters
 from src.lib.leagues_resolver import (
     _league_or_raise,
     get_current_season,
@@ -112,7 +113,7 @@ def _run_groups(
     league_code: str,
     identity_code: str,
     dataset: str,
-    api_field_names: dict,
+    source_config: dict,
     api_config: dict,
     make_fetcher: Callable,
     on_target_finished: Union[
@@ -145,7 +146,7 @@ def _run_groups(
                     {
                         "dataset": dataset,
                         "params": {},
-                        "tier": ds_cfg.get("execution_tier", "per_league"),
+                        "tier": ds_cfg.get("iterates_by", "none"),
                         "columns": {},
                     }
                 ]
@@ -196,15 +197,29 @@ def _run_groups(
             if result is None:
                 continue
 
+            # Apply dataset-level row_filters (post-fetch, pre-extraction)
+            ds_cfg_for_filter = DATASETS.get(identity_code, {}).get(dataset_name, {})
+            row_filters = ds_cfg_for_filter.get("row_filters")
+            if row_filters:
+                result = apply_row_filters(
+                    result, row_filters, season_end_year=season_end_year
+                )
+
             group_succeeded = False
             for target in targets:
+                ds_cfg = DATASETS.get(identity_code, {}).get(dataset_name, {})
+                entity_type, entity_id_field, entity_param = _resolve_entity_for_target(
+                    source_config, ds_cfg, target
+                )
                 ctx = ExecutionContext(
                     target=target,
                     table_name=table_name,
                     season=season,
                     season_type=season_type,
                     season_type_name=season_type_name,
-                    entity_id_field=api_field_names["target_id"][target],
+                    entity_id_field=entity_id_field,
+                    entity_param=entity_param,
+                    entity_type=entity_type,
                     db_schema=league_code,
                     identity_code=identity_code,
                     phase=phase,
@@ -213,7 +228,7 @@ def _run_groups(
                     max_consecutive_failures=api_config.get(
                         "max_consecutive_failures", 5
                     ),
-                    id_aliases=api_field_names.get("id_aliases", {}),
+                    id_aliases=source_config.get("id_aliases", {}),
                 )
 
                 try:
@@ -280,6 +295,42 @@ _PROFILE_TABLES = frozenset({"players", "teams"})
 _ROSTER_TABLES = frozenset({"teams_players", "leagues_teams", "countries_players"})
 
 
+def _resolve_entity_for_target(
+    source_config: dict, dataset_config: dict, target: str
+) -> tuple:
+    """Resolve entity_type, entity_id_field, and entity_param for a target table.
+
+    Args:
+        source_config: The source module's API_FIELD_NAMES dict.
+        dataset_config: The dataset's config dict (from DATASETS).
+        target: Bare staging table name (e.g. 'player_games').
+
+    Returns:
+        (entity_type, entity_id_field, entity_param) tuple.
+    """
+    target_tables = dataset_config.get("target_tables") or {}
+    entity_type = target_tables.get(f"staging.{target}")
+    if not entity_type:
+        raise ValueError(
+            f"No entity type for target '{target}' in dataset target_tables: {target_tables}"
+        )
+    entity_fields = source_config.get("entity_fields", {})
+    entity_params = source_config.get("entity_params", {})
+    entity_id_field = entity_fields.get(entity_type)
+    entity_param = entity_params.get(entity_type)
+    if not entity_id_field:
+        raise ValueError(
+            f"No entity_fields entry for entity_type '{entity_type}' "
+            f"in source config. Available: {list(entity_fields.keys())}"
+        )
+    if not entity_param:
+        raise ValueError(
+            f"No entity_params entry for entity_type '{entity_type}' "
+            f"in source config. Available: {list(entity_params.keys())}"
+        )
+    return entity_type, entity_id_field, entity_param
+
+
 def _generic_targets_for_dataset(
     identity_code: str, dataset_name: str, identity_source: str
 ) -> List[str]:
@@ -292,30 +343,30 @@ def _generic_targets_for_dataset(
     dataset's ``target_tables`` entry instead.
 
     Tables declared in ``target_tables`` are filtered to those the source's
-    ``API_FIELD_NAMES['target_id']`` can resolve an entity key for. A table
-    without a ``target_id`` entry cannot be populated by the generic
-    per-row extraction path yet (e.g. ``games``, which needs cross-row
-    home/away derivation the extractor doesn't support) -- it is skipped
-    here with a warning rather than raising, so the rest of the dataset's
-    tables keep working while the gap stays visible in logs.
+    ``entity_fields`` can resolve an entity key for. A table whose entity
+    type has no ``entity_fields`` entry cannot be populated by the generic
+    per-row extraction path yet -- it is skipped here with a warning rather
+    than raising, so the rest of the dataset's tables keep working while
+    the gap stays visible in logs.
     """
     ds_cfg = DATASETS.get(identity_code, {}).get(dataset_name, {})
-    target_tables = ds_cfg.get("target_tables") or []
+    target_tables = ds_cfg.get("target_tables") or {}
     config_mod, _ = _load_source(identity_source)
-    target_id_map = getattr(config_mod, "API_FIELD_NAMES", {}).get("target_id", {})
+    entity_fields = getattr(config_mod, "API_FIELD_NAMES", {}).get("entity_fields", {})
 
     resolved: List[str] = []
-    for qualified in target_tables:
+    for qualified, entity_type in target_tables.items():
         table = qualified.split(".", 1)[1] if "." in qualified else qualified
-        if table in target_id_map:
+        if entity_type in entity_fields:
             resolved.append(table)
         else:
             logger.warning(
-                "%s.%s declares target_table '%s' but %s has no target_id "
-                "mapping for it -- generic per-row write not implemented yet, skipping",
+                "%s.%s declares target_table '%s' with entity_type '%s' but %s has no "
+                "entity_fields entry for it -- generic per-row write not implemented yet, skipping",
                 identity_code,
                 dataset_name,
                 table,
+                entity_type,
                 identity_source,
             )
     return resolved
@@ -434,15 +485,13 @@ def _discover_entities(
                 seasons=[season],
                 season_type=season_type,
                 season_type_name=season_type_name,
-                team_ids=team_ids if ds_cfg.get("execution_tier") == "per_team" else {},
+                team_ids=team_ids if ds_cfg.get("iterates_by") == "team" else {},
                 failed=failed,
                 phase=phase_name,
                 league_code=league_code,
                 identity_code=identity_code,
                 dataset=dataset_name,
-                api_field_names=config_mod.API_FIELD_NAMES
-                if hasattr(config_mod, "API_FIELD_NAMES")
-                else {},
+                source_config=getattr(config_mod, "API_FIELD_NAMES", {}),
                 api_config=config_mod.API_CONFIG
                 if hasattr(config_mod, "API_CONFIG")
                 else {},
@@ -464,9 +513,7 @@ def _discover_entities(
                 league_code=league_code,
                 identity_code=identity_code,
                 dataset=dataset_name,
-                api_field_names=config_mod.API_FIELD_NAMES
-                if hasattr(config_mod, "API_FIELD_NAMES")
-                else {},
+                source_config=getattr(config_mod, "API_FIELD_NAMES", {}),
                 api_config=config_mod.API_CONFIG
                 if hasattr(config_mod, "API_CONFIG")
                 else {},
@@ -564,7 +611,7 @@ def _maintain_seasons(
             season_type_name = get_source_season_type_code(
                 identity_source, league_code, st_key
             )
-            for dataset_name in dataset_names:
+            for dataset_name in sep_datasets:
                 for target in dataset_targets[dataset_name]:
                     groups = build_call_groups(
                         season,
@@ -824,7 +871,7 @@ def _maintain_games(
             season_type_name = get_source_season_type_code(
                 identity_source, league_code, st_key
             )
-            for dataset_name in dataset_names:
+            for dataset_name in sep_datasets:
                 for target in dataset_targets[dataset_name]:
                     groups = build_call_groups(
                         season,
@@ -841,7 +888,7 @@ def _maintain_games(
                                 {
                                     "dataset": dataset_name,
                                     "params": {},
-                                    "tier": ds_cfg.get("execution_tier", "per_league"),
+                                    "tier": ds_cfg.get("iterates_by", "none"),
                                     "columns": {},
                                 }
                             ]
@@ -896,9 +943,7 @@ def _maintain_games(
                                     {
                                         "dataset": dataset_name,
                                         "params": {},
-                                        "tier": ds_cfg.get(
-                                            "execution_tier", "per_league"
-                                        ),
+                                        "tier": ds_cfg.get("iterates_by", "none"),
                                         "columns": {},
                                     }
                                 ]
@@ -1125,15 +1170,13 @@ def _execute_stats_groups(
         seasons=[season_label],
         season_type=st_key,
         season_type_name=season_type_name,
-        team_ids=team_ids if ds_cfg.get("execution_tier") == "per_team" else {},
+        team_ids=team_ids if ds_cfg.get("iterates_by") == "team" else {},
         failed=failed,
         phase=phase,
         league_code=league_code,
         identity_code=identity_code,
         dataset=dataset,
-        api_field_names=config_mod.API_FIELD_NAMES
-        if hasattr(config_mod, "API_FIELD_NAMES")
-        else {},
+        source_config=getattr(config_mod, "API_FIELD_NAMES", {}),
         api_config=config_mod.API_CONFIG if hasattr(config_mod, "API_CONFIG") else {},
         make_fetcher=client_mod.make_fetcher,
         in_season=True,
@@ -1188,9 +1231,7 @@ def _maintain_profiles(
                 phase="maintain_profiles",
                 league_code=league_code,
                 identity_code=identity_code,
-                api_field_names=config_mod.API_FIELD_NAMES
-                if hasattr(config_mod, "API_FIELD_NAMES")
-                else {},
+                source_config=getattr(config_mod, "API_FIELD_NAMES", {}),
                 api_config=config_mod.API_CONFIG
                 if hasattr(config_mod, "API_CONFIG")
                 else {},
@@ -1294,7 +1335,7 @@ def _match_games(
                 """
                 INSERT INTO core.games AS target (
                     date, home_team_id, away_team_id,
-                    season, season_type, ot, neutral_site
+                    season, season_type, ot, neutral_site, completed
                 )
                 SELECT gs.date,
                        home_t."team_id",
@@ -1302,7 +1343,8 @@ def _match_games(
                        gs.season,
                        gs.season_type,
                        gs.ot,
-                       gs.neutral_site
+                       gs.neutral_site,
+                       gs.completed
                   FROM staging.games gs
                   JOIN core.identities_teams home_t
                     ON home_t.identity = gs.identity
@@ -1315,7 +1357,8 @@ def _match_games(
                 DO UPDATE SET season = COALESCE(target.season, EXCLUDED.season),
                               season_type = COALESCE(target.season_type, EXCLUDED.season_type),
                               ot = COALESCE(target.ot, EXCLUDED.ot),
-                              neutral_site = COALESCE(target.neutral_site, EXCLUDED.neutral_site)
+                              neutral_site = COALESCE(target.neutral_site, EXCLUDED.neutral_site),
+                              completed = EXCLUDED.completed
                 """,
                 (league_code,),
             )

@@ -22,12 +22,12 @@ Keys in ``source_mapping`` fall into two categories:
     * **Pass-through keys** — forwarded directly as API call parameters
       (e.g. pt_measure_type, measure_type_detailed_defense).
 
-``target_tables`` is the authoritative, schema-qualified list of every
-staging table a dataset writes rows into (e.g. ``"staging.teams"``),
-matching ``src.definitions.schema.SCHEMAS``. The orchestrator always
-derives its write targets from this field -- it must never be
-hardcoded per-phase. A table appears here even when the dataset
-supplies no ``db_columns.py``-mapped field for it (e.g. pure
+``target_tables`` is the authoritative mapping of every staging table a
+dataset writes rows into, keyed by schema-qualified table name with the
+entity type as value (e.g. ``{"staging.teams": "team"}``). The orchestrator
+derives its write targets and entity resolution from this field -- it
+must never be hardcoded per-phase. A table appears here even when the
+dataset supplies no ``db_columns.py``-mapped field for it (e.g. pure
 existence/junction tables such as ``staging.leagues_teams``, or tables
 whose identity/FK columns are resolved outside the generic column
 mapping system, such as ``staging.games``).
@@ -47,9 +47,11 @@ from src.definitions.pipeline import Phase
 # TYPE ALIASES
 # ============================================================================
 
-ExecutionTier = Literal["per_league", "per_team", "per_player", "per_game"]
+IteratesBy = Literal["none", "team", "player", "game"]
 
-Coverage = Literal["current", "all_years", "normal"]
+Coverage = Literal[
+    "current_season", "all_seasons", "seasons_coverage", "games_coverage"
+]
 
 RowFilterOp = Literal["lte", "gte", "eq"]
 
@@ -95,13 +97,19 @@ class Dataset(TypedDict):
         source: Source module key (e.g. 'nba_api').
         phase: ETL phase that triggers this dataset.
         coverage: Coverage level for backfill behavior.
-        execution_tier: API execution level (per_league, per_team, per_player, per_game).
+        iterates_by: Entity type to iterate over during execution.
+            'none' = one API call returns all entities (per_league).
+            'team' = iterate over team IDs.
+            'player' = iterate over player IDs.
+            'game' = iterate over game IDs.
         per_season_type: Whether the dataset returns data for one season
             type at a time (True) or all season types in one call (False).
             When True, the orchestrator calls the dataset once per season type.
             When False, it is called once and the response covers all types.
         source_mapping: Source-specific API parameters.
-        target_tables: Schema-qualified staging tables this dataset writes to.
+        target_tables: Schema-qualified staging tables mapped to entity type.
+            Keys are schema-qualified table names, values are entity types
+            (e.g. {'staging.teams': 'team', 'staging.team_seasons': 'team'}).
         prune_tables: Schema-qualified staging tables to truncate before loading.
         row_filters: Post-fetch row filters.
     """
@@ -111,10 +119,10 @@ class Dataset(TypedDict):
     source: str
     phase: Phase
     coverage: Coverage
-    execution_tier: ExecutionTier
+    iterates_by: IteratesBy
     per_season_type: bool
     source_mapping: SourceMapping
-    target_tables: Union[List[str], None]
+    target_tables: Union[Dict[str, str], None]
     prune_tables: Union[List[str], None]
     row_filters: Union[List[RowFilter], None]
 
@@ -127,10 +135,10 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "source": "nba_api",
             "phase": "maintain_games",
             "coverage": "games_coverage",
-            "execution_tier": "per_league",
+            "iterates_by": "none",
             "per_season_type": False,
             "row_filters": None,
-            "target_tables": ["staging.games"],
+            "target_tables": {"staging.games": "game"},
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -138,12 +146,12 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             },
         },
         "recent_games": {
-            "coverage": "current",
+            "coverage": "current_season",
             "min_season": None,
             "max_season": None,
             "source": "nba_api",
             "phase": "detect_season_activity",
-            "execution_tier": "per_league",
+            "iterates_by": "none",
             "per_season_type": True,
             "row_filters": None,
             "target_tables": None,
@@ -155,12 +163,12 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             },
         },
         "leagues_teams_rosters": {
-            "coverage": "current",
+            "coverage": "current_season",
             "min_season": None,
             "max_season": None,
             "source": "nba_api",
             "phase": "maintain_leagues_teams",
-            "execution_tier": "per_league",
+            "iterates_by": "none",
             "per_season_type": False,
             "row_filters": [
                 {
@@ -174,7 +182,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
                     "value_template": "{season_end_year}",
                 },
             ],
-            "target_tables": ["staging.teams", "staging.leagues_teams"],
+            "target_tables": {"staging.teams": "team", "staging.leagues_teams": "team"},
             "prune_tables": ["staging.leagues_teams"],
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -182,15 +190,18 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             },
         },
         "teams_players_rosters": {
-            "coverage": "current",
+            "coverage": "current_season",
             "min_season": None,
             "max_season": None,
             "source": "nba_api",
             "phase": "maintain_teams_players",
-            "execution_tier": "per_team",
+            "iterates_by": "team",
             "per_season_type": False,
             "row_filters": None,
-            "target_tables": ["staging.players", "staging.teams_players"],
+            "target_tables": {
+                "staging.players": "player",
+                "staging.teams_players": "player",
+            },
             "prune_tables": ["staging.teams_players"],
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -202,11 +213,11 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "max_season": None,
             "source": "nba_api",
             "phase": "maintain_seasons",
-            "coverage": "normal",
-            "execution_tier": "per_league",
+            "coverage": "seasons_coverage",
+            "iterates_by": "none",
             "per_season_type": True,
             "row_filters": None,
-            "target_tables": ["staging.teams", "staging.team_seasons"],
+            "target_tables": {"staging.teams": "team", "staging.team_seasons": "team"},
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -220,11 +231,11 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "max_season": None,
             "source": "nba_api",
             "phase": "maintain_seasons",
-            "coverage": "normal",
-            "execution_tier": "per_league",
+            "coverage": "seasons_coverage",
+            "iterates_by": "none",
             "per_season_type": True,
             "row_filters": None,
-            "target_tables": ["staging.teams", "staging.team_seasons"],
+            "target_tables": {"staging.teams": "team", "staging.team_seasons": "team"},
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -239,11 +250,11 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "max_season": None,
             "source": "nba_api",
             "phase": "maintain_seasons",
-            "coverage": "normal",
-            "execution_tier": "per_league",
+            "coverage": "seasons_coverage",
+            "iterates_by": "none",
             "per_season_type": True,
             "row_filters": None,
-            "target_tables": ["staging.teams", "staging.team_seasons"],
+            "target_tables": {"staging.teams": "team", "staging.team_seasons": "team"},
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -259,11 +270,11 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "max_season": None,
             "source": "nba_api",
             "phase": "maintain_seasons",
-            "coverage": "normal",
-            "execution_tier": "per_league",
+            "coverage": "seasons_coverage",
+            "iterates_by": "none",
             "per_season_type": True,
             "row_filters": None,
-            "target_tables": ["staging.teams", "staging.team_seasons"],
+            "target_tables": {"staging.teams": "team", "staging.team_seasons": "team"},
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -279,11 +290,11 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "max_season": None,
             "source": "nba_api",
             "phase": "maintain_seasons",
-            "coverage": "normal",
-            "execution_tier": "per_league",
+            "coverage": "seasons_coverage",
+            "iterates_by": "none",
             "per_season_type": True,
             "row_filters": None,
-            "target_tables": ["staging.teams", "staging.team_seasons"],
+            "target_tables": {"staging.teams": "team", "staging.team_seasons": "team"},
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -298,11 +309,11 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "max_season": None,
             "source": "nba_api",
             "phase": "maintain_seasons",
-            "coverage": "normal",
-            "execution_tier": "per_league",
+            "coverage": "seasons_coverage",
+            "iterates_by": "none",
             "per_season_type": True,
             "row_filters": None,
-            "target_tables": ["staging.teams", "staging.team_seasons"],
+            "target_tables": {"staging.teams": "team", "staging.team_seasons": "team"},
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -316,11 +327,11 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "max_season": None,
             "source": "nba_api",
             "phase": "maintain_seasons",
-            "coverage": "normal",
-            "execution_tier": "per_league",
+            "coverage": "seasons_coverage",
+            "iterates_by": "none",
             "per_season_type": True,
             "row_filters": None,
-            "target_tables": ["staging.teams", "staging.team_seasons"],
+            "target_tables": {"staging.teams": "team", "staging.team_seasons": "team"},
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -335,11 +346,14 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "max_season": None,
             "source": "nba_api",
             "phase": "maintain_seasons",
-            "coverage": "normal",
-            "execution_tier": "per_team",
+            "coverage": "seasons_coverage",
+            "iterates_by": "team",
             "per_season_type": True,
             "row_filters": None,
-            "target_tables": ["staging.players", "staging.player_seasons"],
+            "target_tables": {
+                "staging.players": "player",
+                "staging.player_seasons": "player",
+            },
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -353,11 +367,14 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "max_season": None,
             "source": "nba_api",
             "phase": "maintain_seasons",
-            "coverage": "normal",
-            "execution_tier": "per_team",
+            "coverage": "seasons_coverage",
+            "iterates_by": "team",
             "per_season_type": True,
             "row_filters": None,
-            "target_tables": ["staging.players", "staging.player_seasons"],
+            "target_tables": {
+                "staging.players": "player",
+                "staging.player_seasons": "player",
+            },
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -372,11 +389,14 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "max_season": None,
             "source": "nba_api",
             "phase": "maintain_seasons",
-            "coverage": "normal",
-            "execution_tier": "per_team",
+            "coverage": "seasons_coverage",
+            "iterates_by": "team",
             "per_season_type": True,
             "row_filters": None,
-            "target_tables": ["staging.players", "staging.player_seasons"],
+            "target_tables": {
+                "staging.players": "player",
+                "staging.player_seasons": "player",
+            },
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -392,11 +412,14 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "max_season": None,
             "source": "nba_api",
             "phase": "maintain_seasons",
-            "coverage": "normal",
-            "execution_tier": "per_team",
+            "coverage": "seasons_coverage",
+            "iterates_by": "team",
             "per_season_type": True,
             "row_filters": None,
-            "target_tables": ["staging.players", "staging.player_seasons"],
+            "target_tables": {
+                "staging.players": "player",
+                "staging.player_seasons": "player",
+            },
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -412,11 +435,14 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "max_season": None,
             "source": "nba_api",
             "phase": "maintain_seasons",
-            "coverage": "normal",
-            "execution_tier": "per_team",
+            "coverage": "seasons_coverage",
+            "iterates_by": "team",
             "per_season_type": True,
             "row_filters": None,
-            "target_tables": ["staging.players", "staging.player_seasons"],
+            "target_tables": {
+                "staging.players": "player",
+                "staging.player_seasons": "player",
+            },
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -430,11 +456,14 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "max_season": None,
             "source": "nba_api",
             "phase": "maintain_seasons",
-            "coverage": "normal",
-            "execution_tier": "per_team",
+            "coverage": "seasons_coverage",
+            "iterates_by": "team",
             "per_season_type": True,
             "row_filters": None,
-            "target_tables": ["staging.players", "staging.player_seasons"],
+            "target_tables": {
+                "staging.players": "player",
+                "staging.player_seasons": "player",
+            },
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -448,11 +477,14 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "max_season": None,
             "source": "nba_api",
             "phase": "maintain_seasons",
-            "coverage": "normal",
-            "execution_tier": "per_team",
+            "coverage": "seasons_coverage",
+            "iterates_by": "team",
             "per_season_type": True,
             "row_filters": None,
-            "target_tables": ["staging.players", "staging.player_seasons"],
+            "target_tables": {
+                "staging.players": "player",
+                "staging.player_seasons": "player",
+            },
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -466,15 +498,15 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "max_season": None,
             "source": "nba_api",
             "phase": "maintain_games",
-            "coverage": "normal",
-            "execution_tier": "per_league",
+            "coverage": "seasons_coverage",
+            "iterates_by": "none",
             "per_season_type": True,
             "row_filters": None,
-            "target_tables": [
-                "staging.teams",
-                "staging.games",
-                "staging.team_games",
-            ],
+            "target_tables": {
+                "staging.teams": "team",
+                "staging.games": "game",
+                "staging.team_games": "team",
+            },
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -488,14 +520,14 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "max_season": None,
             "source": "nba_api",
             "phase": "maintain_games",
-            "coverage": "normal",
-            "execution_tier": "per_league",
+            "coverage": "seasons_coverage",
+            "iterates_by": "none",
             "per_season_type": True,
             "row_filters": None,
-            "target_tables": [
-                "staging.players",
-                "staging.player_games",
-            ],
+            "target_tables": {
+                "staging.players": "player",
+                "staging.player_games": "player",
+            },
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -509,11 +541,11 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "max_season": None,
             "source": "nba_api",
             "phase": "maintain_profiles",
-            "coverage": "all_years",
-            "execution_tier": "per_league",
+            "coverage": "all_seasons",
+            "iterates_by": "none",
             "per_season_type": False,
             "row_filters": None,
-            "target_tables": ["staging.players"],
+            "target_tables": {"staging.players": "player"},
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -526,11 +558,11 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "max_season": None,
             "source": "nba_api",
             "phase": "maintain_profiles",
-            "coverage": "all_years",
-            "execution_tier": "per_league",
+            "coverage": "all_seasons",
+            "iterates_by": "none",
             "per_season_type": False,
             "row_filters": None,
-            "target_tables": ["staging.players"],
+            "target_tables": {"staging.players": "player"},
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "EEEE"},
@@ -539,22 +571,19 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             },
         },
         "player_profiles": {
-            "coverage": "current",
+            "coverage": "current_season",
             "min_season": None,
             "max_season": None,
             "source": "nba_api",
             "phase": "maintain_profiles",
-            "execution_tier": "per_league",
-<<<<<<< HEAD
-=======
+            "iterates_by": "none",
             "per_season_type": False,
->>>>>>> 35a95db (restored to correct scheduler)
             "row_filters": None,
-            "target_tables": [
-                "staging.players",
-                "staging.countries_players",
-                "staging.teams_players",
-            ],
+            "target_tables": {
+                "staging.players": "player",
+                "staging.countries_players": "player",
+                "staging.teams_players": "player",
+            },
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
@@ -562,15 +591,15 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             },
         },
         "team_profiles": {
-            "coverage": "current",
+            "coverage": "current_season",
             "min_season": None,
             "max_season": None,
             "source": "nba_api",
             "phase": "maintain_profiles",
-            "execution_tier": "per_team",
+            "iterates_by": "team",
             "per_season_type": True,
             "row_filters": None,
-            "target_tables": ["staging.teams", "staging.leagues_teams"],
+            "target_tables": {"staging.teams": "team", "staging.leagues_teams": "team"},
             "prune_tables": None,
             "source_mapping": {
                 "season_param_format": {"NBA": "SSSS-EE"},
