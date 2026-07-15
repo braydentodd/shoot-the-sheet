@@ -73,20 +73,22 @@ API_CONFIG: ApiConfigDef = {
 # ============================================================================
 
 API_FIELD_NAMES: Dict[str, Dict[str, Any]] = {
-    "target_id": {
-        "players": "PLAYER_ID",
-        "player_seasons": "PLAYER_ID",
-        "player_games": "PLAYER_ID",
-        "teams_players": "PLAYER_ID",
-        "countries_players": "PLAYER_ID",
-        "teams": "TEAM_ID",
-        "team_seasons": "TEAM_ID",
-        "team_games": "TEAM_ID",
-        "leagues_teams": "TEAM_ID",
-        "games": "GAME_ID",
+    # Entity type -> API response field name (for extracting from result sets)
+    "entity_fields": {
+        "team": "TEAM_ID",
+        "player": "PLAYER_ID",
+        "game": "GAME_ID",
     },
+    # Entity type -> API request parameter name (for per-entity iteration)
+    "entity_params": {
+        "team": "TEAM_ID",
+        "player": "PLAYER_ID",
+        "game": "GameID",
+    },
+    # Primary field -> list of variant names (for response header matching)
     "id_aliases": {
         "PLAYER_ID": ["PERSON_ID", "VS_PLAYER_ID", "personId"],
         "TEAM_ID": ["teamId"],
+        "GAME_ID": ["gameId"],
     },
 }

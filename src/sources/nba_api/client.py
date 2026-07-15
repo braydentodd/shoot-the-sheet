@@ -156,6 +156,45 @@ def create_api_call(
 
     def _call() -> Dict[str, Any]:
         result = dataset_class(**clean_params, timeout=call_timeout)
+        # ScheduleLeagueV2 uses a custom parser that produces data_sets
+        # instead of the standard resultSets format.  Convert it so the
+        # generic extraction engine can consume it.
+        if hasattr(result, "data_sets") and result.data_sets is not None:
+            # Use nba_response.get_data_sets(endpoint) to get named dicts
+            # rather than the DataSet objects which lose the name.
+            resp = getattr(result, "nba_response", None)
+            if resp is not None and hasattr(resp, "get_data_sets"):
+                endpoint_name = getattr(result, "endpoint", None)
+                named_sets = resp.get_data_sets(endpoint_name)
+            else:
+                named_sets = None
+
+            result_sets = []
+            if named_sets and isinstance(named_sets, dict):
+                for name, ds_data in named_sets.items():
+                    if not isinstance(ds_data, dict):
+                        continue
+                    result_sets.append(
+                        {
+                            "name": name,
+                            "headers": list(ds_data.get("headers", ())),
+                            "rowSet": [list(row) for row in ds_data.get("data", [])],
+                        }
+                    )
+            else:
+                # Fallback: use DataSet objects with generic names
+                for idx, ds in enumerate(result.data_sets):
+                    ds_data = ds.data if hasattr(ds, "data") else ds
+                    if not isinstance(ds_data, dict):
+                        continue
+                    result_sets.append(
+                        {
+                            "name": f"DataSet_{idx}",
+                            "headers": list(ds_data.get("headers", [])),
+                            "rowSet": [list(row) for row in ds_data.get("data", [])],
+                        }
+                    )
+            return {"resultSets": result_sets}
         return result.get_dict()
 
     return _call

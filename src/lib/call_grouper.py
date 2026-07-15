@@ -114,12 +114,8 @@ def is_dataset_available(
 
 
 def tier_for_dataset(dataset: str, identity_code: str) -> str:
-    """Get the default execution tier for a dataset."""
-    return (
-        DATASETS.get(identity_code, {})
-        .get(dataset, {})
-        .get("execution_tier", "per_league")
-    )
+    """Get the default iteration strategy for a dataset."""
+    return DATASETS.get(identity_code, {}).get(dataset, {}).get("iterates_by", "none")
 
 
 def tier_for_source(source: Dict[str, Any], dataset: str, identity_code: str) -> str:
@@ -212,7 +208,7 @@ def build_call_groups(
                         "columns": {col_name: enriched},
                     }
                 )
-            elif enriched.get("tier") == "per_team":
+            elif enriched.get("tier") == "team":
                 per_entity.append(
                     {
                         "dataset": ds,
@@ -232,7 +228,7 @@ def build_call_groups(
         ds_cfg = DATASETS.get(identity_code, {}).get(ds, {})
         removed_refresh_mode = (
             "always"
-            if ds_cfg.get("coverage") in ("all_years", "current")
+            if ds_cfg.get("coverage") in ("all_seasons", "current_season")
             else "null_only"
         )
         groups.append(
@@ -247,9 +243,9 @@ def build_call_groups(
 
     # Merge per_entity columns that share dataset + params into one group.
     per_entity_merged: Dict[str, Dict[tuple, Dict[str, Any]]] = {
-        "per_team": {},
-        "per_game": {},
-        "per_player": {},
+        "team": {},
+        "game": {},
+        "player": {},
     }
     for item in per_entity:
         tier = item["tier"]
@@ -280,7 +276,7 @@ def build_call_groups(
                     "columns": bucket["columns"],
                     "removed_refresh_mode": (
                         "always"
-                        if ds_cfg2.get("coverage") in ("all_years", "current")
+                        if ds_cfg2.get("coverage") in ("all_seasons", "current_season")
                         else "null_only"
                     ),
                 }

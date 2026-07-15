@@ -122,6 +122,25 @@ def parse_birthdate(date_str: Any) -> Union[date, None]:
     return None
 
 
+def parse_date(date_str: Any) -> Union[date, None]:
+    """Parse date/datetime string to date object.
+
+    Handles ISO datetime strings (e.g. '2024-10-22T00:00:00Z') from
+    ScheduleLeagueV2 as well as standard date formats.
+    """
+    if not date_str or str(date_str).lower() in ("nan", "n", "none"):
+        return None
+    raw = str(date_str).strip()
+    # Handle ISO datetime with timezone (e.g. '2024-10-22T00:00:00Z')
+    if "T" in raw:
+        try:
+            return datetime.fromisoformat(raw.replace("Z", "+00:00")).date()
+        except (ValueError, TypeError):
+            pass
+    # Try standard date formats
+    return parse_birthdate(raw)
+
+
 def format_season(from_year: Any) -> Union[str, None]:
     """Convert FROM_YEAR (e.g. 2012) to season string (e.g. '2012-13')."""
     if from_year is None or from_year == "" or str(from_year).lower() == "nan":
@@ -262,6 +281,7 @@ TRANSFORMS: Dict[str, Callable] = {
     "null_if_zero": null_if_zero,
     "parse_inches": parse_inches,
     "parse_birthdate": parse_birthdate,
+    "parse_date": parse_date,
     "format_season": format_season,
     "normalize_name": _normalize_name,
     "match_country": match_country,
@@ -336,7 +356,7 @@ def execute_pipeline(
         Dict mapping entity ID to the final computed value.
     """
     dataset = pipeline_config["dataset"]
-    execution_tier = pipeline_config.get("tier", "per_league")
+    execution_tier = pipeline_config.get("tier", "none")
     operations = pipeline_config["operations"]
     dataset_params = pipeline_config.get("params", {})
 
@@ -475,7 +495,7 @@ def _op_multi_league_extract(
     totals: Dict[int, int] = {}
 
     for call_params in calls:
-        api_result = api_fetcher(base_dataset, call_params, "per_league")
+        api_result = api_fetcher(base_dataset, call_params, "none")
         for rs in api_result.get("resultSets", []):
             if result_set and rs["name"] != result_set:
                 continue

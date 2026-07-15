@@ -4,9 +4,9 @@ Shoot the Sheet - ETL Execution Engine
 Executes a single call group against a configured source, routing to the
 correct strategy based on the group's execution tier:
 
-  - per_league: one API call returns all entities at once
-  - per_team:   per-team API calls (with aggregation when needed)
-  - per_player: per-player API calls (with aggregation when needed)
+  - none:      one API call returns all entities at once
+  - team:      per-team API calls (with aggregation when needed)
+  - player:    per-player API calls (with aggregation when needed)
 
 This module is the workhorse for API-driven phases.  Phase ordering lives
 in :mod:`src.orchestrator`; the CLI lives in :mod:`src.cli`.
@@ -57,6 +57,8 @@ class ExecutionContext:
     season_type: str
     season_type_name: str
     entity_id_field: str
+    entity_param: str
+    entity_type: str
     db_schema: str
     identity_code: str
     phase: str
@@ -90,15 +92,6 @@ def _should_abort(
 # ============================================================================
 
 _STATS_TABLES = {"player_seasons", "team_seasons", "player_games", "team_games"}
-
-
-def _target_api_param(target: str) -> str:
-    """Derive the API parameter name from a target key.
-
-    ``player_seasons`` and ``player_games`` both use ``player_id``;
-    ``team_seasons`` and ``team_games`` both use ``team_id``.
-    """
-    return "player_id" if target.startswith("player") else "team_id"
 
 
 def _resolve_staging_table(table_name: str) -> str:
@@ -267,7 +260,7 @@ def _execute_league_wide(
         ds_cfg = DATASETS.get(ctx.identity_code, {}).get(dataset, {})
         multi_season_config = (
             {"aggregation": "most_recent_non_null"}
-            if ds_cfg.get("coverage") == "all_years"
+            if ds_cfg.get("coverage") == "all_seasons"
             else None
         )
         if multi_season_config:
@@ -354,7 +347,7 @@ def _execute_pipeline_per_entity(
     all_rows: Dict[int, Dict[str, Any]] = {}
     written_count = 0
     consecutive_failures = 0
-    id_param = _target_api_param(ctx.target)
+    id_param = ctx.entity_param
 
     for identity_value in identities:
         fetcher = partial(
@@ -429,9 +422,9 @@ def _execute_pipeline_column(
 ) -> int:
     """Execute a transformation pipeline for a single column."""
     pipeline_config = source["extraction_config"]
-    tier = pipeline_config.get("tier", "per_league")
+    tier = pipeline_config.get("tier", "none")
 
-    if tier in ("per_player", "per_team"):
+    if tier in ("player", "team"):
         return _execute_pipeline_per_entity(col_name, source, ctx, failed, conn=conn)
 
     def pipeline_fetcher(ds, extra_params, tr):
@@ -480,17 +473,17 @@ def _execute_per_entity(
     columns: Dict[str, Dict[str, Any]],
     ctx: ExecutionContext,
     failed: List[Dict[str, Any]],
-    tier: str = "per_player",
+    tier: str = "player",
     removed_refresh_mode: str = "null_only",
     conn=None,
 ) -> int:
     """Per-target API calls for simple columns.
 
-    When *tier* is ``'per_team'``, passes ``team_id`` (from ``ctx.team_ids``)
+    When *tier* is ``'team'``, passes ``team_id`` (from ``ctx.team_ids``)
     instead of ``{target}_id``, and iterates over team identities rather
     than target identities.
     """
-    if tier == "per_team":
+    if tier == "team":
         identities = list(ctx.team_ids.values())
         if not identities:
             logger.debug(
@@ -514,7 +507,7 @@ def _execute_per_entity(
     all_rows: Dict[int, Dict[str, Any]] = {}
     written_count = 0
     consecutive_failures = 0
-    id_param = "team_id" if tier == "per_team" else _target_api_param(ctx.target)
+    id_param = ctx.entity_param
 
     for idx, identity_value in enumerate(identities):
         try:
@@ -564,7 +557,7 @@ def _execute_per_entity(
             id_aliases=ctx.id_aliases,
         )
 
-        if tier == "per_team":
+        if tier == "team":
             for row in extracted.values():
                 row["ext_team_id"] = identity_value
             written_count += write_entity_rows(
@@ -649,7 +642,7 @@ def execute_group(
         )
 
     written = 0
-    per_entity_tiers = {"per_team", "per_player", "per_game"}
+    per_entity_tiers = {"team", "player", "game"}
 
     if tier in per_entity_tiers:
         written += _execute_per_entity(

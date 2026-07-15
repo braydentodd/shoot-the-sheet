@@ -254,7 +254,8 @@ def seed_coverage(
                         cur.execute(
                             """SELECT game_id FROM core.games
                                     WHERE league_code = %s AND season = %s
-                                      AND season_type = %s""",
+                                      AND season_type = %s
+                                      AND completed = true""",
                             (league_code, season, st_key),
                         )
                         game_ids: list[str] | None = [
@@ -281,11 +282,9 @@ def seed_coverage(
                                         ds_def = DATASETS.get(identity_code, {}).get(
                                             ds_name, {}
                                         )
-                                        tier = ds_def.get(
-                                            "execution_tier", "per_league"
-                                        )
+                                        tier = ds_def.get("iterates_by", "none")
                                         expected_level = (
-                                            "game" if tier == "per_game" else "season"
+                                            "game" if tier == "game" else "season"
                                         )
                                         if expected_level != coverage_level:
                                             continue
