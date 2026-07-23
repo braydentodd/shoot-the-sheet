@@ -1,509 +1,378 @@
 # PBP Implementation Tracking
 
 Source-of-truth design document for the play-by-play (PBP) subsystem.
-Live in `project_tracking/`; implementation details, decisions, and plans.
 
 ---
 
 ## 1. Overview
 
-PBP is the third major data ingestion pathway in Shoot the Sheet (after box-score stats and profile/roster data). It processes raw play-by-play event logs into per-game accumulated result sets for teams and players, then feeds those results into the existing `db_columns` → staging → intermediate → core pipeline.
+PBP is the third major data ingestion pathway (after box-score stats and profile/roster data). It processes raw play-by-play event logs into per-game accumulated result sets for teams and players, then feeds those results into the existing `db_columns` -> staging -> intermediate -> core pipeline.
 
 **Trigger:** `maintain_pbp` phase in `pipeline.py` (runs after `match_games`, before `maintain_profiles`).
 
 **Flow:**
 
 ```
-Raw PBP source (per game)
-  → source-specific handler → standardized PBP format
-  → accumulation engine → 2 result_sets per game (team, player)
-  → db_columns mapping → staging.player_games / staging.team_games
+shufinskiy/nba_data tar.xz (one CSV per season)
+  -> nbastats normalizer (per Section 3.1)
+  -> standard PBPEvent rows (in-memory)
+  -> derive_game_context_events (player_in/out, poss_start/end, poss_ending_ft_trip)
+  -> accumulator (reads single RESULT_SET_FIELDS dict from pbp.py)
+  -> team/player result sets (in-memory)
+  -> db_columns mapping -> staging.team_games / staging.player_games
+  -> merge_staging -> intermediate -> promote -> core
 ```
+
+**Source:** `nbastats` from [shufinskiy/nba_data](https://github.com/shufinskiy/nba_data), seasons 2000/01 -- 2024/25.
+
+**Season range:** 2000-01 through 2024-25 (the earliest and latest available in the dataset). Pre-2000 PBP is not available from any credible source.
 
 ---
 
 ## 2. Current State
 
-### 2.1 What Exists
-
-| Component | Status | Notes |
-|---|---|---|
-| `maintain_pbp` in `pipeline.py` Phase literal | **Done** | Listed in `league_ingest` cluster |
-| `_phase_maintain_pbp` handler | **BLOCKER** | Referenced in `PHASE_HANDLERS` dict (line 2407) but never defined. Will crash on import with `NameError`. |
-| PBP dataset key in `db_columns.py` | **34 entries** | Currently `"pbp_data"`. Must be renamed to `"pbp_stats"` to match tracking doc (D-2). |
-| `pbp_stats` dataset in `DATASETS` | **Missing** | No dataset registered with `phase: "maintain_pbp"` |
-| Source-specific PBP handler | **Missing** | No nba_api PBP client or normalizer |
-| Standardized PBP format/schema | **Missing** | Defined conceptually in `pbp.md`, not codified in code |
-| Accumulation engine | **Missing** | No code to go from raw events → result_sets |
-| PBP staging table | **Not needed** | D-3 decided: in-memory only, no staging table |
-
-### 2.2 Columns Already Mapped to PBP
-
-These columns in `db_columns.py` already have PBP dataset_mapping entries (all under `NBA.nba_id`):
-
-**Self stats (team result_set / player result_set):**
-- `poss_ending_ft_trips`
-
-**Opponent stats (opp_team / opp_player result_sets):**
-- `opp_fg2m`, `opp_fg2a`, `opp_fg3m`, `opp_fg3a`
-- `opp_ftm`, `opp_fta`
-- `opp_o_rebs`, `opp_d_rebs`
-- `opp_turnovers`
-- `opp_poss`
-- `opp_poss_ending_ft_trips`
-
-**On-court stats (on_player result_set):**
-- `on_fg2m`, `on_fg2a`, `on_fg3m`, `on_fg3a`
-- `on_ftm`, `on_fta`
-- `on_o_rebs`, `on_d_rebs`
-- `on_turnovers`
-- `on_poss_ending_ft_trips`
-
-### 2.3 Columns with `dataset_mapping: None` That PBP Could Provide
-
-These columns exist in `team_games`/`player_games` tables but have no data source mapped:
-
-| Column | Type | Potential PBP Source |
-|---|---|---|
-| `o_poss_secs` | INTEGER | team/player result_set → `o_poss_secs` |
-| `d_poss_secs` | INTEGER | team/player result_set → `d_poss_secs` |
-| `assist_points` | SMALLINT | Derived: `fg2_assists*2 + fg3_assists*3` (see D-5) |
-| `o_fouls_draws` | SMALLINT | team/player result_set → `o_fouls_draws` |
-
----
-
-## 3. Standard PBP Format
-
-The standardized PBP format (defined in `pbp.md`) is the source-agnostic intermediate representation that all source-specific handlers must produce. It is **not persisted** (D-3) -- it is the contract between the normalizer and the accumulator, existing only in memory.
-
-### 3.1 Standard PBP Columns
-
-| Column | Type | Description |
-|---|---|---|
-| `identity` | TEXT | Source entity identifier (e.g. `nba_id`) |
-| `game_id` | TEXT | External game identifier |
-| `secs` | INTEGER | Total accumulated seconds from game start (regardless of period) |
-| `event_id` | INTEGER | Serial integer, per event (internal) |
-| `team_id` | TEXT | External team ID that performed the event |
-| `player_id` | TEXT | External player ID that performed the event |
-| `event` | TEXT | Normalized event type (see below) |
-
-### 3.2 Normalized Event Types
-
-**Direct actions:**
-- `fg2_make`, `fg2_miss` -- 2-point field goal
-- `fg3_make`, `fg3_miss` -- 3-point field goal
-- `ft1_make` -- made 1-point free throw (default; leagues with 1-for-2/3 differ)
-- `ft2_make` -- made 2-point free throw
-- `ft3_make` -- made 3-point free throw
-- `ft1_miss` -- missed free throw
-- `turnover` -- turnover
-- `o_reb` -- offensive rebound (includes out-of-bounds after missed FG/FT without poss_end)
-- `d_reb` -- defensive rebound (includes out-of-bounds after missed FG/FT with poss_end)
-- `foul` -- committed foul
-
-**Secondary actions (may not be provided by all sources):**
-- `fg2_assist` -- assist on a made 2-point FG
-- `fg3_assist` -- assist on a made 3-point FG
-- `block` -- block on opponent FG attempt
-- `steal` -- steal on opponent turnover
-- `o_foul_draw` -- drawn offensive foul on opponent
-
-**Possession events (derived, complex):**
-- `poss_ending_ft_trip` -- free throw trip that could end possession (no and-ones, no technicals, no flagrants for NBA)
-- `poss_start` -- possession start (jump_ball_win, opp turnover, d_reb, fga/fta followed by opp offensive event, period_start)
-- `poss_end` -- possession end (always precedes poss_start unless period_start)
-
-**Game context events:**
-- `period_start` -- start of a period
-- `period_end` -- end of a period
-- `player_in` -- player enters the game (may need to be inferred)
-- `player_out` -- player leaves the game (subs, ejections, period-end)
-- `jump_ball_win` -- jump ball win
-
----
-
-## 4. Result Sets
-
-Each game produces **2 result sets**: one for teams, one for players. These are the accumulated outputs that feed into `db_columns`.
-
-### 4.1 Team Result Set
-
-One row per team per game. Event filtering: `team_id == event_team_id` (team events) or `team_id != event_team_id` (opp_team events).
-
-| Field | Source | Description |
-|---|---|---|
-| `game_id` | identity | External game ID |
-| `team_id` | identity | External team ID |
-| `points` | computed | `fg2m*2 + fg3m*3 + ftm` |
-| `poss` | sum | `new_poss` team events |
-| `secs` | last row | Last record's secs amount |
-| `o_poss_secs` | sum | secs between poss_start and poss_end (team) |
-| `d_poss_secs` | sum | secs between poss_start and poss_end (opp_team) |
-| `fg2m` | sum | `fg2_make` team events |
-| `fg2a` | sum | `fg2_make + fg2_miss` team events |
-| `fg3m` | sum | `fg3_make` team events |
-| `fg3a` | sum | `fg3_make + fg3_miss` team events |
-| `ftm` | sum | `ft_make` team events |
-| `fta` | sum | `ft_make + ft_miss` team events |
-| `poss_ending_ft_trips` | sum | `poss_ending_ft_trip` team events |
-| `fg2_assists` | sum | `fg2_assist` team events |
-| `fg3_assists` | sum | `fg3_assist` team events |
-| `turnovers` | sum | `turnover` team events |
-| `o_rebs` | sum | `o_reb` team events |
-| `d_rebs` | sum | `d_reb` team events |
-| `blocks` | sum | `block` team events |
-| `o_fouls_draws` | sum | `o_foul_draw` team events |
-| `steals` | sum | `steal` team events |
-| `fouls` | sum | `foul` team events |
-| `opp_poss` | sum | `new_poss` opp_team events |
-| `opp_fg2m`..`opp_turnovers` | sum | Mirror of above for opp_team events |
-
-### 4.2 Player Result Set
-
-One row per player per game. Three event scopes:
-
-- **player**: events where `player_id == event_player_id`
-- **opp_player**: events by opposing players (while this player is on court)
-- **on_player**: events by teammates (while this player is on court)
-
-All team-scoped fields from the team result set are also available at the player level, plus:
-- `win` -- boolean from team points comparison
-- `poss` -- `poss_start on_player` events
-- `secs` -- sum of secs between player_in and player_out events
-- `on_*` fields -- teammate events while on court (on_fg2m, on_fg2a, on_fg3m, on_fg3a, on_ftm, on_fta, on_poss_ending_ft_trips, on_turnovers, on_o_rebs, on_d_rebs)
-
----
-
-## 5. Config Architecture (Completed Refactor)
-
-### 5.1 Entity Resolution (Phase 0 -- Done)
-
-The config refactor (Phase 0) resolved 5 structural problems in how datasets, sources, and the executor wire together. All changes are implemented and verified.
-
-**Key changes:**
-- `execution_tier` replaced with `iterates_by: Literal["none", "team", "player", "game"]`
-- `target_tables` changed from `List[str]` to `Dict[str, str]` (schema-qualified table name → entity type)
-- `API_FIELD_NAMES['target_id']` replaced with `entity_fields` + `entity_params` in source config
-- `_target_api_param()` removed from executor; `ctx.entity_param` used instead
-- `season_type_separated` renamed to `per_season_type` for consistency with `iterates_by`
-
-**New resolution flow:**
-
-```
-datasets.py target_tables: {"staging.player_games": "player", "staging.team_games": "team"}
-    ↓
-orchestrator resolves per target:
-    entity_type = dataset.target_tables[target]         # "player"
-    entity_id_field = source.entity_fields[entity_type]  # "PLAYER_ID" (response)
-    entity_param = source.entity_params[entity_type]     # "PLAYER_ID" (request)
-    ↓
-execute_group() dispatches by dataset.iterates_by:
-    "none"   → one API call, extract all
-    "team"   → iterate team IDs from staging.teams
-    "player" → null-entity query on target staging table
-    "game"   → iterate game IDs from staging.games (new, for PBP)
-```
-
-**Entity source resolution** (convention per `iterates_by` value):
-
-| iterates_by | Entity source |
+| Component | Status |
 |---|---|
-| `"none"` | N/A (one call) |
-| `"team"` | `staging.teams` WHERE league_code = league |
-| `"player"` | Null-entity query on target staging table |
-| `"game"` | `staging.games` WHERE league + season + type |
-
-### 5.2 Config Layer Separation
-
-Each config layer has a distinct, non-overlapping purpose:
-
-| Layer | File | Purpose | Example |
-|---|---|---|---|
-| **Table structure** | `schema.py` | PKs, FKs, indexes, constraints | `staging.team_games` PK = `[identity, ext_team_id, ext_game_id]` |
-| **Column mapping** | `db_columns.py` | Which dataset field fills which column | `fg2m` on `team_games` maps to `pbp_data.result_set: "team"` |
-| **Write declaration** | `datasets.target_tables` | Which tables a dataset writes to + entity type | `{"staging.team_games": "team"}` |
-| **Stale row pruning** | `datasets.prune_tables` | Which tables to truncate stale rows from | `["staging.leagues_teams"]` |
-| **Source wire format** | `nba_api/config.py` | How the API talks: field names, param names | `entity_fields["game"] = "GAME_ID"` |
-| **League properties** | `leagues.py` | Calendar, retention, season types, FT rules | `season_types["playoffs"]["is_postseason"]` |
-
-**Not duplicative:** `target_tables` declares *what a dataset writes to*. `db_columns` declares *what values fill the columns*. `schema` declares *how the table is structured*. They are complementary, not overlapping.
+| `maintain_pbp` in `pipeline.py` Phase literal | DONE |
+| `_phase_maintain_pbp` handler in orchestrator | DONE (defined, but has syntax error -- see Known Issues) |
+| `_maintain_pbp` orchestrator handler | BROKEN -- hardcoded to playbyplayv3, undefined `parse_api_response`, syntax error in imports |
+| PBP dataset in `DATASETS` | DONE (registered, but hardcoded to playbyplayv3 -- needs cleanup) |
+| `src/definitions/pbp.py` (event types, unified RESULT_SET_FIELDS, event groupings) | DONE |
+| `src/lib/accumulator.py` (accumulate_result_set core, event derivation) | DONE |
+| `lineup_size` in `leagues.py` | DONE (5 for NBA) |
+| DB column mappings for all PBP-provided columns | DONE (42 columns mapped) |
+| nba_data source evaluation | DONE -- Research complete. Attribution mechanisms verified across 5 eras. Source strategy finalized. |
+| `min_season` on all DatasetMapping entries | DONE -- 180 entries in `db_columns.py`. `o_fouls_draws` player_games gated at "2005-06". |
+| NULL->0 at extraction for stats tables | DONE -- `extract_columns_from_result` defaults None to 0 for `_STATS_TABLES`. |
+| Games=0 row gating at merge | DONE -- `where_clause: "s.games > 0"` on `player_seasons` and `team_seasons` in `MERGE_TABLE_CONFIG`. |
+| Stats normalization cleanup | REMOVED -- `normalize_intermediate`, `normalize_nulls_zeroes`, `_normalize_table` deleted. |
+| Source-specific PBP normalizer | NOT YET -- nbastats normalizer designed but not implemented. |
+| Orchestrator source-agnosticism | NOT YET -- `_maintain_pbp` hardcodes playbyplayv3. |
 
 ---
 
-## 6. Architecture Decisions
+## 3. Source Strategy
 
-### D-1: PBP Source Endpoint
+### 3.1 nbastats Normalizer Design
 
-**Question:** Which nba_api endpoint provides the raw PBP data?
+**Source:** `nbastats` CSV (single file per season from shufinskiy/nba_data tar.xz archives).
 
-**Options:**
-- `playbyplayv3` -- Play-by-play via nba_api stats endpoint
-- NBA Live API -- Real-time play-by-play (different format, auth requirements)
+**Key columns used:** `GAME_ID`, `EVENTNUM`, `EVENTMSGTYPE`, `EVENTMSGACTIONTYPE`, `PERIOD`, `PCTIMESTRING`, `PLAYER1_ID`, `PLAYER1_TEAM_ID`, `PLAYER2_ID`, `PERSON2TYPE`, `HOMEDESCRIPTION`, `VISITORDESCRIPTION`, `NEUTRALDESCRIPTION`, `SCORE`, `SCOREMARGIN`.
 
-**Recommendation:** `playbyplayv3` for historical/backfill, consistent with existing nba_api pattern.
+**Detection logic:**
 
-**Status:** PENDING
+```
+For each row in nbastats CSV:
+    msgtype = EVENTMSGTYPE
+    p1_id   = PLAYER1_ID          # primary actor (shooter, rebounder, fouler, etc.)
+    p1_team = PLAYER1_TEAM_ID
+    p2_id   = PLAYER2_ID          # secondary actor
+    p2_type = PERSON2TYPE         # 0 = no secondary action, 4/5 = secondary present
+    desc    = HOMEDESCRIPTION + " " + VISITORDESCRIPTION
+    is_3pt  = "3PT" in desc.upper()
 
-### D-2: PBP Dataset Registration Key
+    if msgtype == 1:  # Made FG
+        emit(FG2_MAKE or FG3_MAKE, p1_id, p1_team)
+        if p2_type != "0":
+            emit(FG2_ASSIST or FG3_ASSIST, p2_id, p1_team)
 
-**Question:** What is the dataset key in `DATASETS["nba_id"]`?
+    elif msgtype == 2:  # Missed FG
+        emit(FG2_MISS or FG3_MISS, p1_id, p1_team)
+        if "BLOCK" in desc.upper():
+            blocker_name = parse_blocker_from_desc(desc)
+            emit(BLOCK, resolve_id(blocker_name), opposing_team)
 
-**Options:**
-- `pbp_stats` -- matches the name used in `db_columns.py` dataset_mapping
-- `play_by_play` -- more descriptive of the raw source
+    elif msgtype == 3:  # Free Throw
+        is_missed = "MISS" in desc.upper()
+        emit(FT_MAKE or FT_MISS, p1_id, p1_team)
 
-**Recommendation:** `pbp_stats` -- consistency with db_columns.
+    elif msgtype == 4:  # Rebound
+        is_offensive = (p1_team == offensive_team_from_prev_event)
+        emit(O_REB or D_REB, p1_id, p1_team)
 
-**Status:** DECIDED -- `pbp_stats`
+    elif msgtype == 5:  # Turnover
+        emit(TURNOVER, p1_id, p1_team)
+        if p2_type != "0":
+            emit(STEAL, p2_id, opposing_team)
 
-**BLOCKER:** `db_columns.py` currently has 34 entries using `"pbp_data"`, not `"pbp_stats"`. Must rename all 34 entries in `db_columns.py` from `"pbp_data"` to `"pbp_stats"` before implementation begins.
+    elif msgtype == 6:  # Foul
+        emit(FOUL, p1_id, p1_team)
+        if EVENTMSGACTIONTYPE in ("4", "26"):  # offensive foul or charge
+            emit(O_FOUL_DRAW, p2_id, opposing_team)
 
-### D-3: Standard PBP Persistence
+    elif msgtype == 8:  # Substitution
+        # Description: "SUB: {PLAYER2_NAME} FOR {PLAYER1_NAME}"
+        #   => PLAYER2 enters, PLAYER1 leaves
+        emit(PLAYER_IN,  p2_id, team_from_context)
+        emit(PLAYER_OUT, p1_id, team_from_context)
 
-**Question:** Should the standardized PBP format be persisted to a staging table?
+    elif msgtype == 12:  # Period start
+        emit(PERIOD_START, ...)
+```
 
-**Options:**
-- **A) Persist** to `staging.pbp_events` -- enables reprocessing, debugging, audit trail
-- **B) In-memory only** -- standard PBP is a transient DataFrame, only result_sets are written
+**3PT detection:** Description text contains "3PT" for all three-point attempts. Verified 100% accurate across 5 test eras (2000--2024).
 
-**Tradeoffs:**
-- Persistence adds a staging table, write overhead, and prune logic
-- In-memory is simpler but makes debugging harder and reprocessing impossible without re-fetching
+**Blocker resolution:** The description names the blocker (e.g. "Ratliff BLOCK") but does not provide a PLAYER2_ID. The normalizer must parse the blocker name and resolve it to a player ID via the team's roster. This is the only description-to-ID resolution needed.
 
-**Recommendation:** Start with in-memory (B). Add persistence later if needed for debugging or reprocessing.
+### 3.2 Verified EVENTMSGTYPE Reference
 
-**Status:** DECIDED -- in-memory only
+| EVENTMSGTYPE | Meaning | Attribution |
+|---|---|---|
+| 1 | Made FG | PERSON2TYPE != 0 => assist (PLAYER2_ID = assister) |
+| 2 | Missed FG | Parse desc for "BLOCK" to detect blocks |
+| 3 | Free Throw (made + missed) | "MISS" in desc => missed FT |
+| 4 | Rebound | Off/def by team context |
+| 5 | Turnover | PERSON2TYPE != 0 => steal (PLAYER2_ID = stealer) |
+| 6 | Foul | PLAYER1 = fouler. ACTIONTYPE 4/26 => offensive. PLAYER2 = fouled player |
+| 7 | Violation | -- |
+| 8 | Substitution | "SUB: P2 FOR P1" => P2 enters, P1 leaves |
+| 9 | Timeout | -- |
+| 10 | Jump Ball | -- |
+| 12 | Start of Period | -- |
+| 13 | End of Period | Always 4 per game. NOT used for missed FTs |
+| 18 | End of Game | Appears in 2016+ seasons |
 
-### D-4: PBP Execution Tier / Strategy
+### 3.3 Attribution Summary
 
-**Question:** How does the orchestrator drive PBP ingestion?
+| Stat | Detection | Seasons |
+|---|---|---|
+| FG2/FG3 split | Description contains "3PT" | 2000--2025 |
+| Assist | PERSON2TYPE != 0 on MSGTYPE=1 | 2000--2025 |
+| Steal | PERSON2TYPE != 0 on MSGTYPE=5 | 2000--2025 |
+| Block | Description contains "BLOCK" on MSGTYPE=2 | 2000--2025 |
+| Offensive Foul Draw (team) | MSGTYPE=6, ACTIONTYPE IN (4, 26) | 2000--2025 |
+| Offensive Foul Draw (player) | MSGTYPE=6, ACTIONTYPE IN (4, 26), PLAYER2_ID | 2005--2025 |
+| Rebound (off/def) | MSGTYPE=4, team context | 2000--2025 |
+| FT (made/missed) | MSGTYPE=3, "MISS" keyword | 2000--2025 |
 
-**PBP reality:** PBP is inherently per-game -- one API call per game. The execution flow is:
-1. Get list of games for the season/type (already available from `maintain_games`)
-2. For each game, fetch raw PBP
-3. Normalize → accumulate → write result_sets
+---
 
-**Options:**
-- **A) New execution tier `per_game`** with PBP-specific orchestrator logic
-- **B) Custom phase handler** (like `_maintain_games`) that iterates games directly
-- **C) Reuse `per_team` tier** with game iteration baked into the fetcher
+## 4. Data Gating
 
-**Recommendation:** B -- dedicated `_maintain_pbp` handler that iterates games directly. PBP accumulation is fundamentally different from the column-extraction pattern used by other phases.
+### 4.1 Column-level: `min_season`
 
-**Status:** DECIDED -- custom `_maintain_pbp` handler with config-driven `iterates_by: "game"`
+Every `DatasetMapping` entry in `db_columns.py` has an explicit `min_season`. For most columns it is `None` (available from the dataset's first season). `extract_columns_from_result` skips columns where `season < min_season`. The column stays NULL -- nothing wrote to it.
 
-### D-5: Assist Point Derivation
+**`o_fouls_draws`** player_games has `min_season: "2005-06"` because PLAYER2_ID is not populated for offensive fouls in 2000--2004. Team-level is ungated (available from 2000).
 
-**Question:** The `assist_points` column has `dataset_mapping: None`. PBP has `fg2_assists` and `fg3_assists` but no direct "assist points" field. How should `assist_points` be derived?
+### 4.2 Row-level: `games = 0` at merge
 
-**Options:**
-- **A) Derive from PBP**: `fg2_assists * 2 + fg3_assists * 3` (requires adding a derived mapping)
-- **B) Leave unmapped**: `assist_points` stays None until a source provides it directly
-- **C) Use a different source**: Some API might provide AST PTS directly
+`MERGE_TABLE_CONFIG` has `where_clause: "s.games > 0"` on `player_seasons` and `team_seasons`. Rows where the entity played zero games are filtered out during `_merge_staging` and never reach intermediate or core.
 
-**Recommendation:** A -- derive from PBP. This is a clean, config-driven computation using the existing `derived` mechanism in `db_columns.py` (same pattern as `fg2m` which uses `"derived": {"math": "FGM - FG3M", "fields": ["OPP_FGM", "OPP_FG3M"]}`).
+### 4.3 NULL->0 for available stats columns
 
-**Status:** PENDING
+In `extract_columns_from_result`, for stats tables (`player_seasons`, `team_seasons`, `player_games`, `team_games`), if a column passes `min_season` gating but the extracted value is None, it defaults to 0. Non-stats tables preserve NULL for optional fields.
 
-### D-6: Possession Tracking Complexity
+Null-like API values (`None`, `""`, `"NaN"`, complex types) are all handled by `safe_int`'s existing try/except -- they collapse to None, then to 0.
 
-**Question:** `poss_start` and `poss_end` events are complex to derive. How should they be implemented?
+---
 
-**Key complexity (from `pbp.md`):**
-- `poss_start`: jump_ball_win, opponent turnover, d_rebound, fga/fta followed by opponent offensive event, period_start
-- `poss_end`: always directly precedes poss_start (unless period_start)
+## 5. Result Sets
 
-**Options:**
-- **A) Full derivation**: Implement the complete possession logic in the accumulator
-- **B) Simplified NBA-first**: Start with NBA-specific rules, generalize later
-- **C) Source-provided**: If the source provides possession data, use it directly
+Each game produces 2 result sets. Defined in `src/definitions/pbp.py` as `RESULT_SET_FIELDS`.
 
-**Recommendation:** B -- start with NBA-specific rules (most straightforward: standard free throw trips, no and-ones/technicals/flagrants). Generalize via config when adding leagues.
+### 5.1 Team Result Set
 
-**Status:** PENDING
+| Field | Operation | Scope / Handler |
+|---|---|---|
+| Base count fields (17) | count | `team` scope |
+| `opp_*` count fields (17) | count | `opp_team` scope |
+| `points` | derived | `fg2m*2 + fg3m*3 + ftm` |
+| `assist_points` | derived | `fg2_assists*2 + fg3_assists*3` |
+| `secs` | special | `team_secs` |
+| `o_poss_secs` | special | `team_o_poss_secs` |
+| `d_poss_secs` | special | `team_d_poss_secs` |
 
-### D-7: Player In/Out Tracking
+### 5.2 Player Result Set
 
-**Question:** `player_in`/`player_out` events may not be provided by sources. How are they inferred?
+| Field | Operation | Scope / Handler |
+|---|---|---|
+| Base count fields (17) | count | `player` scope |
+| `opp_*` count fields (17) | count | `opp_player` scope |
+| `on_*` count fields (17) | count | `on_player` scope |
+| `win` | special | `player_win` |
+| `secs` | special | `player_secs` |
+| `o_poss_secs` | special | `player_o_poss_secs` |
+| `d_poss_secs` | special | `player_d_poss_secs` |
 
-**From `pbp.md`:** Players will record events within each period, allowing retroactive inference. The first and last events in each period should be player_in/player_out for all court players.
+### 5.3 Full Field List
 
-**Options:**
-- **A) Infer from events**: Parse event sequences to build in/out retroactively
-- **B) Require source data**: Only process PBP from sources that provide lineup data
-- **C) Skip for MVP**: Don't generate player_in/player_out events initially; accumulate secs from box score
+**Base (17):** `fg2m`, `fg2a`, `fg3m`, `fg3a`, `ftm`, `fta`, `o_rebs`, `d_rebs`, `turnovers`, `steals`, `blocks`, `fouls`, `o_fouls_draws`, `fg2_assists`, `fg3_assists`, `poss`, `poss_ending_ft_trips`
 
-**Recommendation:** Implement in Phase 2. Critical for on_* player stats (on_fg2m, on_d_rebs, etc.) -- the 10 `on_player` columns in db_columns cannot be populated without knowing who is on court.
+**Opponent mirrors (17):** `opp_fg2m`, `opp_fg2a`, `opp_fg3m`, `opp_fg3a`, `opp_ftm`, `opp_fta`, `opp_o_rebs`, `opp_d_rebs`, `opp_turnovers`, `opp_steals`, `opp_blocks`, `opp_fouls`, `opp_o_fouls_draws`, `opp_fg2_assists`, `opp_fg3_assists`, `opp_poss`, `opp_poss_ending_ft_trips`
 
-**Status:** DECIDED -- implement in Phase 2 (not deferred)
+**On-court mirrors (17):** `on_fg2m`, `on_fg2a`, `on_fg3m`, `on_fg3a`, `on_ftm`, `on_fta`, `on_o_rebs`, `on_d_rebs`, `on_turnovers`, `on_steals`, `on_blocks`, `on_fouls`, `on_o_fouls_draws`, `on_fg2_assists`, `on_fg3_assists`, `on_poss`, `on_poss_ending_ft_trips`
 
-### D-8: FT Trip Rules by League
+**Derived (2):** `points`, `assist_points`
 
-**Question:** `poss_ending_ft_trip` rules vary by league (NBA: standard trips only; G-League: 1-for-2/3; etc.). How is this configured?
+**Special (4):** `secs`, `o_poss_secs`, `d_poss_secs`, `win`
 
-**Options:**
-- **A) League config**: Add FT trip rules to `leagues.py`
-- **B) Dataset config**: Add rules to the PBP dataset entry in `DATASETS`
-- **C) Source config**: Add rules to the source's `config.py`
+---
 
-**Recommendation:** A -- league-level config is the natural home. FT trip rules are league properties, not source properties. Proposed shape in `leagues.py`:
+## 6. Architecture
+
+### 6.1 File Layout
+
+```
+src/definitions/
+    pbp.py              # Pure config: PBPEvent, PBPEventType, event groupings,
+                        #   unified RESULT_SET_FIELDS dict. No functions.
+
+src/lib/
+    accumulator.py      # Code: accumulate_result_set(), event derivation,
+                        #   special handlers, partitioning logic.
+
+src/sources/nba_data/
+    (normalizer)        # TBD -- nbastats CSV -> PBPEvent rows
+```
+
+**Convention:** definitions = config/dicts/constants. lib = code. source = source-specific code. No mixing.
+
+### 6.2 `src/definitions/pbp.py` -- Pure Config
+
+Contains:
+1. `PBPEventType` -- Literal of all 25 standard event types
+2. `PBPEvent` -- TypedDict for the standard event row shape (real contract)
+3. Standard event groupings (`FG_MAKE_EVENTS`, `FT_ALL_EVENTS`, etc.)
+4. `RESULT_SET_FIELDS` -- single unified dict of every result-set field
+
+No functions. No source-specific constants.
+
+### 6.3 `src/lib/accumulator.py` -- Code
+
+Contains:
+1. `accumulate_result_set()` -- single generic core, iterates RESULT_SET_FIELDS
+2. `derive_game_context_events()` -- substitution rename + possession derivation
+3. Special handlers (`team_secs`, `player_secs`, `player_win`, `*_poss_secs`)
+4. Partitioning (`_build_partitions`) and computation helpers
+
+### 6.4 `RESULT_SET_FIELDS` Structure
 
 ```python
-"ft_trip_rules": {
-    "exclude_and_ones": True,
-    "exclude_technicals": True,
-    "exclude_flagrants": True,
+{
+    "op":           "count" | "derived" | "special",
+    "result_sets":  {result_set_name: scope_or_handler_or_none},
+    # count only:
+    "events":       [event_type, ...],
+    # derived only:
+    "formula":      "fg2m*2 + fg3m*3 + ftm",
+    "fields":       ["fg2m", "fg3m", "ftm"],
 }
 ```
 
-**Status:** PENDING
-
-### D-9: Raw PBP Source as a Dataset
-
-**Question:** Does the raw PBP fetch register as its own dataset in `DATASETS`, or is it a special case?
-
-**Options:**
-- **A) Register as dataset**: `pbp_stats` dataset in `DATASETS["nba_id"]` with `phase: "maintain_pbp"` and appropriate source_mapping
-- **B) Hardcode in handler**: The `_maintain_pbp` handler directly calls the source client without going through the generic executor
-
-**Recommendation:** A -- consistency with the existing pattern. The PBP handler can still use a custom execution path, but the dataset metadata (endpoint, season mapping, etc.) should live in `DATASETS`. Assigning the phase `maintain_pbp` is what drives it toward the PBP-specific transform logic in the custom handler.
-
-**Status:** DECIDED -- register as standard dataset in DATASETS
+All `opp_*` and `on_*` fields are explicit entries. No programmatic generation.
 
 ---
 
-## 7. Config Cleanup Items
+## 7. DB Column Mappings
 
-### 7.1 `row_filters` -- Config-Driven Dataset-Level Filtering
+All 42 PBP-relevant columns are mapped in `src/definitions/db_columns.py` with `pbp_stats` dataset entries.
 
-**Finding:** `row_filters` was defined in the `Dataset` TypedDict and populated on `leagues_teams_rosters`, but had no consumer. The filtering logic was never implemented -- a gap, not dead config.
+**Base fields (17):** `fg2m`, `fg2a`, `fg3m`, `fg3a`, `ftm`, `fta`, `o_rebs`, `d_rebs`, `turnovers`, `steals`, `blocks`, `fouls`, `o_fouls_draws`, `fg2_assists`, `fg3_assists`, `poss`, `poss_ending_ft_trips`
 
-**What it does:** The `commonteamyears` NBA API endpoint returns ALL NBA teams historically (with `MIN_YEAR`/`MAX_YEAR` indicating active range). The `row_filters` config filters to only teams active during the current season:
+**Opponent mirrors (17):** `opp_*` variants of all base fields
 
-```python
-"row_filters": [
-    {"field": "MIN_YEAR", "op": "lte", "value_template": "{season_end_year}"},
-    {"field": "MAX_YEAR", "op": "gte", "value_template": "{season_end_year}"},
-]
-```
+**On-court mirrors (17):** `on_*` variants of all base fields
 
-**Resolution:** The config is correct and config-driven. Implemented the consumer:
+**Derived (2):** `points` (team), `assist_points` (team + player)
 
-1. `apply_row_filters()` in `src/lib/extract.py` -- filters rows in every result set based on dataset-level `row_filters` config. Supports `lte`, `gte`, `eq` operators with template variable resolution.
-2. Called in `src/orchestrator.py` `_run_groups` -- applied after fetch, before `execute_group`. Template variables (e.g. `season_end_year`) are resolved from the orchestrator's runtime context.
+**Special (4):** `secs`, `o_poss_secs`, `d_poss_secs`, `win`
 
-This is config-driven: the filter lives in the dataset definition, the orchestrator reads and applies it, and no individual column entry needs to know about filtering.
-
-### 7.2 `pbp_data` → `pbp_stats` Rename
-
-**Finding:** `db_columns.py` has 34 entries using `"pbp_data"` as the dataset key. The tracking doc and D-2 decision specify `"pbp_stats"`.
-
-**Action:** Rename all 34 `"pbp_data"` entries in `db_columns.py` to `"pbp_stats"` before PBP implementation begins. This is a mechanical find-and-replace.
+Every `DatasetMapping` entry has an explicit `min_season`. `o_fouls_draws` player_games is gated at `"2005-06"`. All others are `None`.
 
 ---
 
-## 8. File Manifest
+## 8. Decisions
 
-| File | Purpose | Status |
-|---|---|---|
-| `project_tracking/pbp.md` | PBP spec: standard columns, events, result_set formulas | DONE |
-| `project_tracking/pbp_tracking.md` | This file: implementation tracking, decisions, plans | DONE |
-| `src/definitions/pipeline.py` | `maintain_pbp` in `league_ingest` cluster, Phase Literal | DONE |
-| `src/definitions/datasets.py` | `iterates_by`, `target_tables` Dict, `per_season_type` rename | DONE |
-| `src/definitions/db_columns.py` | 34 PBP entries (rename `pbp_data` → `pbp_stats`). Add PBP-derived mappings for unmapped columns. | TODO |
-| `src/definitions/schema.py` | Table definitions (no changes needed for PBP) | DONE |
-| `src/sources/nba_api/config.py` | `entity_fields` + `entity_params` replacing `target_id` | DONE |
-| `src/lib/executor.py` | `ctx.entity_param` replacing `_target_api_param()` | DONE |
-| `src/lib/call_grouper.py` | `iterates_by` replacing `execution_tier` | DONE |
-| `src/lib/coverage_tracker.py` | `iterates_by` replacing `execution_tier` | DONE |
-| `src/orchestrator.py` | `_resolve_entity_for_target()`, `_generic_targets_for_dataset()`. Define `_phase_maintain_pbp` handler. | PARTIAL |
-| `src/sources/nba_api/pbp_handler.py` | Source-specific PBP normalizer: raw nba_api PBP → standard format | TODO |
-| `src/lib/pbp/__init__.py` | Package init for PBP library modules | TODO |
-| `src/lib/pbp/schema.py` | Standard PBP format as TypedDict (event types, result_set fields) | TODO |
-| `src/lib/pbp/accumulator.py` | Core accumulation engine: standard PBP → team/player result_sets | TODO |
-| `src/lib/pbp/events.py` | Event classification and possession logic | TODO |
-| `src/lib/pbp/lineups.py` | Player in/out inference from event sequences | TODO |
-| `src/lib/extract.py` | `apply_row_filters()` -- dataset-level post-fetch row filtering | DONE |
-| `src/definitions/leagues.py` | Add FT trip rules for NBA | TODO |
+| # | Decision | Resolution | Status |
+|---|---|---|---|
+| D-1 | PBP source | `nbastats` from shufinskiy/nba_data, seasons 2000--2025 | DECIDED |
+| D-2 | Dataset key | `pbp_stats` | DECIDED |
+| D-3 | Standard PBP persistence | In-memory only (PBPEvent never written to DB) | DECIDED |
+| D-4 | Execution strategy | Custom `_maintain_pbp` handler, `iterates_by: "game"` | DECIDED |
+| D-5 | 3PT detection | Description text "3PT" keyword (not shotdetail join) | DECIDED |
+| D-6 | Assist/steal detection | PERSON2TYPE != 0 on EVENTMSGTYPE 1/5 | DECIDED |
+| D-7 | Block detection | Description text "BLOCK" keyword + blocker name resolution | DECIDED |
+| D-8 | Offensive foul detection | EVENTMSGACTIONTYPE IN (4, 26) | DECIDED |
+| D-9 | o_fouls_draws player gap | `min_season: "2005-06"` gates pre-2005 player attribution | DECIDED |
+| D-10 | Source season range | 2000-01 to 2024-25 | DECIDED |
+| D-11 | Data gating | Column: `min_season`. Row: `where_clause` on merge. NULL->0: extraction time for stats tables. | DECIDED |
+| D-12 | Possession tracking | Derived from event sequences | DECIDED |
+| D-13 | Player in/out tracking | Infer from EVENTMSGTYPE=8 + `lineup_size` from leagues | DECIDED |
+| D-14 | FT trip rules | Per-league config in `leagues.py` | DECIDED |
+| D-15 | Definitions/lib boundary | pbp.py = pure config. accumulator.py = code. No mixing. | DECIDED |
+| D-16 | League operational config | `lineup_size` added to `League` TypedDict (5 for NBA) | DECIDED |
+| D-17 | Result set structure | Single unified `RESULT_SET_FIELDS` dict. All opp/on fields explicit. | DECIDED |
 
 ---
 
-## 9. Implementation Phases
+## 9. Known Issues
 
-### Phase 0: Config Refactor (Complete)
-- [x] Replace `execution_tier` with `iterates_by` in Dataset type
-- [x] Change `target_tables` from `List[str]` to `Dict[str, str]` (table → entity_type)
-- [x] Replace `API_FIELD_NAMES['target_id']` with `entity_fields` + `entity_params` in source config
-- [x] Remove `_target_api_param()` from executor, use `ctx.entity_param`
-- [x] Update orchestrator to resolve entity_type from target_tables dict
-- [x] Update call_grouper to use `iterates_by` instead of `execution_tier`
-- [x] Update all existing dataset entries to new format
-- [x] Rename `season_type_separated` to `per_season_type`
-- [x] Verify no regressions in existing phases
+### 9.1 `_maintain_pbp` Syntax Error (orchestrator.py ~L2453)
+
+The import block inside `_maintain_pbp` has a bare `derive_game_context_events,` line that is not inside a `from` statement. This is a syntax error and blocks the function from loading.
+
+### 9.2 `_maintain_pbp` Is Source-Specific
+
+The handler hardcodes:
+- `class_name` default to `"playbyplayv3"`
+- Direct import from `src.sources.nba_api.client`
+- Calls undefined `parse_api_response` function
+- NBA-specific params (`"league_id": "00"`)
+
+Needs to be made source-agnostic: delegate fetching to the source module, expect `PBPEvent` rows back.
+
+### 9.3 `datasets.py` PBP Entry Hardcodes playbyplayv3
+
+The `pbp_stats` dataset entry hardcodes `"class_name": "playbyplayv3"` and `"endpoint": "playbyplayv3"`. These should point to the nbastats normalizer instead.
+
+---
+
+## 10. Implementation Phases
+
+### Phase 0: Source Data Research
+- [x] Download sample games from nba_data across 5 eras
+- [x] Answer all 10 research questions
+- [x] Update field confidence table based on findings
+- [x] Resolve o_fouls_draws availability (2000-2004 gap identified, min_season solution designed and implemented)
 
 ### Phase 0.5: Pre-PBP Cleanup
-- [x] Rename `pbp_data` → `pbp_stats` in all 34 db_columns.py entries
-- [x] Implement `row_filters` consumer (`apply_row_filters` in extract.py, wired in orchestrator)
-- [ ] Define `_phase_maintain_pbp` stub in orchestrator (fix import crash)
+- [x] Rename `pbp_data` -> `pbp_stats` in all db_columns.py entries
+- [x] Implement `row_filters` consumer (extract.py + orchestrator)
+- [x] Define `_phase_maintain_pbp` in orchestrator
 
-### Phase 1: PBP Foundation
-- [ ] Register `pbp_stats` dataset in `DATASETS["nba_id"]`
-  - `phase: "maintain_pbp"`, `iterates_by: "game"`, `per_season_type: True`
-  - `target_tables: {"staging.team_games": "team", "staging.player_games": "player"}`
-  - `source_mapping: {"class_name": "playbyplayv3", ...}`
-- [ ] Define standard PBP format as TypedDict in `src/lib/pbp/schema.py`
-  - Event type Literal, standard column TypedDicts, result_set field TypedDicts
-- [ ] Implement nba_api PBP normalizer (`src/sources/nba_api/pbp_handler.py`)
-  - Raw nba_api PBP response → standard PBP format DataFrame
-  - Event classification: map source-specific event strings to standard event types
-- [ ] Implement basic accumulator (`src/lib/pbp/accumulator.py`)
-  - Standard PBP events → team result_set (sum events by team_id)
-  - Handle simple events (fg2_make, turnover, etc.) and complex events (poss_ending_ft_trip)
-- [ ] Wire `_phase_maintain_pbp` in orchestrator
-  - Iterate games from `staging.games` WHERE league + season + type
-  - Per game: fetch raw PBP → normalize → accumulate → write result_sets
-  - Use existing `bulk_upsert` or `write_entity_rows` for DB writes
+### Phase 1: PBP Infrastructure
+- [x] Create `src/definitions/pbp.py` -- PBPEventType, PBPEvent, unified RESULT_SET_FIELDS, event groupings
+- [x] Create `src/lib/accumulator.py` -- accumulate_result_set core, event derivation
+- [x] Add `lineup_size` to `League` TypedDict in `leagues.py` (5 for NBA)
+- [x] Wire db_columns: all 42 PBP columns mapped
+- [x] Add `min_season` to all DatasetMapping entries
+- [x] Wire `min_season` gating into `extract_columns_from_result` + executor call sites
+- [x] Gate games=0 rows at merge (`where_clause` in MERGE_TABLE_CONFIG)
+- [x] Remove stats normalization cleanup (delete `normalize_*` from cleanup.py/pipeline.py/orchestrator.py)
+
+### Phase 1.5: Orchestrator Cleanup
+- [ ] Fix syntax error in `_maintain_pbp` import block
+- [ ] Remove playbyplayv3 hardcoding from `_maintain_pbp`
+- [ ] Remove playbyplayv3 hardcoding from `datasets.py` pbp_stats entry
+- [ ] Make `_maintain_pbp` source-agnostic (delegate fetch to source, expect PBPEvent rows)
 
 ### Phase 2: Player Result Set + Lineups
-- [ ] Extend accumulator to produce player result_set
-  - Three scopes: player, opp_player, on_player
-- [ ] Implement player_in/player_out inference (`src/lib/pbp/lineups.py`)
-  - Parse event sequences to retroactively build in/out events at period boundaries
+- [ ] Implement player_in/player_out inference from event sequences using `lineup_size`
 - [ ] Implement on-court event tracking
-  - Track which players are on court at each event timestamp
-  - Filter opp_player and on_player events to "while player is on court"
 
-### Phase 3: DB Column Integration
-- [ ] Add PBP-derived mappings for `o_poss_secs`, `d_poss_secs`, `o_fouls_draws`
-- [ ] Derive `assist_points` from PBP: `fg2_assists*2 + fg3_assists*3`
-  - Use existing `derived` mechanism in db_columns.py
-- [ ] Verify first-write-wins semantics with existing box-score mappings
-  - PBP and box-score may both write to `team_games`/`player_games`
-  - First-write-wins within a single identity run prevents conflicts
-
-### Phase 4: Possession Logic
-- [ ] Implement `poss_start`/`poss_end` event derivation in `src/lib/pbp/events.py`
-- [ ] Implement `poss_ending_ft_trip` with NBA-specific rules
+### Phase 3: Possession Logic
+- [ ] Implement `poss_start`/`poss_end` event derivation
+- [ ] Implement `poss_ending_ft_trip` with league-specific rules
 - [ ] Add FT trip rules to `leagues.py`
-- [ ] Implement `o_poss_secs`/`d_poss_secs` calculation from possession events
+
+### Phase 4: Source Selection + Normalizer
+- [x] Finalize source selection: nbastats-only for all seasons 2000--2025
+- [ ] Implement nbastats normalizer (Section 3.1)
+- [ ] Register nbastats dataset in `DATASETS`
+- [ ] Wire `min_season` gating into `_build_pbp_column_map` for PBP path
 
 ### Phase 5: Hardening
-- [ ] Coverage tracking integration (PBP likely needs `"games_coverage"`)
-- [ ] Error handling for incomplete PBP data (missing events, partial games)
-- [ ] Reprocessing support (if D-3 persistence is added later)
+- [ ] Coverage tracking integration
+- [ ] Error handling for incomplete PBP data
 - [ ] Performance optimization for full-season backfill
-
----
-
-## 10. Open Questions
-
-1. **PBP column for `assist_points`**: Should we add a computed field to the PBP result_set (`fg2_assists*2 + fg3_assists*3`) or use the `derived` mechanism in `db_columns.py` to compute it from existing `fg2_assists` and `fg3_assists` fields? The `derived` approach is more DRY (single source of truth for the formula).
-
-2. **Alternative PBP sources for box-score columns**: Should `fouls`, `blocks`, and `steals` get PBP mappings as alternative/secondary sources to box score? Currently these are box-score-only. PBP provides them but with different semantics (committed fouls vs drawn fouls, etc.).
-
-3. **Incomplete PBP data handling**: How should the accumulator handle incomplete PBP data (e.g., missing events, partial games, source errors)? Options: skip the game entirely, accumulate with NULL for missing fields, or log and continue.
-
-4. **Season coverage model for PBP**: Per-game coverage seems natural (each game is independently fetchable). Should we use `"games_coverage"` or `"seasons_coverage"` in the dataset config?
-
-5. **`points` field**: The team result set has a `points` field (`fg2m*2 + fg3m*3 + ftm`). Does this map to any existing `db_columns` entry, or is it only used for the `win` derivation in the player result set?

@@ -3,10 +3,6 @@ Shoot the Sheet - ETL Cleanup
 
 Multi-phase data hygiene:
 
-  Phase 0: Stats normalization (null/zero)
-      normalize_nulls_zeroes - Normalize zero-values and NULLs in stats
-                             tables based on minutes played.
-
   Phase A: Per-league stats retention
       prune_stats_retention - DELETE stats rows older than the league's
                               retention window.
@@ -33,125 +29,6 @@ from src.lib.leagues_resolver import get_oldest_retained_season
 from src.lib.postgres import db_connection, get_db_connection, quote_col
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# PHASE 0 -- per-league stats null/zero normalization
-# ---------------------------------------------------------------------------
-
-# Columns excluded from zero→null conversion (these are meaningful zeros).
-_ZERO_PRESERVE_COLS = frozenset({"mins", "games", "poss", "opp_poss"})
-
-# Columns that are never stats (system / identity / FK / audit).
-_SYSTEM_COLS = frozenset(
-    {
-        "sts_id",
-        "player_id",
-        "team_id",
-        "league_code",
-        "season",
-        "season_type",
-        "updated_at",
-        "created_at",
-        "entity",
-    }
-)
-
-# Only these data types are considered stats columns.
-_NUMERIC_TYPES = frozenset(
-    {
-        "smallint",
-        "integer",
-        "bigint",
-        "real",
-        "double precision",
-        "numeric",
-    }
-)
-
-
-def _discover_stats_columns(
-    cur, table_name: str, schema_name: str = "core"
-) -> List[str]:
-    """Return ordered list of numeric stats columns for a table."""
-    cur.execute(
-        """
-        SELECT column_name
-          FROM information_schema.columns
-         WHERE table_schema = %s
-           AND table_name   = %s
-           AND data_type    = ANY(%s)
-           AND column_name != ALL(%s)
-         ORDER BY ordinal_position
-        """,
-        (schema_name, table_name, list(_NUMERIC_TYPES), list(_SYSTEM_COLS)),
-    )
-    return [row[0] for row in cur.fetchall()]
-
-
-def normalize_nulls_zeroes(league_code: Union[str, None] = None) -> int:
-    """Normalize null/zero values in core stats tables."""
-    return _normalize_table(league_code, schema_name="core")
-
-
-def normalize_intermediate(league_code: Union[str, None] = None) -> int:
-    """Normalize null/zero values in intermediate stats tables.
-
-    Must run BEFORE promote_intermediate so core receives pristine data.
-    """
-    return _normalize_table(league_code, schema_name="intermediate")
-
-
-def _normalize_table(
-    league_code: Union[str, None] = None, schema_name: str = "core"
-) -> int:
-    """Normalize null/zero values in stats tables based on minutes played.
-
-    If *league_code* is None, normalizes across all registered leagues.
-    """
-    league_codes = [league_code] if league_code else list(LEAGUES)
-    updated = 0
-    with db_connection() as conn:
-        with conn.cursor() as cur:
-            for lc in league_codes:
-                for table_name in ("player_seasons", "team_seasons"):
-                    stats_cols = _discover_stats_columns(
-                        cur, table_name, schema_name=schema_name
-                    )
-                    if not stats_cols:
-                        continue
-
-                    zero_to_null = [
-                        c for c in stats_cols if c not in _ZERO_PRESERVE_COLS
-                    ]
-                    if zero_to_null:
-                        assignments = ", ".join(
-                            f"{quote_col(c)} = NULLIF({quote_col(c)}, 0)"
-                            for c in zero_to_null
-                        )
-                        cur.execute(
-                            f"UPDATE {schema_name}.{table_name} SET {assignments}"
-                            f" WHERE league_code = %s AND mins = 0",
-                            (lc,),
-                        )
-                        updated += cur.rowcount
-
-                    null_to_zero = ", ".join(
-                        f"{quote_col(c)} = COALESCE({quote_col(c)}, 0)"
-                        for c in stats_cols
-                    )
-                    cur.execute(
-                        f"UPDATE {schema_name}.{table_name} SET {null_to_zero}"
-                        f" WHERE league_code = %s AND mins > 0",
-                        (lc,),
-                    )
-                    updated += cur.rowcount
-
-        conn.commit()
-
-    if updated:
-        logger.info("Normalized null/zero in %s: %d rows updated", schema_name, updated)
-    return updated
 
 
 # ---------------------------------------------------------------------------

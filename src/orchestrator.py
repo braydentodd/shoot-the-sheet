@@ -31,20 +31,17 @@ ExecutionContext) lives here.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict, List, Sequence, Union
+from typing import Any, Callable, Dict, List, Union
 
 from psycopg2 import sql
-from psycopg2.extras import RealDictCursor
 
 from src.definitions.datasets import DATASETS
-from src.definitions.db_columns import DB_COLUMNS, DatasetMapping
 from src.definitions.execution import GAME_LOOKBACK_DAYS
 from src.definitions.leagues import LEAGUES
 from src.definitions.pipeline import PIPELINE
 from src.definitions.sources import SOURCES
 from src.lib.call_grouper import build_call_groups
 from src.lib.cleanup import (
-    normalize_intermediate,
     prune_entities,
     prune_stats_retention,
 )
@@ -53,7 +50,6 @@ from src.lib.coverage_tracker import (
     is_coverage_current,
     prune_coverage,
     seed_coverage,
-    upsert_coverage,
 )
 from src.lib.error_recorder import log_error_simple
 from src.lib.executor import ExecutionContext, execute_group
@@ -64,7 +60,7 @@ from src.lib.leagues_resolver import (
     get_regular_season_types,
     get_retained_seasons,
 )
-from src.lib.load import _resolve_league_id, bulk_upsert
+from src.lib.load import _resolve_league_id
 from src.lib.postgres import db_connection, quote_col
 from src.lib.schema_builder import bootstrap_schema
 from src.lib.season_detector import _check_recent_games
@@ -1464,6 +1460,7 @@ MERGE_TABLE_CONFIG = {
             ("ext_team_id", "team_id", "core.identities_teams"),
         ],
         "value_resolution": {},
+        "where_clause": "s.games > 0",
     },
     "player_seasons": {
         "intermediate_table": "intermediate.player_seasons",
@@ -1481,6 +1478,7 @@ MERGE_TABLE_CONFIG = {
             ("ext_team_id", "team_id", "core.identities_teams"),
         ],
         "value_resolution": {},
+        "where_clause": "s.games > 0",
     },
     "games": {
         "intermediate_table": "intermediate.games",
@@ -1604,6 +1602,8 @@ def _merge_staging(
         identity_joins = cfg["identity_joins"]
         value_resolution = cfg["value_resolution"]
         extra_joins = cfg.get("extra_joins", [])
+        config_where = cfg.get("where_clause", "")
+        extra_where = f" AND {config_where}" if config_where else ""
 
         # Discover valid columns from DB_COLUMNS for this table in staging
         staging_cols = _get_cols_for_table(bare_name, schema_qualifier="staging")
@@ -1707,7 +1707,7 @@ def _merge_staging(
                     INSERT INTO {intermediate_table} AS {bare_name} ({insert_sql})
                     SELECT {select_sql}
                       FROM {from_clause}
-                     WHERE s.identity = %s
+                     WHERE s.identity = %s{extra_where}
                     ON CONFLICT ({conflict_sql}) DO UPDATE SET {update_sql}
                     """
                 else:
@@ -1715,7 +1715,7 @@ def _merge_staging(
                     INSERT INTO {intermediate_table} ({insert_sql})
                     SELECT {select_sql}
                       FROM {from_clause}
-                     WHERE s.identity = %s
+                     WHERE s.identity = %s{extra_where}
                     ON CONFLICT ({conflict_sql}) DO NOTHING
                     """
 
@@ -2375,11 +2375,6 @@ def _phase_clean_intermediate(ctx: dict) -> int:
     return _clean_intermediate()
 
 
-def _phase_normalize_intermediate(ctx: dict) -> int:
-    logger.info(phase_marker("normalize_intermediate"))
-    return normalize_intermediate()
-
-
 def _phase_prune_stats(ctx: dict) -> int:
     logger.info(phase_marker("prune_stats"))
     return prune_stats_retention(current_season=ctx["season"])
@@ -2404,6 +2399,279 @@ def _phase_prune_coverage(ctx: dict) -> int:
     return total
 
 
+# ============================================================================
+# maintain_pbp
+# ============================================================================
+
+
+def _phase_maintain_pbp(ctx: dict) -> int:
+    """Phase handler for play-by-play maintenance.
+
+    Iterates over games for the current season, calls the PBP API for
+    each game, normalizes the response, accumulates into team/player
+    result sets, and writes to staging via db_columns.
+
+    Delegates to _maintain_pbp for the actual work.
+    """
+    league_code = ctx["league_code"]
+    season = ctx["season"]
+    failed = ctx["failed"]
+    total_rows = 0
+    logger.info(phase_marker("maintain_pbp"))
+
+    for identity_code, identity_source, _ in _iter_league_identities(
+        league_code, "maintain_pbp"
+    ):
+        total_rows += _maintain_pbp(
+            league_code, season, identity_code, identity_source, failed
+        )
+    return total_rows
+
+
+def _maintain_pbp(
+    league_code: str,
+    season: str,
+    identity_code: str,
+    identity_source: str,
+    failed: List[Dict[str, Any]],
+) -> int:
+    """Iterate over games and accumulate PBP into staging.
+
+    For each game in the season:
+    1. Fetch raw PBP from the source normalizer (source-agnostic)
+    2. Derive context events (possessions, substitutions)
+    3. Accumulate into team and player result sets
+    4. Map result sets to db_columns
+    5. Write to staging.team_games and staging.player_games
+    """
+    from src.lib.pbp_accumulator import (
+        accumulate_result_set,
+        derive_game_context_events,
+    )
+    from src.lib.load import write_staged_stats_rows
+
+    # Get game IDs for this season from staging.games
+    game_rows = _load_pbp_games(league_code, season, identity_code)
+    if not game_rows:
+        logger.info("No games found for PBP: league=%s season=%s", league_code, season)
+        return 0
+
+    # Season gating: skip if outside the dataset's min/max range.
+    ds_cfg = DATASETS.get(identity_code, {}).get("pbp_stats", {})
+    min_s = ds_cfg.get("min_season")
+    max_s = ds_cfg.get("max_season")
+    if (min_s and season < min_s) or (max_s and season > max_s):
+        logger.info(
+            "PBP: season %s outside dataset range [%s, %s] -- skipping",
+            season, min_s or "-", max_s or "-")
+        return 0
+
+    lineup_size = LEAGUES[league_code]["lineup_size"]
+
+    logger.info(
+        "PBP: %d games to process for league=%s season=%s identity=%s",
+        len(game_rows), league_code, season, identity_code,
+    )
+
+    # Build fetcher
+    _config_mod, client_mod = _load_source(identity_source)
+
+    # Build the PBP column mapping from db_columns
+    pbp_col_map = _build_pbp_column_map(league_code, identity_code)
+
+    total_rows = 0
+    for game_info in game_rows:
+        ext_game_id = game_info["ext_game_id"]
+        home_team_id = game_info.get("home_ext_id", "")
+        away_team_id = game_info.get("away_ext_id", "")
+
+        if not home_team_id or not away_team_id:
+            logger.debug(
+                "Skipping game %s: missing team IDs (home=%s, away=%s)",
+                ext_game_id, home_team_id, away_team_id,
+            )
+            continue
+
+        # 1. Fetch + Normalize via source normalizer
+        try:
+            events = client_mod.fetch_game_pbp(
+                ext_game_id, season, home_team_id, away_team_id,
+                identity=identity_code,
+            )
+        except Exception as exc:
+            logger.warning("PBP fetch failed for game %s: %s", ext_game_id, exc)
+            failed.append({
+                "dataset": "pbp_stats",
+                "game_id": ext_game_id,
+                "error": str(exc),
+            })
+            continue
+
+        if not events:
+            logger.debug("No PBP events for game %s", ext_game_id)
+            continue
+
+        # 2. Derive context events (possessions, substitutions)
+        events = derive_game_context_events(
+            events, home_team_id, away_team_id, lineup_size=lineup_size,
+        )
+
+        # 3. Accumulate team result sets
+        team_results = []
+        for team_id in (home_team_id, away_team_id):
+            opp_id = away_team_id if team_id == home_team_id else home_team_id
+            result_set = accumulate_result_set(events, "team", team_id, opp_entity_id=opp_id)
+            result_set["game_id"] = ext_game_id
+            team_results.append((team_id, result_set))
+
+        # 4. Accumulate player result sets (if we have player data)
+        # For Phase 1, we only do team-level.  Player-level requires
+        # lineup data (player_in/player_out events) which is Phase 2.
+        # TODO: Phase 2 - accumulate player result sets with on-court tracking
+
+        # 5. Write team results to staging
+        team_rows = {}
+        for team_id, result_set in team_results:
+            row = _map_pbp_result_to_columns(
+                result_set, pbp_col_map, "team_games"
+            )
+            if row:
+                row["ext_team_id"] = team_id
+                row["ext_game_id"] = ext_game_id
+                team_rows[team_id] = row
+
+        if team_rows:
+            try:
+                written = write_staged_stats_rows(
+                    "team",
+                    team_rows,
+                    season,
+                    "regular_season",  # season_type for PBP
+                    league_code,
+                    identity_code,
+                )
+                total_rows += written
+            except Exception as exc:
+                logger.warning(
+                    "PBP team write failed for game %s: %s", ext_game_id, exc
+                )
+                failed.append({
+                    "dataset": "pbp_stats",
+                    "game_id": ext_game_id,
+                    "error": str(exc),
+                })
+
+    logger.info("PBP complete: %d rows written for %s", total_rows, season)
+    return total_rows
+
+
+def _load_pbp_games(
+    league_code: str,
+    season: str,
+    identity_code: str,
+) -> List[Dict[str, Any]]:
+    """Load game IDs and team IDs from staging.games for PBP processing."""
+    from src.lib.postgres import db_connection
+    from src.lib.load import _resolve_league_id
+
+    query = """
+        SELECT
+            g.ext_id AS ext_game_id,
+            ht.ext_id AS home_ext_id,
+            at.ext_id AS away_ext_id
+        FROM staging.games g
+        JOIN staging.leagues_teams ht_league
+            ON ht_league.league_code = g.league_code
+            AND ht_league.identity = g.identity
+        JOIN staging.teams ht
+            ON ht.identity = g.identity
+            AND ht.ext_id = ht_league.ext_team_id
+            AND ht.home_away = 'home'
+        JOIN staging.leagues_teams at_league
+            ON at_league.league_code = g.league_code
+            AND at_league.identity = g.identity
+        JOIN staging.teams at
+            ON at.identity = g.identity
+            AND at.ext_id = at_league.ext_team_id
+            AND at.home_away = 'away'
+        WHERE g.league_code = %s
+            AND g.season = %s
+            AND g.identity = %s
+    """
+
+    try:
+        with db_connection() as conn:
+            league_val = _resolve_league_id(conn, league_code)
+            with conn.cursor() as cur:
+                cur.execute(query, (league_val, season, identity_code))
+                if cur.description is None:
+                    return []
+                columns = [desc[0] for desc in cur.description]
+                return [dict(zip(columns, row)) for row in cur.fetchall()]
+    except Exception as exc:
+        logger.warning("Failed to load PBP games: %s", exc)
+        return []
+
+
+def _build_pbp_column_map(
+    league_code: str,
+    identity_code: str,
+) -> Dict[str, Dict[str, str]]:
+    """Build mapping from PBP result set fields to DB columns.
+
+    Returns:
+        {target_table: {accumulator_field: db_column_name}}
+
+    Example:
+        {
+            "team_games": {"fg2m": "fg2m", "fg3m": "fg3m", ...},
+            "player_games": {"fg2m": "fg2m", ...},
+        }
+    """
+    from src.definitions.db_columns import DB_COLUMNS
+
+    col_map: Dict[str, Dict[str, str]] = {}
+
+    for col_name, col_meta in DB_COLUMNS.items():
+        mapping = col_meta.get("dataset_mapping")
+        if not mapping:
+            continue
+
+        league_map = mapping.get(league_code, {})
+        identity_map = league_map.get(identity_code, {})
+
+        for target, target_sources in identity_map.items():
+            if not isinstance(target_sources, dict):
+                continue
+            pbp_source = target_sources.get("pbp_stats")
+            if not pbp_source:
+                continue
+
+            field = pbp_source.get("field")
+            if not field:
+                continue
+
+            target_map = col_map.setdefault(target, {})
+            target_map[field] = col_name
+
+    return col_map
+
+
+def _map_pbp_result_to_columns(
+    result_set: Dict[str, Any],
+    pbp_col_map: Dict[str, Dict[str, str]],
+    target_table: str,
+) -> Dict[str, Any]:
+    """Map accumulator result set fields to DB column names."""
+    target_map = pbp_col_map.get(target_table, {})
+    row: Dict[str, Any] = {}
+    for field, col_name in target_map.items():
+        val = result_set.get(field)
+        if val is not None:
+            row[col_name] = val
+    return row
+
+
 PHASE_HANDLERS: Dict[str, Callable] = {
     "build_schema": _phase_build_schema,
     "detect_season_activity": _phase_detect_season_activity,
@@ -2419,7 +2687,6 @@ PHASE_HANDLERS: Dict[str, Callable] = {
     "match_entities": _phase_match_entities,
     "merge_staging": _phase_merge_staging,
     "promote_intermediate": _phase_promote_intermediate,
-    "normalize_intermediate": _phase_normalize_intermediate,
     "clean_staging": _phase_clean_staging,
     "clean_intermediate": _phase_clean_intermediate,
     "prune_stats": _phase_prune_stats,

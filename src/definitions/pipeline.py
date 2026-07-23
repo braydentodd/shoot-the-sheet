@@ -33,7 +33,6 @@ Phase = Literal[
     "maintain_profiles",
     "merge_staging",
     "promote_intermediate",
-    "normalize_intermediate",
     "clean_staging",
     "clean_intermediate",
     "prune_stats",
@@ -68,7 +67,6 @@ PIPELINE: Dict[str, List[str]] = {
         "merge_staging",
     ],
     "execution_end": [
-        "normalize_intermediate",
         "promote_intermediate",
         "clean_staging",
         "clean_intermediate",

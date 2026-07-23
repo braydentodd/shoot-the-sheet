@@ -57,6 +57,18 @@ SOURCES: Dict[str, Source] = {
             },
         },
     },
+    "nba_data": {
+        "leagues": {
+            "NBA": {
+                "id": "00",
+                "season_types": {
+                    "regular_season": "Regular Season",
+                    "playoffs": "Playoffs",
+                    "play_in": "PlayIn",
+                },
+            },
+        },
+    },
 }
 
 

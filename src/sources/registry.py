@@ -10,9 +10,12 @@ from typing import Any, Tuple
 
 from src.sources.nba_api import client as nba_client
 from src.sources.nba_api import config as nba_config
+from src.sources.nba_data import client as nba_data_client
+from src.sources.nba_data import config as nba_data_config
 
 SOURCE_MODULES: dict[str, Tuple[Any, Any]] = {
     "nba_api": (nba_config, nba_client),
+    "nba_data": (nba_data_config, nba_data_client),
 }
 
 

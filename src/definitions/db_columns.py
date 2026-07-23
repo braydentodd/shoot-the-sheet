@@ -89,6 +89,10 @@ class DatasetMapping(TypedDict, total=False):
 
             Shape: ``{"group_by": "GAME_ID", "match_field": "MATCHUP",
                     "match_contains": "vs."}``
+        min_season: Earliest season this field is available from this
+            dataset (e.g. ``"2005-06"``).  For seasons before this, the
+            field is not populated and remains NULL.  ``None`` means
+            available from the dataset's earliest season.
     """
 
     field: Union[str, None]
@@ -98,6 +102,7 @@ class DatasetMapping(TypedDict, total=False):
     params: Union[Dict[str, Any], None]
     derived: Union[Dict[str, Any], None]
     cross_row: Union[Dict[str, Any], None]
+    min_season: Union[str, None]
 
 
 class Column(TypedDict, total=True):
@@ -244,6 +249,7 @@ DB_COLUMNS: Dict[str, Column] = {
                         "league_schedule": {
                             "field": "seasonYear",
                             "transform": "safe_str",
+                            "min_season": None,
                             "result_set": "SeasonGames",
                         }
                     }
@@ -301,11 +307,13 @@ DB_COLUMNS: Dict[str, Column] = {
                     "games": {
                         "team_game_stats": {
                             "field": "GAME_DATE",
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
                         },
                         "league_schedule": {
                             "field": "gameDateEst",
                             "transform": "parse_date",
+                            "min_season": None,
                             "result_set": "SeasonGames",
                         },
                     }
@@ -341,6 +349,7 @@ DB_COLUMNS: Dict[str, Column] = {
                         "league_schedule": {
                             "field": "gameId",
                             "transform": "safe_str",
+                            "min_season": None,
                             "result_set": "SeasonGames",
                         }
                     }
@@ -373,6 +382,7 @@ DB_COLUMNS: Dict[str, Column] = {
                     "games": {
                         "league_schedule": {
                             "field": "homeTeam_teamId",
+                            "min_season": None,
                             "result_set": "SeasonGames",
                         }
                     }
@@ -391,6 +401,7 @@ DB_COLUMNS: Dict[str, Column] = {
                     "games": {
                         "league_schedule": {
                             "field": "awayTeam_teamId",
+                            "min_season": None,
                             "result_set": "SeasonGames",
                         }
                     }
@@ -486,6 +497,7 @@ DB_COLUMNS: Dict[str, Column] = {
                     "games": {
                         "league_schedule": {
                             "field": "isNeutral",
+                            "min_season": None,
                             "result_set": "SeasonGames",
                         }
                     }
@@ -536,6 +548,7 @@ DB_COLUMNS: Dict[str, Column] = {
                         "teams_players_rosters": {
                             "field": "PLAYER",
                             "transform": "normalize_name",
+                            "min_season": None,
                             "result_set": "CommonTeamRoster",
                         },
                         "player_profiles": {
@@ -551,11 +564,13 @@ DB_COLUMNS: Dict[str, Column] = {
                         "team_basic_stats": {
                             "field": "TEAM_NAME",
                             "transform": "normalize_name",
+                            "min_season": None,
                             "result_set": "LeagueDashTeamStats",
                         },
                         "team_profiles": {
                             "field": "TEAM_NAME",
                             "transform": "normalize_name",
+                            "min_season": None,
                             "result_set": "TeamInfoCommon",
                         },
                     },
@@ -579,6 +594,7 @@ DB_COLUMNS: Dict[str, Column] = {
                         "team_profiles": {
                             "field": "TEAM_ABBREVIATION",
                             "transform": "safe_str",
+                            "min_season": None,
                             "result_set": "TeamInfoCommon",
                         }
                     }
@@ -600,6 +616,7 @@ DB_COLUMNS: Dict[str, Column] = {
                         "team_profiles": {
                             "field": "TEAM_CITY",
                             "transform": "normalize_name",
+                            "min_season": None,
                             "result_set": "TeamInfoCommon",
                         }
                     }
@@ -630,6 +647,7 @@ DB_COLUMNS: Dict[str, Column] = {
                         "team_profiles": {
                             "field": "TEAM_CONFERENCE",
                             "transform": "safe_str",
+                            "min_season": None,
                             "result_set": "TeamInfoCommon",
                         }
                     }
@@ -652,6 +670,7 @@ DB_COLUMNS: Dict[str, Column] = {
                         "player_profiles": {
                             "field": "COUNTRY",
                             "transform": "match_country",
+                            "min_season": None,
                             "result_set": "PlayerIndex",
                         }
                     },
@@ -659,6 +678,7 @@ DB_COLUMNS: Dict[str, Column] = {
                         "team_profiles": {
                             "field": "TEAM_COUNTRY",
                             "transform": "match_country",
+                            "min_season": None,
                             "result_set": "TeamInfoCommon",
                         }
                     },
@@ -687,11 +707,13 @@ DB_COLUMNS: Dict[str, Column] = {
                         "teams_players_rosters": {
                             "field": "BIRTH_DATE",
                             "transform": "parse_birthdate",
+                            "min_season": None,
                             "result_set": "CommonTeamRoster",
                         },
                         "draft_years": {
                             "field": "BIRTHDATE",
                             "transform": "parse_birthdate",
+                            "min_season": None,
                             "result_set": "DraftBoard",
                         },
                     }
@@ -712,9 +734,14 @@ DB_COLUMNS: Dict[str, Column] = {
                     "players": {
                         "player_profiles": {
                             "field": "DRAFT_YEAR",
+                            "min_season": None,
                             "result_set": "PlayerIndex",
                         },
-                        "draft_years": {"field": "SEASON", "result_set": "DraftBoard"},
+                        "draft_years": {
+                            "field": "SEASON",
+                            "min_season": None,
+                            "result_set": "DraftBoard"
+                        },
                     }
                 }
             }
@@ -742,10 +769,12 @@ DB_COLUMNS: Dict[str, Column] = {
                     "teams_players": {
                         "teams_players_rosters": {
                             "field": "NUM",
+                            "min_season": None,
                             "result_set": "CommonTeamRoster",
                         },
                         "player_profiles": {
                             "field": "JERSEY_NUMBER",
+                            "min_season": None,
                             "result_set": "PlayerIndex",
                         },
                     }
@@ -787,16 +816,19 @@ DB_COLUMNS: Dict[str, Column] = {
                         "teams_players_rosters": {
                             "field": "HEIGHT",
                             "transform": "parse_inches",
+                            "min_season": None,
                             "result_set": "CommonTeamRoster",
                         },
                         "player_profiles": {
                             "field": "HEIGHT",
                             "transform": "parse_inches",
+                            "min_season": None,
                             "result_set": "PlayerIndex",
                         },
                         "combine_anthros": {
                             "field": "HEIGHT_WO_SHOES",
                             "transform": "parse_inches",
+                            "min_season": None,
                             "result_set": "DraftCombineStats",
                         },
                     }
@@ -818,6 +850,7 @@ DB_COLUMNS: Dict[str, Column] = {
                         "combine_anthros": {
                             "field": "HEIGHT_W_SHOES",
                             "transform": "parse_inches",
+                            "min_season": None,
                             "result_set": "DraftCombineStats",
                         }
                     }
@@ -839,6 +872,7 @@ DB_COLUMNS: Dict[str, Column] = {
                         "combine_anthros": {
                             "field": "WINGSPAN",
                             "transform": "parse_inches",
+                            "min_season": None,
                             "result_set": "DraftCombineStats",
                         }
                     }
@@ -933,12 +967,14 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_seasons": {
                         "player_basic_stats": {
                             "field": "GP",
+                            "min_season": None,
                             "result_set": "LeagueDashPlayerStats",
                         }
                     },
                     "team_seasons": {
                         "team_basic_stats": {
                             "field": "GP",
+                            "min_season": None,
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
@@ -958,6 +994,7 @@ DB_COLUMNS: Dict[str, Column] = {
                         "player_basic_stats": {
                             "field": "MIN",
                             "scale": 60,
+                            "min_season": None,
                             "result_set": "LeagueDashPlayerStats",
                         },
                     },
@@ -965,13 +1002,20 @@ DB_COLUMNS: Dict[str, Column] = {
                         "player_game_stats": {
                             "field": "MIN",
                             "scale": 60,
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "secs",
+                            "min_season": None,
+                            "result_set": "player",
                         },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
                             "field": "MIN",
                             "scale": 60,
+                            "min_season": None,
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
@@ -979,7 +1023,13 @@ DB_COLUMNS: Dict[str, Column] = {
                         "team_game_stats": {
                             "field": "MIN",
                             "scale": 60,
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "secs",
+                            "min_season": None,
+                            "result_set": "team",
                         },
                     },
                 }
@@ -999,7 +1049,13 @@ DB_COLUMNS: Dict[str, Column] = {
                             "field": "WL",
                             "transform": "eq",
                             "params": {"threshold": "W"},
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "win",
+                            "min_season": None,
+                            "result_set": "player",
                         },
                     },
                     "team_games": {
@@ -1007,6 +1063,7 @@ DB_COLUMNS: Dict[str, Column] = {
                             "field": "WL",
                             "transform": "eq",
                             "params": {"threshold": "W"},
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
                         },
                     },
@@ -1028,12 +1085,14 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_seasons": {
                         "player_basic_stats": {
                             "field": "W",
+                            "min_season": None,
                             "result_set": "LeagueDashPlayerStats",
                         }
                     },
                     "team_seasons": {
                         "team_basic_stats": {
                             "field": "W",
+                            "min_season": None,
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
@@ -1068,7 +1127,12 @@ DB_COLUMNS: Dict[str, Column] = {
                                 "fields": ["FGM", "FG3M"],
                             },
                             "result_set": "LeagueGameLog",
-                        }
+                        },
+                        "pbp_stats": {
+                            "field": "fg2m",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
@@ -1086,7 +1150,12 @@ DB_COLUMNS: Dict[str, Column] = {
                                 "fields": ["FGM", "FG3M"],
                             },
                             "result_set": "LeagueGameLog",
-                        }
+                        },
+                        "pbp_stats": {
+                            "field": "fg2m",
+                            "min_season": None,
+                            "result_set": "team",
+                        },
                     },
                 }
             }
@@ -1117,6 +1186,11 @@ DB_COLUMNS: Dict[str, Column] = {
                             },
                             "result_set": "LeagueGameLog",
                         },
+                        "pbp_stats": {
+                            "field": "fg2a",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
@@ -1134,6 +1208,11 @@ DB_COLUMNS: Dict[str, Column] = {
                                 "fields": ["FGA", "FG3A"],
                             },
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "fg2a",
+                            "min_season": None,
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1151,25 +1230,39 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_seasons": {
                         "player_basic_stats": {
                             "field": "FG3M",
+                            "min_season": None,
                             "result_set": "LeagueDashPlayerStats",
                         }
                     },
                     "player_games": {
                         "player_game_stats": {
                             "field": "FG3M",
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "fg3m",
+                            "min_season": None,
+                            "result_set": "player",
                         },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
                             "field": "FG3M",
+                            "min_season": None,
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
                     "team_games": {
                         "team_game_stats": {
                             "field": "FG3M",
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "fg3m",
+                            "min_season": None,
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1187,25 +1280,39 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_seasons": {
                         "player_basic_stats": {
                             "field": "FG3A",
+                            "min_season": None,
                             "result_set": "LeagueDashPlayerStats",
                         }
                     },
                     "player_games": {
                         "player_game_stats": {
                             "field": "FG3A",
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "fg3a",
+                            "min_season": None,
+                            "result_set": "player",
                         },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
                             "field": "FG3A",
+                            "min_season": None,
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
                     "team_games": {
                         "team_game_stats": {
                             "field": "FG3A",
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "fg3a",
+                            "min_season": None,
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1223,25 +1330,39 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_seasons": {
                         "player_basic_stats": {
                             "field": "FTM",
+                            "min_season": None,
                             "result_set": "LeagueDashPlayerStats",
                         }
                     },
                     "player_games": {
                         "player_game_stats": {
                             "field": "FTM",
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "ftm",
+                            "min_season": None,
+                            "result_set": "player",
                         },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
                             "field": "FTM",
+                            "min_season": None,
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
                     "team_games": {
                         "team_game_stats": {
                             "field": "FTM",
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "ftm",
+                            "min_season": None,
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1259,25 +1380,39 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_seasons": {
                         "player_basic_stats": {
                             "field": "FTA",
+                            "min_season": None,
                             "result_set": "LeagueDashPlayerStats",
                         }
                     },
                     "player_games": {
                         "player_game_stats": {
                             "field": "FTA",
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "fta",
+                            "min_season": None,
+                            "result_set": "player",
                         },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
                             "field": "FTA",
+                            "min_season": None,
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
                     "team_games": {
                         "team_game_stats": {
                             "field": "FTA",
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "fta",
+                            "min_season": None,
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1298,25 +1433,39 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_seasons": {
                         "player_basic_stats": {
                             "field": "OREB",
+                            "min_season": None,
                             "result_set": "LeagueDashPlayerStats",
                         }
                     },
                     "player_games": {
                         "player_game_stats": {
                             "field": "OREB",
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "o_rebs",
+                            "min_season": None,
+                            "result_set": "player",
                         },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
                             "field": "OREB",
+                            "min_season": None,
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
                     "team_games": {
                         "team_game_stats": {
                             "field": "OREB",
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "o_rebs",
+                            "min_season": None,
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1334,25 +1483,39 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_seasons": {
                         "player_basic_stats": {
                             "field": "DREB",
+                            "min_season": None,
                             "result_set": "LeagueDashPlayerStats",
                         }
                     },
                     "player_games": {
                         "player_game_stats": {
                             "field": "DREB",
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "d_rebs",
+                            "min_season": None,
+                            "result_set": "player",
                         },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
                             "field": "DREB",
+                            "min_season": None,
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
                     "team_games": {
                         "team_game_stats": {
                             "field": "DREB",
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "d_rebs",
+                            "min_season": None,
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1373,25 +1536,39 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_seasons": {
                         "player_basic_stats": {
                             "field": "AST",
+                            "min_season": None,
                             "result_set": "LeagueDashPlayerStats",
                         }
                     },
                     "player_games": {
                         "player_game_stats": {
                             "field": "AST",
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "assists",
+                            "min_season": None,
+                            "result_set": "player",
                         },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
                             "field": "AST",
+                            "min_season": None,
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
                     "team_games": {
                         "team_game_stats": {
                             "field": "AST",
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "assists",
+                            "min_season": None,
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1403,7 +1580,26 @@ DB_COLUMNS: Dict[str, Column] = {
         "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
-        "dataset_mapping": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "assist_points",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_stats": {
+                            "field": "assist_points",
+                            "min_season": None,
+                            "result_set": "team",
+                        },
+                    },
+                }
+            }
+        },
     },
     "turnovers": {
         "type": "SMALLINT",
@@ -1416,25 +1612,39 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_seasons": {
                         "player_basic_stats": {
                             "field": "TOV",
+                            "min_season": None,
                             "result_set": "LeagueDashPlayerStats",
                         }
                     },
                     "player_games": {
                         "player_game_stats": {
                             "field": "TOV",
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "turnovers",
+                            "min_season": None,
+                            "result_set": "player",
                         },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
                             "field": "TOV",
+                            "min_season": None,
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
                     "team_games": {
                         "team_game_stats": {
                             "field": "TOV",
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "turnovers",
+                            "min_season": None,
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1455,12 +1665,14 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_seasons": {
                         "player_passing_stats": {
                             "field": "POTENTIAL_AST",
+                            "min_season": None,
                             "result_set": "LeagueDashPtStats",
                         }
                     },
                     "team_seasons": {
                         "team_passing_stats": {
                             "field": "POTENTIAL_AST",
+                            "min_season": None,
                             "result_set": "LeagueDashPtStats",
                         }
                     },
@@ -1482,25 +1694,39 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_seasons": {
                         "player_basic_stats": {
                             "field": "BLK",
+                            "min_season": None,
                             "result_set": "LeagueDashPlayerStats",
                         }
                     },
                     "player_games": {
                         "player_game_stats": {
                             "field": "BLK",
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "blocks",
+                            "min_season": None,
+                            "result_set": "player",
                         },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
                             "field": "BLK",
+                            "min_season": None,
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
                     "team_games": {
                         "team_game_stats": {
                             "field": "BLK",
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "blocks",
+                            "min_season": None,
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1518,25 +1744,39 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_seasons": {
                         "player_basic_stats": {
                             "field": "STL",
+                            "min_season": None,
                             "result_set": "LeagueDashPlayerStats",
                         }
                     },
                     "player_games": {
                         "player_game_stats": {
                             "field": "STL",
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "steals",
+                            "min_season": None,
+                            "result_set": "player",
                         },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
                             "field": "STL",
+                            "min_season": None,
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
                     "team_games": {
                         "team_game_stats": {
                             "field": "STL",
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "steals",
+                            "min_season": None,
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1554,25 +1794,39 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_seasons": {
                         "player_basic_stats": {
                             "field": "PF",
+                            "min_season": None,
                             "result_set": "LeagueDashPlayerStats",
                         }
                     },
                     "player_games": {
                         "player_game_stats": {
                             "field": "PF",
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "fouls",
+                            "min_season": None,
+                            "result_set": "player",
                         },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
                             "field": "PF",
+                            "min_season": None,
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
                     "team_games": {
                         "team_game_stats": {
                             "field": "PF",
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "fouls",
+                            "min_season": None,
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1584,7 +1838,26 @@ DB_COLUMNS: Dict[str, Column] = {
         "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
-        "dataset_mapping": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "o_fouls_draws",
+                            "result_set": "player",
+                            "min_season": "2005-06",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_stats": {
+                            "field": "o_fouls_draws",
+                            "min_season": None,
+                            "result_set": "team",
+                        },
+                    },
+                }
+            }
+        },
     },
     # ==================================================================
     # STATS — HUSTLE
@@ -1603,12 +1876,14 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_seasons": {
                         "player_hustle_stats": {
                             "field": "DEFLECTIONS",
+                            "min_season": None,
                             "result_set": "HustleStatsPlayer",
                         }
                     },
                     "team_seasons": {
                         "team_hustle_stats": {
                             "field": "DEFLECTIONS",
+                            "min_season": None,
                             "result_set": "HustleStatsTeam",
                         }
                     },
@@ -1630,12 +1905,14 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_seasons": {
                         "player_hustle_stats": {
                             "field": "CONTESTED_SHOTS",
+                            "min_season": None,
                             "result_set": "HustleStatsPlayer",
                         }
                     },
                     "team_seasons": {
                         "team_hustle_stats": {
                             "field": "CONTESTED_SHOTS",
+                            "min_season": None,
                             "result_set": "HustleStatsTeam",
                         }
                     },
@@ -1657,25 +1934,39 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_seasons": {
                         "player_advanced_stats": {
                             "field": "POSS",
+                            "min_season": None,
                             "result_set": "LeagueDashPlayerStats",
                         }
                     },
                     "player_games": {
                         "player_game_stats": {
                             "field": "POSS",
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "poss",
+                            "min_season": None,
+                            "result_set": "player",
                         },
                     },
                     "team_seasons": {
                         "team_advanced_stats": {
                             "field": "POSS",
+                            "min_season": None,
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
                     "team_games": {
                         "team_game_stats": {
                             "field": "POSS",
+                            "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "poss",
+                            "min_season": None,
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1687,14 +1978,52 @@ DB_COLUMNS: Dict[str, Column] = {
         "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
-        "dataset_mapping": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "o_poss_secs",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_stats": {
+                            "field": "o_poss_secs",
+                            "min_season": None,
+                            "result_set": "team",
+                        },
+                    },
+                }
+            }
+        },
     },
     "d_poss_secs": {
         "type": "SMALLINT",
         "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
         "default": None,
-        "dataset_mapping": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "d_poss_secs",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_stats": {
+                            "field": "d_poss_secs",
+                            "min_season": None,
+                            "result_set": "team",
+                        },
+                    },
+                }
+            }
+        },
     },
     "poss_ending_ft_trips": {
         "type": "SMALLINT",
@@ -1707,12 +2036,14 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_games": {
                         "pbp_stats": {
                             "field": "poss_ending_ft_trips",
+                            "min_season": None,
                             "result_set": "player",
                         },
                     },
                     "team_games": {
                         "pbp_stats": {
                             "field": "poss_ending_ft_trips",
+                            "min_season": None,
                             "result_set": "team",
                         },
                     },
@@ -1734,12 +2065,14 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_seasons": {
                         "player_possession_stats": {
                             "field": "TIME_OF_POSS",
+                            "min_season": None,
                             "result_set": "LeagueDashPtStats",
                         }
                     },
                     "team_seasons": {
                         "team_possession_stats": {
                             "field": "TIME_OF_POSS",
+                            "min_season": None,
                             "result_set": "LeagueDashPtStats",
                         }
                     },
@@ -1761,12 +2094,14 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_seasons": {
                         "player_possession_stats": {
                             "field": "TOUCHES",
+                            "min_season": None,
                             "result_set": "LeagueDashPtStats",
                         }
                     },
                     "team_seasons": {
                         "team_possession_stats": {
                             "field": "TOUCHES",
+                            "min_season": None,
                             "result_set": "LeagueDashPtStats",
                         }
                     },
@@ -1797,12 +2132,14 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_games": {
                         "pbp_stats": {
                             "field": "fg2m",
+                            "min_season": None,
                             "result_set": "opp_player",
                         },
                     },
                     "team_games": {
                         "pbp_stats": {
                             "field": "fg2m",
+                            "min_season": None,
                             "result_set": "opp_team",
                         },
                     },
@@ -1830,12 +2167,14 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_games": {
                         "pbp_stats": {
                             "field": "fg2a",
+                            "min_season": None,
                             "result_set": "opp_player",
                         },
                     },
                     "team_games": {
                         "pbp_stats": {
                             "field": "fg2a",
+                            "min_season": None,
                             "result_set": "opp_team",
                         },
                     },
@@ -1854,18 +2193,21 @@ DB_COLUMNS: Dict[str, Column] = {
                     "team_seasons": {
                         "team_opp_stats": {
                             "field": "OPP_FG3M",
+                            "min_season": None,
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
                     "player_games": {
                         "pbp_stats": {
                             "field": "fg3m",
+                            "min_season": None,
                             "result_set": "opp_player",
                         },
                     },
                     "team_games": {
                         "pbp_stats": {
                             "field": "fg3m",
+                            "min_season": None,
                             "result_set": "opp_team",
                         },
                     },
@@ -1884,18 +2226,21 @@ DB_COLUMNS: Dict[str, Column] = {
                     "team_seasons": {
                         "team_opp_stats": {
                             "field": "OPP_FG3A",
+                            "min_season": None,
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
                     "player_games": {
                         "pbp_stats": {
                             "field": "fg3a",
+                            "min_season": None,
                             "result_set": "opp_player",
                         },
                     },
                     "team_games": {
                         "pbp_stats": {
                             "field": "fg3a",
+                            "min_season": None,
                             "result_set": "opp_team",
                         },
                     },
@@ -1914,18 +2259,21 @@ DB_COLUMNS: Dict[str, Column] = {
                     "team_seasons": {
                         "team_opp_stats": {
                             "field": "OPP_FTM",
+                            "min_season": None,
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
                     "player_games": {
                         "pbp_stats": {
                             "field": "ftm",
+                            "min_season": None,
                             "result_set": "opp_player",
                         },
                     },
                     "team_games": {
                         "pbp_stats": {
                             "field": "ftm",
+                            "min_season": None,
                             "result_set": "opp_team",
                         },
                     },
@@ -1944,18 +2292,21 @@ DB_COLUMNS: Dict[str, Column] = {
                     "team_seasons": {
                         "team_opp_stats": {
                             "field": "OPP_FTA",
+                            "min_season": None,
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
                     "player_games": {
                         "pbp_stats": {
                             "field": "fta",
+                            "min_season": None,
                             "result_set": "opp_player",
                         },
                     },
                     "team_games": {
                         "pbp_stats": {
                             "field": "fta",
+                            "min_season": None,
                             "result_set": "opp_team",
                         },
                     },
@@ -1974,18 +2325,21 @@ DB_COLUMNS: Dict[str, Column] = {
                     "team_seasons": {
                         "team_opp_stats": {
                             "field": "OPP_OREB",
+                            "min_season": None,
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
                     "player_games": {
                         "pbp_stats": {
                             "field": "o_rebs",
+                            "min_season": None,
                             "result_set": "opp_player",
                         },
                     },
                     "team_games": {
                         "pbp_stats": {
                             "field": "o_rebs",
+                            "min_season": None,
                             "result_set": "opp_team",
                         },
                     },
@@ -2004,18 +2358,21 @@ DB_COLUMNS: Dict[str, Column] = {
                     "team_seasons": {
                         "team_opp_stats": {
                             "field": "OPP_DREB",
+                            "min_season": None,
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
                     "player_games": {
                         "pbp_stats": {
                             "field": "d_rebs",
+                            "min_season": None,
                             "result_set": "opp_player",
                         },
                     },
                     "team_games": {
                         "pbp_stats": {
                             "field": "d_rebs",
+                            "min_season": None,
                             "result_set": "opp_team",
                         },
                     },
@@ -2034,18 +2391,21 @@ DB_COLUMNS: Dict[str, Column] = {
                     "team_seasons": {
                         "team_opp_stats": {
                             "field": "OPP_TOV",
+                            "min_season": None,
                             "result_set": "LeagueDashTeamStats",
                         }
                     },
                     "player_games": {
                         "pbp_stats": {
                             "field": "turnovers",
+                            "min_season": None,
                             "result_set": "opp_player",
                         },
                     },
                     "team_games": {
                         "pbp_stats": {
                             "field": "turnovers",
+                            "min_season": None,
                             "result_set": "opp_team",
                         },
                     },
@@ -2064,12 +2424,14 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_games": {
                         "pbp_stats": {
                             "field": "poss",
+                            "min_season": None,
                             "result_set": "opp_player",
                         },
                     },
                     "team_games": {
                         "pbp_stats": {
                             "field": "poss",
+                            "min_season": None,
                             "result_set": "opp_team",
                         },
                     },
@@ -2088,12 +2450,14 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_games": {
                         "pbp_stats": {
                             "field": "poss_ending_ft_trips",
+                            "min_season": None,
                             "result_set": "opp_player",
                         },
                     },
                     "team_games": {
                         "pbp_stats": {
                             "field": "poss_ending_ft_trips",
+                            "min_season": None,
                             "result_set": "opp_team",
                         },
                     },
@@ -2124,6 +2488,7 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_games": {
                         "pbp_stats": {
                             "field": "fg2m",
+                            "min_season": None,
                             "result_set": "on_player",
                         },
                     },
@@ -2151,6 +2516,7 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_games": {
                         "pbp_stats": {
                             "field": "fg2a",
+                            "min_season": None,
                             "result_set": "on_player",
                         },
                     },
@@ -2169,12 +2535,14 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_seasons": {
                         "player_on_stats": {
                             "field": "FG3M",
+                            "min_season": None,
                             "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
                         }
                     },
                     "player_games": {
                         "pbp_stats": {
                             "field": "fg3m",
+                            "min_season": None,
                             "result_set": "on_player",
                         },
                     },
@@ -2193,12 +2561,14 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_seasons": {
                         "player_on_stats": {
                             "field": "FG3A",
+                            "min_season": None,
                             "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
                         }
                     },
                     "player_games": {
                         "pbp_stats": {
                             "field": "fg3a",
+                            "min_season": None,
                             "result_set": "on_player",
                         },
                     },
@@ -2217,12 +2587,14 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_seasons": {
                         "player_on_stats": {
                             "field": "FTM",
+                            "min_season": None,
                             "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
                         }
                     },
                     "player_games": {
                         "pbp_stats": {
                             "field": "ftm",
+                            "min_season": None,
                             "result_set": "on_player",
                         },
                     },
@@ -2241,12 +2613,14 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_seasons": {
                         "player_on_stats": {
                             "field": "FTA",
+                            "min_season": None,
                             "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
                         }
                     },
                     "player_games": {
                         "pbp_stats": {
                             "field": "fta",
+                            "min_season": None,
                             "result_set": "on_player",
                         },
                     },
@@ -2265,12 +2639,14 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_seasons": {
                         "player_on_stats": {
                             "field": "OREB",
+                            "min_season": None,
                             "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
                         }
                     },
                     "player_games": {
                         "pbp_stats": {
                             "field": "o_rebs",
+                            "min_season": None,
                             "result_set": "on_player",
                         },
                     },
@@ -2289,12 +2665,14 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_seasons": {
                         "player_on_stats": {
                             "field": "DREB",
+                            "min_season": None,
                             "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
                         }
                     },
                     "player_games": {
                         "pbp_stats": {
                             "field": "d_rebs",
+                            "min_season": None,
                             "result_set": "on_player",
                         },
                     },
@@ -2313,12 +2691,14 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_seasons": {
                         "player_on_stats": {
                             "field": "TOV",
+                            "min_season": None,
                             "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
                         }
                     },
                     "player_games": {
                         "pbp_stats": {
                             "field": "turnovers",
+                            "min_season": None,
                             "result_set": "on_player",
                         },
                     },
@@ -2337,6 +2717,7 @@ DB_COLUMNS: Dict[str, Column] = {
                     "player_games": {
                         "pbp_stats": {
                             "field": "poss_ending_ft_trips",
+                            "min_season": None,
                             "result_set": "on_player",
                         },
                     },

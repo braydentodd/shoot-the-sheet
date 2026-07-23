@@ -607,6 +607,26 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
                 "season_type_param": "season_type_all_star",
             },
         },
+        "pbp_stats": {
+            "min_season": None,
+            "max_season": "2024-25",
+            "source": "nba_data",
+            "phase": "maintain_pbp",
+            "coverage": "games_coverage",
+            "iterates_by": "none",
+            "per_season_type": True,
+            "row_filters": None,
+            "target_tables": {
+                "staging.teams": "team",
+                "staging.team_games": "team",
+                "staging.players": "player",
+                "staging.player_games": "player",
+            },
+            "prune_tables": None,
+            "source_mapping": {
+                "season_param_format": {"NBA": "SSSS-EE"},
+            },
+        },
     },
 }
 

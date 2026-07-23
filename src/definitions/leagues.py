@@ -38,6 +38,7 @@ class League(TypedDict):
     season_types: Dict[str, SeasonType]
     calendar_flip: str
     season_retention_start: str
+    lineup_size: int
 
 
 # ============================================================================
@@ -65,5 +66,6 @@ LEAGUES: Dict[str, League] = {
         },
         "calendar_flip": "07/01",
         "season_retention_start": "2024-25",
+        "lineup_size": 5,
     },
 }

@@ -203,6 +203,7 @@ def _execute_multi_season_league_wide(
                     ctx.target,
                     ctx.entity_id_field,
                     id_aliases=ctx.id_aliases,
+                    season=year_label,
                 )
                 for entity_id, row_data in rows.items():
                     if entity_id not in entity_values_by_year:
@@ -293,6 +294,7 @@ def _execute_league_wide(
         ctx.target,
         ctx.entity_id_field,
         id_aliases=ctx.id_aliases,
+        season=ctx.season,
     )
     logger.debug(
         "_execute_league_wide: %s -> %d entities extracted", dataset, len(rows)
@@ -555,6 +557,7 @@ def _execute_per_entity(
             ctx.target,
             ctx.entity_id_field,
             id_aliases=ctx.id_aliases,
+            season=ctx.season,
         )
 
         if tier == "team":

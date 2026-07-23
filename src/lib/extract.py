@@ -17,6 +17,11 @@ from src.lib.transform import apply_transform
 
 logger = logging.getLogger(__name__)
 
+# Tables where NULL stats values should default to 0.
+# Non-stats tables (players, teams, games) preserve NULL for
+# optional fields like draft_year.
+_STATS_TABLES = frozenset({"player_seasons", "team_seasons", "player_games", "team_games"})
+
 # ============================================================================
 # FIELD EXTRACTION
 # ============================================================================
@@ -241,6 +246,7 @@ def extract_columns_from_result(
     target: str,
     entity_id_field: str,
     id_aliases: Union[Dict[str, List[str]], None] = None,
+    season: Union[str, None] = None,
 ) -> Dict[int, Dict[str, Any]]:
     """Extract all mapped columns from an API result for every entity.
 
@@ -248,12 +254,18 @@ def extract_columns_from_result(
     without a ``result_set`` are extracted from every resultSet that
     contains the entity ID field.
 
+    Columns whose ``min_season`` has not yet been reached are silently
+    skipped (the column stays NULL).  Season comparison uses simple string
+    ordering (e.g. ``"2004-05" < "2005-06"``).
+
     Args:
         api_result: Raw API JSON with ``resultSets``.
-        columns: ``{canonical_col_name: source_config}`` — typically a
+        columns: ``{canonical_col_name: source_config}`` -- typically a
                  subset of SOURCES filtered for a specific dataset.
         target: Table routing target (e.g. ``'player_seasons'``, ``'team_games'``).
         entity_id_field: API header name for the entity ID (e.g. 'PLAYER_ID').
+        season: Current season string (e.g. "2000-01").  Used to gate
+            columns with ``min_season``.  ``None`` disables gating.
 
     Returns:
         ``{entity_id: {col_name: value, ...}, ...}``
@@ -297,6 +309,10 @@ def extract_columns_from_result(
                 # Skip cross_row columns -- handled in phase 2 below
                 if source.get("cross_row"):
                     continue
+                # Skip columns not yet available for this season
+                min_s = source.get("min_season")
+                if season and min_s and season < min_s:
+                    continue
 
                 # Per-column result_set routing: skip resultSets not matching the column's result_set
                 col_result_set = source.get("result_set")
@@ -307,6 +323,14 @@ def extract_columns_from_result(
                     val = extract_derived_field(row, headers, source)
                 else:
                     val = extract_field(row, headers, source)
+
+                # Stats tables: NULL → 0 for available columns.
+                # Columns gated by min_season were already skipped above,
+                # so a None here means the API returned no value for an
+                # available column.  This replaces cleanup.py's old
+                # COALESCE(col, 0) path.
+                if val is None and target in _STATS_TABLES:
+                    val = 0
 
                 # Prefer non-None values across multiple result sets
                 if val is not None or col_name not in existing:
