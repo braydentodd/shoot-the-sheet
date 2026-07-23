@@ -15,6 +15,4 @@ ENV/
 *.DS_Store
 *.log
 /tmp/
-
-# Downloaded and extracted source data (not committed)
-data/nba_data/
+data/

@@ -2009,16 +2009,16 @@ DB_COLUMNS: Dict[str, Column] = {
                 "nba_id": {
                     "player_games": {
                         "pbp_stats": {
-                            "field": "d_poss_secs",
+                            "field": "o_poss_secs",
                             "min_season": None,
-                            "result_set": "player",
+                            "result_set": "opp_player",
                         },
                     },
                     "team_games": {
                         "pbp_stats": {
-                            "field": "d_poss_secs",
+                            "field": "o_poss_secs",
                             "min_season": None,
-                            "result_set": "team",
+                            "result_set": "opp_team",
                         },
                     },
                 }

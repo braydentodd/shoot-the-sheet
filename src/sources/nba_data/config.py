@@ -26,8 +26,8 @@ ARCHIVE_DIR = os.path.join("data", "nba_data", "archives")
 # Base URL for downloading season archives from shufinskiy/nba_data.
 # {start_year} is substituted at runtime.
 ARCHIVE_URL_TEMPLATE = (
-    "https://github.com/shufinskiy/nba_data/releases/download/"
-    "v4.0/nbastats_{start_year}.tar.xz"
+    "https://github.com/shufinskiy/nba_data/raw/main/"
+    "datasets/nbastats_{start_year}.tar.xz"
 )
 
 

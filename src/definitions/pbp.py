@@ -94,6 +94,12 @@ REB_EVENTS: Tuple[str, ...] = ("o_reb", "d_reb")
 TOV_EVENTS: Tuple[str, ...] = ("turnover",)
 FOUL_EVENTS: Tuple[str, ...] = ("foul",)
 
+# Events that definitively tell us which team has possession.
+# Used when scanning for possession after a made FT or at period start.
+POSSESSION_EVENTS: Tuple[str, ...] = (
+    FG_MAKE_EVENTS + FG_MISS_EVENTS + FT_ALL_EVENTS + REB_EVENTS + TOV_EVENTS
+)
+
 
 # ============================================================================
 # EVENT SORT PRIORITY
@@ -101,29 +107,32 @@ FOUL_EVENTS: Tuple[str, ...] = ("foul",)
 
 # When multiple events share the same secs timestamp, this dict controls
 # their relative ordering (lower = earlier in the sorted output).
-#
-# Semantic groupings:
-#   0-3   Period boundaries (outs → period_end → period_start → ins)
-#   4-9   Primary actions (jump → foul → FT trip → FTs → FGs)
-#   10-12 Secondary / derived (blocks, steals, rebounds → poss_end → poss_start)
 
 EVENT_SORT_PRIORITY: Dict[str, int] = {
-    "player_out": 0,
-    "period_end": 1,
-    "period_start": 2,
-    "player_in": 3,
-    "jump_ball_win": 4,
-    "foul": 5,
-    "poss_ending_ft_trip": 6,
-    "ft1_make": 7, "ft1_miss": 7,
-    "fg2_make": 8, "fg3_make": 8,
-    "fg2_miss": 8, "fg3_miss": 8,
-    "block": 9, "steal": 9,
-    "fg2_assist": 9, "fg3_assist": 9,
-    "o_reb": 10, "d_reb": 10,
-    "turnover": 10,
-    "poss_end": 11,
-    "poss_start": 12,
+    "foul": 0,
+    "o_reb": 1,
+    "d_reb": 1,
+    "fg2_make": 2,
+    "fg3_make": 2,
+    "fg2_miss": 2,
+    "fg3_miss": 2,
+    "turnover": 2,
+    "poss_ending_ft_trip": 3,
+    "ft1_make": 4,
+    "ft1_miss": 4,
+    "ft2_make": 4,
+    "ft3_make": 4,
+    "block": 5,
+    "steal": 5,
+    "fg2_assist": 6,
+    "fg3_assist": 6,
+    "period_end": 7,
+    "poss_start": 8,
+    "poss_end": 9,
+    "player_out": 10,
+    "player_in": 11,
+    "period_start": 12,
+    "jump_ball_win": 13,
 }
 
 
@@ -229,7 +238,7 @@ RESULT_SET_FIELDS: Dict[str, dict] = {
     "poss": {
         "op": "count",
         "events": ["poss_start"],
-        "result_sets": {"team": "team", "player": "on_player"},
+        "result_sets": {"team": "team", "player": "player_poss"},
     },
     "poss_ending_ft_trips": {
         "op": "count",
@@ -317,7 +326,7 @@ RESULT_SET_FIELDS: Dict[str, dict] = {
     "opp_poss": {
         "op": "count",
         "events": ["poss_start"],
-        "result_sets": {"team": "opp_team", "player": "opp_player"},
+        "result_sets": {"team": "opp_team", "player": "player_opp_poss"},
     },
     "opp_poss_ending_ft_trips": {
         "op": "count",
@@ -405,7 +414,7 @@ RESULT_SET_FIELDS: Dict[str, dict] = {
     "on_poss": {
         "op": "count",
         "events": ["poss_start"],
-        "result_sets": {"player": "on_player"},
+        "result_sets": {"player": "player_poss"},
     },
     "on_poss_ending_ft_trips": {
         "op": "count",
@@ -442,13 +451,6 @@ RESULT_SET_FIELDS: Dict[str, dict] = {
         "result_sets": {
             "team": "team_o_poss_secs",
             "player": "player_o_poss_secs",
-        },
-    },
-    "d_poss_secs": {
-        "op": "special",
-        "result_sets": {
-            "team": "team_d_poss_secs",
-            "player": "player_d_poss_secs",
         },
     },
     "win": {

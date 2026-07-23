@@ -20,6 +20,7 @@ from src.definitions.pbp import (
     RESULT_SET_FIELDS,
     EVENT_SORT_PRIORITY,
     FG_MAKE_EVENTS,
+    POSSESSION_EVENTS,
 )
 from src.lib.math_evaluator import evaluate as eval_math
 
@@ -259,11 +260,6 @@ def _handle_special(
     if handler == "team_o_poss_secs":
         return _calc_possession_secs(all_events, entity_id)
 
-    if handler == "team_d_poss_secs":
-        if opp_entity_id:
-            return _calc_possession_secs(all_events, opp_entity_id)
-        return None
-
     # -- Player handlers --
     if handler == "player_win":
         team_pts = result.get("points")
@@ -278,12 +274,20 @@ def _handle_special(
 
     if handler == "player_o_poss_secs":
         if player_team_id:
-            return _calc_possession_secs(all_events, player_team_id)
+            return _player_possession_secs(
+                all_events, player_team_id, entity_id, on_court_intervals)
         return None
 
-    if handler == "player_d_poss_secs":
+    if handler == "player_poss":
+        if player_team_id:
+            return _player_possession_count(
+                all_events, player_team_id, entity_id, on_court_intervals)
+        return None
+
+    if handler == "player_opp_poss":
         if opp_entity_id:
-            return _calc_possession_secs(all_events, opp_entity_id)
+            return _player_possession_count(
+                all_events, opp_entity_id, entity_id, on_court_intervals)
         return None
 
     return None
@@ -319,6 +323,95 @@ def _calc_possession_secs(
         if matching_end:
             total += matching_end["secs"] - s["secs"]
     return total
+
+
+def _player_possession_windows(
+    events: List[PBPEvent],
+    team_id: str,
+    player_id: str,
+    on_court_intervals: Optional[List[Tuple[int, int]]],
+) -> Tuple[int, int]:
+    """Count possession windows and total secs where a player qualifies.
+
+    A player qualifies for a possession window if:
+    1. They were on court during any part of the window, AND
+    2. A POSSESSION_EVENT occurred during their court time within that
+       window (proving they were actively involved).
+
+    Returns (count, total_secs).
+    """
+    if on_court_intervals is None:
+        return 0, 0
+
+    starts = [
+        e for e in events
+        if e["event"] == "poss_start" and e["team_id"] == team_id
+    ]
+    if not starts:
+        return 0, 0
+
+    count = 0
+    total_secs = 0
+    for s in starts:
+        matching_end = next(
+            (
+                e for e in events
+                if e["event"] == "poss_end"
+                and e["team_id"] == team_id
+                and e["secs"] >= s["secs"]
+            ),
+            None,
+        )
+        if matching_end is None:
+            continue
+
+        w_start = s["secs"]
+        w_end = matching_end["secs"]
+
+        # Check each court interval for overlap with this window.
+        for oc_start, oc_end in on_court_intervals:
+            overlap_start = max(w_start, oc_start)
+            overlap_end = min(w_end, oc_end)
+            if overlap_start >= overlap_end:
+                continue
+
+            # Any POSSESSION_EVENT by this team in the overlap?
+            has_event = any(
+                e["event"] in POSSESSION_EVENTS
+                and e["team_id"] == team_id
+                and overlap_start <= e["secs"] < overlap_end
+                for e in events
+            )
+            if has_event:
+                count += 1
+                total_secs += w_end - w_start
+                break  # count this window once
+
+    return count, total_secs
+
+
+def _player_possession_count(
+    events: List[PBPEvent],
+    team_id: str,
+    player_id: str,
+    on_court_intervals: Optional[List[Tuple[int, int]]],
+) -> Optional[int]:
+    """Count qualified possession windows for a player."""
+    count, _ = _player_possession_windows(
+        events, team_id, player_id, on_court_intervals)
+    return count if count > 0 else None
+
+
+def _player_possession_secs(
+    events: List[PBPEvent],
+    team_id: str,
+    player_id: str,
+    on_court_intervals: Optional[List[Tuple[int, int]]],
+) -> Optional[int]:
+    """Sum full possession secs for qualified windows for a player."""
+    count, total = _player_possession_windows(
+        events, team_id, player_id, on_court_intervals)
+    return total if count > 0 else None
 
 
 def _calc_player_secs(
@@ -552,59 +645,159 @@ def _derive_possession_events(
         return away_team_id if team_id == home_team_id else home_team_id
 
     n = len(events)
+    current_poss: str = ""
+
     for i, event in enumerate(events):
         ev = event["event"]
         team = event["team_id"]
         player = event["player_id"]
         secs = event["secs"]
 
-        # Made FG -> scoring team's possession ends, other team gets ball
-        if ev in FG_MAKE_EVENTS:
-            derived.append(_mk_derived(result, "poss_end", secs, team))
-            derived.append(_mk_derived(result, "poss_start", secs, _opp(team)))
+        # --- Period boundaries ---
 
-        # Defensive rebound -> previous team loses possession,
-        # rebounding team starts new possession.
+        if ev == "period_start":
+            # Infer possession from the first definitive team event
+            # after period_start.
+            for j in range(i + 1, n):
+                nx = events[j]
+                if nx["team_id"] and nx["event"] in POSSESSION_EVENTS:
+                    derived.append(_mk_derived(
+                        result, "poss_start", secs, nx["team_id"]))
+                    current_poss = nx["team_id"]
+                    break
+
+        elif ev == "period_end":
+            if current_poss:
+                derived.append(_mk_derived(
+                    result, "poss_end", secs, current_poss))
+                current_poss = ""
+
+        # --- Made FG -> possession changes (unless and-one follows) ---
+
+        elif ev in FG_MAKE_EVENTS:
+            # And-one check: does a foul + FT by this team follow at the
+            # same secs?  If so, the FG + bonus FT is one possession.
+            has_and_one = False
+            for j in range(i + 1, n):
+                nx = events[j]
+                if nx["secs"] != secs:
+                    break
+                if nx["event"] == "foul":
+                    # Look ahead from the foul for FTs by this team.
+                    for k in range(j + 1, n):
+                        fk = events[k]
+                        if fk["secs"] != secs:
+                            break
+                        if fk["event"] in ("ft1_make", "ft1_miss") and fk["team_id"] == team:
+                            has_and_one = True
+                            break
+                    if has_and_one:
+                        break
+            if not has_and_one:
+                derived.append(_mk_derived(result, "poss_end", secs, team))
+                derived.append(_mk_derived(result, "poss_start", secs, _opp(team)))
+                current_poss = _opp(team)
+
+        # --- Defensive rebound -> possession changes ---
+
         elif ev == "d_reb":
             opp = _opp(team)
             derived.append(_mk_derived(result, "poss_end", secs, opp))
             derived.append(_mk_derived(result, "poss_start", secs, team))
+            current_poss = team
 
-        # Turnover -> turnover team's possession ends, other team gets ball
+        # --- Turnover -> possession changes ---
+
         elif ev == "turnover":
             derived.append(_mk_derived(result, "poss_end", secs, team))
             derived.append(_mk_derived(result, "poss_start", secs, _opp(team)))
+            current_poss = _opp(team)
 
-        # Jump ball -> winning team gets ball
-        elif ev == "jump_ball_win":
-            derived.append(_mk_derived(result, "poss_start", secs, team))
+        # --- Made FT: last FT of trip followed by other team? ---
 
-        # Shooting foul: look ahead for FT events by the other team at
-        # the same timestamp.  Skip if this is an and-one (a made FG
-        # by the FT team at the same secs already ended the possession).
+        elif ev == "ft1_make":
+            # Is this the last FT of the trip?
+            if i + 1 < n and events[i + 1]["event"] in ("ft1_make", "ft1_miss"):
+                continue
+            # Last FT of trip: scan for the next definitive possession
+            # event.  Skip fouls and other non-possession events.
+            for j in range(i + 1, n):
+                nx = events[j]
+                if nx["event"] in ("ft1_make", "ft1_miss"):
+                    continue
+                if nx["event"] not in POSSESSION_EVENTS:
+                    continue
+                if not nx["team_id"]:
+                    continue
+                if nx["team_id"] != team:
+                    # Other team has the next definitive event.
+                    derived.append(_mk_derived(
+                        result, "poss_end", secs, team))
+                    derived.append(_mk_derived(
+                        result, "poss_start", secs, nx["team_id"]))
+                    current_poss = nx["team_id"]
+                # If same team has the next event, possession continued
+                # (e.g. o_reb after missed FT) -- no change needed.
+                break
+
+        # --- Foul leading to FTs -> poss_ending_ft_trip ---
+
         elif ev == "foul":
-            ft_shooter = ""
-            ft_team = ""
+            ft_idx = -1
             for j in range(i + 1, n):
                 nx = events[j]
                 if nx["secs"] != secs:
                     break
                 if nx["event"] in ("ft1_make", "ft1_miss"):
-                    ft_shooter = nx["player_id"]
-                    ft_team = nx["team_id"]
+                    ft_idx = j
                     break
-            if ft_team:
-                # And-one check: was there a made FG by the FT team
-                # at the same timestamp?  If so, possession already ended.
-                is_and_one = any(
-                    events[k]["event"] in FG_MAKE_EVENTS
-                    and events[k]["team_id"] == ft_team
-                    and events[k]["secs"] == secs
-                    for k in range(max(0, i - 4), i)
-                )
-                if not is_and_one:
-                    derived.append(_mk_derived(
-                        result, "poss_ending_ft_trip", secs, ft_team, ft_shooter))
+            if ft_idx < 0:
+                continue
+
+            ft_event = events[ft_idx]
+            ft_secs = ft_event["secs"]
+            ft_team = ft_event["team_id"]
+            ft_shooter = ft_event["player_id"]
+
+            # Find the last FT at this timestamp.
+            ft_end = ft_idx
+            for j in range(ft_idx + 1, n):
+                nx = events[j]
+                if nx["secs"] != ft_secs:
+                    break
+                if nx["event"] in ("ft1_make", "ft1_miss"):
+                    ft_end = j
+
+            # Rule 1: and-one? Made FG by FT team at FT's secs.
+            is_and_one = any(
+                events[k]["event"] in FG_MAKE_EVENTS
+                and events[k]["team_id"] == ft_team
+                and events[k]["secs"] == ft_secs
+                for k in range(max(0, ft_idx - 5), ft_idx)
+            )
+            if is_and_one:
+                continue
+
+            # Rule 2: FT team keeps possession after the FTs?
+            same_team_after = False
+            for j in range(ft_end + 1, n):
+                nx = events[j]
+                if nx["secs"] != ft_secs:
+                    break
+                if nx["event"] in ("ft1_make", "ft1_miss"):
+                    continue
+                if nx["team_id"] == ft_team:
+                    same_team_after = True
+                break
+            if same_team_after:
+                continue
+
+            # Rule 3: period_end is the next event (any secs)?
+            if ft_end + 1 < n and events[ft_end + 1]["event"] == "period_end":
+                continue
+
+            derived.append(_mk_derived(
+                result, "poss_ending_ft_trip", ft_secs, ft_team, ft_shooter))
 
     result.extend(derived)
     return result

@@ -609,7 +609,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
         },
         "pbp_stats": {
             "min_season": None,
-            "max_season": "2024-25",
+            "max_season": "2025-26",
             "source": "nba_data",
             "phase": "maintain_pbp",
             "coverage": "games_coverage",
