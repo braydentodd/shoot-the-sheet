@@ -260,6 +260,24 @@ def _handle_special(
     if handler == "team_o_poss_secs":
         return _calc_possession_secs(all_events, entity_id)
 
+    if handler == "team_poss":
+        return sum(1 for e in all_events
+                   if e["event"] == "poss_start" and e["team_id"] == entity_id)
+
+    if handler == "opp_team_poss":
+        if opp_entity_id:
+            return sum(1 for e in all_events
+                       if e["event"] == "poss_start" and e["team_id"] == opp_entity_id)
+        return None
+
+    if handler == "team_win":
+        team_pts = result.get("points")
+        if team_pts is None:
+            return None
+        opp_evts = partitions.get("opp_team", [])
+        opp_pts = _sum_points(opp_evts)
+        return team_pts > opp_pts
+
     # -- Player handlers --
     if handler == "player_win":
         team_pts = result.get("points")

@@ -11,7 +11,7 @@ Pure functions -- no side effects, no I/O.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from src.definitions.pbp import PBPEvent
 from src.sources.nba_data.config import (
@@ -217,7 +217,19 @@ def normalize_game(
 # ============================================================================
 
 
-def _infer_period_lengths(rows: List[Dict[str, Any]]) -> tuple[int, int]:
+def _parse_pctime(pctimestring: str) -> int:
+    """Parse a PCTIMESTRING (e.g. ``"12:00"``) into raw seconds.
+
+    Returns 0 on parse failure.
+    """
+    try:
+        parts = pctimestring.split(":")
+        return int(parts[0]) * 60 + int(parts[1])
+    except (ValueError, IndexError, AttributeError):
+        return 0
+
+
+def _infer_period_lengths(rows: List[Dict[str, Any]]) -> Tuple[int, int]:
     """Infer regulation and overtime period lengths from the data.
 
     Reads PCTIMESTRING from period_start events (EVENTMSGTYPE=12).
@@ -229,10 +241,8 @@ def _infer_period_lengths(rows: List[Dict[str, Any]]) -> tuple[int, int]:
         msgtype = _to_int(row.get(COL["EVENTMSGTYPE"]))
         period = _to_int(row.get(COL["PERIOD"]))
         pctime = _to_str(row.get(COL["PCTIMESTRING"]))
-        try:
-            parts = pctime.split(":")
-            secs = int(parts[0]) * 60 + int(parts[1])
-        except (ValueError, IndexError):
+        secs = _parse_pctime(pctime)
+        if secs == 0:
             continue
         if msgtype == MSG.PERIOD_START:
             if period == 1:
@@ -258,11 +268,7 @@ def _pctime_to_secs(
     Period 1 starts at 0, period 2 at reg_len, etc.  PCTIMESTRING
     counts down within each period (e.g. "12:00" -> "00:00").
     """
-    try:
-        parts = pctimestring.split(":")
-        remaining = int(parts[0]) * 60 + int(parts[1])
-    except (ValueError, IndexError, AttributeError):
-        return 0
+    remaining = _parse_pctime(pctimestring)
 
     if period <= 4:
         base = (period - 1) * reg_len

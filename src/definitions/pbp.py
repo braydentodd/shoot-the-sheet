@@ -236,9 +236,8 @@ RESULT_SET_FIELDS: Dict[str, dict] = {
         "result_sets": {"team": "team", "player": "player"},
     },
     "poss": {
-        "op": "count",
-        "events": ["poss_start"],
-        "result_sets": {"team": "team", "player": "player_poss"},
+        "op": "special",
+        "result_sets": {"team": "team_poss", "player": "player_poss"},
     },
     "poss_ending_ft_trips": {
         "op": "count",
@@ -324,9 +323,8 @@ RESULT_SET_FIELDS: Dict[str, dict] = {
         "result_sets": {"team": "opp_team", "player": "opp_player"},
     },
     "opp_poss": {
-        "op": "count",
-        "events": ["poss_start"],
-        "result_sets": {"team": "opp_team", "player": "player_opp_poss"},
+        "op": "special",
+        "result_sets": {"team": "opp_team_poss", "player": "player_opp_poss"},
     },
     "opp_poss_ending_ft_trips": {
         "op": "count",
@@ -412,8 +410,7 @@ RESULT_SET_FIELDS: Dict[str, dict] = {
         "result_sets": {"player": "on_player"},
     },
     "on_poss": {
-        "op": "count",
-        "events": ["poss_start"],
+        "op": "special",
         "result_sets": {"player": "player_poss"},
     },
     "on_poss_ending_ft_trips": {
@@ -428,13 +425,13 @@ RESULT_SET_FIELDS: Dict[str, dict] = {
         "op": "derived",
         "formula": "fg2m*2 + fg3m*3 + ftm",
         "fields": ["fg2m", "fg3m", "ftm"],
-        "result_sets": {"team": None},
+        "result_sets": {"team": None, "player": None},
     },
     "assist_points": {
         "op": "derived",
         "formula": "fg2_assists*2 + fg3_assists*3",
         "fields": ["fg2_assists", "fg3_assists"],
-        "result_sets": {"team": None},
+        "result_sets": {"team": None, "player": None},
     },
 
     # ── Special fields ────────────────────────────────────────────────
@@ -455,6 +452,6 @@ RESULT_SET_FIELDS: Dict[str, dict] = {
     },
     "win": {
         "op": "special",
-        "result_sets": {"player": "player_win"},
+        "result_sets": {"team": "team_win", "player": "player_win"},
     },
 }

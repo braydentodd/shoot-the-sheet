@@ -15,13 +15,17 @@ import os
 # DATA DIRECTORIES
 # ============================================================================
 
+# Resolve paths against the project root (three levels up from this file:
+# src/sources/nba_data/config.py -> src/sources/nba_data -> src/sources -> src -> root).
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+
 # Extracted CSV files live here, one subdirectory per season.
 #   {EXTRACTED_DIR}/nbastats_{start_year}/nbastats_{start_year}.csv
-EXTRACTED_DIR = os.path.join("data", "nba_data", "extracted")
+EXTRACTED_DIR = os.path.join(_PROJECT_ROOT, "data", "nba_data", "extracted")
 
 # Downloaded .tar.xz archives live here.
 #   {ARCHIVE_DIR}/nbastats_{start_year}.tar.xz
-ARCHIVE_DIR = os.path.join("data", "nba_data", "archives")
+ARCHIVE_DIR = os.path.join(_PROJECT_ROOT, "data", "nba_data", "archives")
 
 # Base URL for downloading season archives from shufinskiy/nba_data.
 # {start_year} is substituted at runtime.

@@ -55,4 +55,14 @@ SOURCE_RATE_LIMITS: Dict[str, RateLimitConfig] = {
         "max_consecutive_failures": 5,
         "auto_restart": True,
     },
+    "nba_data": {
+        "requests_per_second": 1.0,
+        "max_retries": 3,
+        "backoff_base": 10,
+        "max_backoff": 60,
+        "timeout_default": 60,
+        "timeout_bulk": 120,
+        "max_consecutive_failures": 5,
+        "auto_restart": True,
+    },
 }

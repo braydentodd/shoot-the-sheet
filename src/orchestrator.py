@@ -453,6 +453,13 @@ def _discover_entities(
 
     config_mod, client_mod = _load_source(identity_source)
 
+    if not hasattr(client_mod, "make_fetcher"):
+        raise RuntimeError(
+            f"Source {identity_source!r} does not expose make_fetcher(). "
+            f"Phase {phase_name!r} requires a make_fetcher callable on "
+            f"the source's client module."
+        )
+
     from datetime import datetime, timezone
 
     for dataset_name in dataset_names:
@@ -1136,6 +1143,13 @@ def _execute_stats_groups(
     table_name = target
     config_mod, client_mod = _load_source(src_key)
 
+    if not hasattr(client_mod, "make_fetcher"):
+        raise RuntimeError(
+            f"Source {src_key!r} does not expose make_fetcher(). "
+            f"Dataset {dataset!r} has phase={phase!r} which requires "
+            f"a make_fetcher callable on the source's client module."
+        )
+
     def _on_coverage(
         target,
         season_label,
@@ -1204,6 +1218,13 @@ def _maintain_profiles(
         return 0
 
     config_mod, client_mod = _load_source(identity_source)
+
+    if not hasattr(client_mod, "make_fetcher"):
+        raise RuntimeError(
+            f"Source {identity_source!r} does not expose make_fetcher(). "
+            f"Phase 'maintain_profiles' requires a make_fetcher callable on "
+            f"the source's client module."
+        )
 
     for dataset_name in dataset_names:
         resolved_targets = _generic_targets_for_dataset(
@@ -2411,7 +2432,8 @@ def _phase_maintain_pbp(ctx: dict) -> int:
     each game, normalizes the response, accumulates into team/player
     result sets, and writes to staging via db_columns.
 
-    Delegates to _maintain_pbp for the actual work.
+    After all identities are processed, cleans up local source files
+    if the source declares ``local_files: True``.
     """
     league_code = ctx["league_code"]
     season = ctx["season"]
@@ -2419,12 +2441,22 @@ def _phase_maintain_pbp(ctx: dict) -> int:
     total_rows = 0
     logger.info(phase_marker("maintain_pbp"))
 
-    for identity_code, identity_source, _ in _iter_league_identities(
+    for identity_code, identity_source, phase_datasets in _iter_league_identities(
         league_code, "maintain_pbp"
     ):
-        total_rows += _maintain_pbp(
-            league_code, season, identity_code, identity_source, failed
-        )
+        for dataset_name in phase_datasets:
+            total_rows += _maintain_pbp(
+                league_code, season, identity_code, identity_source,
+                dataset_name, failed,
+            )
+
+        # ISSUE-06: Clean up local source files after processing
+        source_cfg = SOURCES.get(identity_source, {})
+        if source_cfg.get("local_files"):
+            _config_mod, client_mod = _load_source(identity_source)
+            if hasattr(client_mod, "cleanup_season_files"):
+                client_mod.cleanup_season_files(season)
+
     return total_rows
 
 
@@ -2433,7 +2465,9 @@ def _maintain_pbp(
     season: str,
     identity_code: str,
     identity_source: str,
+    dataset_name: str,
     failed: List[Dict[str, Any]],
+    season_type: str = "regular_season",
 ) -> int:
     """Iterate over games and accumulate PBP into staging.
 
@@ -2457,7 +2491,7 @@ def _maintain_pbp(
         return 0
 
     # Season gating: skip if outside the dataset's min/max range.
-    ds_cfg = DATASETS.get(identity_code, {}).get("pbp_stats", {})
+    ds_cfg = DATASETS.get(identity_code, {}).get(dataset_name, {})
     min_s = ds_cfg.get("min_season")
     max_s = ds_cfg.get("max_season")
     if (min_s and season < min_s) or (max_s and season > max_s):
@@ -2476,8 +2510,15 @@ def _maintain_pbp(
     # Build fetcher
     _config_mod, client_mod = _load_source(identity_source)
 
+    if not hasattr(client_mod, "fetch_game_pbp"):
+        raise RuntimeError(
+            f"Source {identity_source!r} does not expose fetch_game_pbp(). "
+            f"Dataset {dataset_name!r} has phase='maintain_pbp' which requires "
+            f"a fetch_game_pbp callable on the source's client module."
+        )
+
     # Build the PBP column mapping from db_columns
-    pbp_col_map = _build_pbp_column_map(league_code, identity_code)
+    pbp_col_map = _build_pbp_column_map(league_code, identity_code, dataset_name)
 
     total_rows = 0
     for game_info in game_rows:
@@ -2501,7 +2542,7 @@ def _maintain_pbp(
         except Exception as exc:
             logger.warning("PBP fetch failed for game %s: %s", ext_game_id, exc)
             failed.append({
-                "dataset": "pbp_stats",
+                "dataset": dataset_name,
                 "game_id": ext_game_id,
                 "error": str(exc),
             })
@@ -2546,7 +2587,7 @@ def _maintain_pbp(
                     "team",
                     team_rows,
                     season,
-                    "regular_season",  # season_type for PBP
+                    season_type,
                     league_code,
                     identity_code,
                 )
@@ -2556,7 +2597,7 @@ def _maintain_pbp(
                     "PBP team write failed for game %s: %s", ext_game_id, exc
                 )
                 failed.append({
-                    "dataset": "pbp_stats",
+                    "dataset": dataset_name,
                     "game_id": ext_game_id,
                     "error": str(exc),
                 })
@@ -2616,6 +2657,7 @@ def _load_pbp_games(
 def _build_pbp_column_map(
     league_code: str,
     identity_code: str,
+    dataset_name: str = "pbp_stats",
 ) -> Dict[str, Dict[str, str]]:
     """Build mapping from PBP result set fields to DB columns.
 
@@ -2643,7 +2685,7 @@ def _build_pbp_column_map(
         for target, target_sources in identity_map.items():
             if not isinstance(target_sources, dict):
                 continue
-            pbp_source = target_sources.get("pbp_stats")
+            pbp_source = target_sources.get(dataset_name)
             if not pbp_source:
                 continue
 
