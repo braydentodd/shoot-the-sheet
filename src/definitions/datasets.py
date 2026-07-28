@@ -617,9 +617,7 @@ DATASETS: Dict[str, Dict[str, Dataset]] = {
             "per_season_type": True,
             "row_filters": None,
             "target_tables": {
-                "staging.teams": "team",
                 "staging.team_games": "team",
-                "staging.players": "player",
                 "staging.player_games": "player",
             },
             "prune_tables": None,

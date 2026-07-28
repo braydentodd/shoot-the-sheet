@@ -28,6 +28,8 @@ from src.sources.nba_data.config import (
     COL,
     EXTRACTED_DIR,
 )
+from src.lib.entity_resolver import EntityResolver
+from src.lib.pbp_classifier import EventClassifier
 from src.sources.nba_data.pbp_normalizer import normalize_game
 
 logger = logging.getLogger(__name__)
@@ -49,6 +51,8 @@ def fetch_game_pbp(
     season: str,
     home_team_id: str,
     away_team_id: str,
+    entity_resolver: "EntityResolver",
+    classifier: "EventClassifier",
     identity: str = "nba_id",
     extracted_dir: str = EXTRACTED_DIR,
     archive_dir: str = ARCHIVE_DIR,
@@ -71,15 +75,37 @@ def fetch_game_pbp(
         List of PBPEvent rows, or empty list if the file is missing
         or the game has no events.
     """
-    csv_path = _ensure_csv_extracted(season, extracted_dir, archive_dir)
-    if not csv_path:
-        return []
-
-    rows = _load_game_rows(game_id, csv_path)
+    rows = fetch_raw_rows(game_id, season, extracted_dir, archive_dir)
     if not rows:
         return []
 
-    return normalize_game(rows, game_id, home_team_id, away_team_id, identity)
+    return normalize_game(rows, game_id, home_team_id, away_team_id, entity_resolver, classifier, identity)
+
+
+def fetch_raw_rows(
+    game_id: str,
+    season: str,
+    extracted_dir: str = EXTRACTED_DIR,
+    archive_dir: str = ARCHIVE_DIR,
+) -> List[Dict[str, Any]]:
+    """Load raw CSV rows for a single game without normalization.
+
+    Used by discovery to inspect raw event shapes before building
+    the event catalog.  Does not require entity resolution.
+
+    Args:
+        game_id: External game ID (e.g. ``"22400001"``).
+        season: Season string in ``YYYY-YY`` format.
+        extracted_dir: Directory for extracted CSV files.
+        archive_dir: Directory for .tar.xz archives.
+
+    Returns:
+        List of raw row dicts keyed by COL constants, or empty list.
+    """
+    csv_path = _ensure_csv_extracted(season, extracted_dir, archive_dir)
+    if not csv_path:
+        return []
+    return _load_game_rows(game_id, csv_path)
 
 
 def cleanup_season_files(

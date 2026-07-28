@@ -7,7 +7,7 @@ point.  Goal: consistent look-and-feel across ETL runs.
 Provides:
     HelpFormatter    - widened argparse formatter (uniform metavars)
     make_base_parser - returns an ArgumentParser pre-loaded with the
-                       --verbose / --quiet flags
+                       --verbose flag
     print_banner     - top-of-run banner (timestamp + title)
     print_summary    - aligned key/value summary block
 """
@@ -67,12 +67,6 @@ def make_base_parser(
         "--verbose",
         action="store_true",
         help="Enable DEBUG-level logging.",
-    )
-    parser.add_argument(
-        "-q",
-        "--quiet",
-        action="store_true",
-        help="Suppress everything below WARNING.",
     )
     return parser
 

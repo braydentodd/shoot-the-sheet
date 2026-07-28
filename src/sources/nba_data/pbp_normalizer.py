@@ -4,8 +4,9 @@ Shoot the Sheet - nbastats CSV PBP Normalizer
 Converts raw nbastats CSV rows into source-agnostic :class:`PBPEvent`
 rows consumed by the accumulator.
 
-Implements the detection logic defined in:
-``project_tracking/pbp_tracking.md`` Section 3.1.
+Event classification is driven by ``core.pbp_events`` via the
+:class:`~src.lib.pbp_classifier.EventClassifier`.  The classifier
+replaces the previous hardcoded ``if msgtype == ...`` chain.
 
 Pure functions -- no side effects, no I/O.
 """
@@ -14,12 +15,13 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.definitions.pbp import PBPEvent
+from src.lib.entity_resolver import EntityResolver
+from src.lib.pbp_classifier import EventClassifier, UnclassifiedEventError
 from src.sources.nba_data.config import (
     COL,
     MSG,
     OFFENSIVE_FOUL_ACTION_TYPES,
     PERSON_NONE,
-    PERSON_TEAM,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,6 +37,8 @@ def normalize_game(
     game_id: str,
     home_team_id: str,
     away_team_id: str,
+    entity_resolver: EntityResolver,
+    classifier: EventClassifier,
     identity: str = "nba_id",
 ) -> List[PBPEvent]:
     """Normalize nbastats CSV rows into standard PBPEvent rows.
@@ -45,6 +49,8 @@ def normalize_game(
         game_id: External game ID (e.g. ``"22400001"``).
         home_team_id: External home team ID.
         away_team_id: External away team ID.
+        entity_resolver: Callable for staging-table entity lookup.
+        classifier: EventClassifier loaded from ``core.pbp_events``.
         identity: Identity code for the event's ``identity`` field.
 
     Returns:
@@ -52,18 +58,14 @@ def normalize_game(
     """
     events: List[PBPEvent] = []
 
-    # Infer period lengths from period_start events in the data.
     reg_len, ot_len = _infer_period_lengths(rows)
 
-    # --- State for offensive/defensive rebound detection ---
     last_shot_team: Optional[str] = None
 
     for row in rows:
-        msgtype = _to_int(row.get(COL["EVENTMSGTYPE"]))
-        actiontype = _to_int(row.get(COL["EVENTMSGACTIONTYPE"]))
+        eventnum = _to_int(row.get(COL["EVENTNUM"]))
         period = _to_int(row.get(COL["PERIOD"]))
         pctime = _to_str(row.get(COL["PCTIMESTRING"]))
-        eventnum = _to_int(row.get(COL["EVENTNUM"]))
 
         p1_id = _to_str(row.get(COL["PLAYER1_ID"]))
         p1_team = _to_str(row.get(COL["PLAYER1_TEAM_ID"]))
@@ -74,41 +76,95 @@ def normalize_game(
         p3_type = _to_int(row.get(COL["PERSON3TYPE"]))
         p3_team = _to_str(row.get(COL["PLAYER3_TEAM_ID"]))
 
-        # Build combined description for text-based detection
-        desc = _build_desc(row)
-        is_3pt = "3PT" in desc.upper()
+        actiontype = _to_int(row.get(COL["EVENTMSGACTIONTYPE"]))
 
         secs = _pctime_to_secs(period, pctime, reg_len, ot_len)
 
-        # Resolve player team for team-level events (PERSON1TYPE=3)
-        player_team = _resolve_player_team(p1_type, p1_id, p1_team)
+        # Resolve entity via staging lookup
+        entity_type, resolved_team = entity_resolver(p1_id)
+        if entity_type is None:
+            logger.debug(
+                "Unknown entity %r (PERSON1TYPE=%s) in game %s event %s",
+                p1_id, p1_type, game_id, eventnum,
+            )
+            continue
+        player_team = resolved_team
 
-        # ----------------------------------------------------------------
-        # Made FG (MSGTYPE 1)
-        # ----------------------------------------------------------------
-        if msgtype == MSG.MADE_FG:
-            evt = "fg3_make" if is_3pt else "fg2_make"
+        # Classify the raw row via the catalog
+        try:
+            classification = classifier.classify(row)
+        except UnclassifiedEventError:
+            continue  # Should not happen -- enforced upstream in _maintain_pbp
+
+        if classification.is_ignore:
+            continue
+
+        handling = classification.handling
+
+        # ── Context-dependent pseudo-types ────────────────────────────
+
+        if handling == "rebound":
+            is_offensive = (last_shot_team is not None
+                            and player_team == last_shot_team)
+            evt = "o_reb" if is_offensive else "d_reb"
+            reb_player_id = "" if entity_type == "team" else p1_id
             events.append(_mk(identity, game_id, secs, eventnum,
-                              player_team, p1_id, evt))
-            last_shot_team = player_team
+                              player_team, reb_player_id, evt))
 
-            # Assist: PERSON2TYPE != 0
+        elif handling == "substitution":
+            if p2_id and p2_id != "0":
+                events.append(_mk(identity, game_id, secs, eventnum,
+                                  player_team, p2_id, "player_in"))
+            if p1_id and p1_id != "0":
+                events.append(_mk(identity, game_id, secs, eventnum,
+                                  player_team, p1_id, "player_out"))
+
+        # ── Direct event types ────────────────────────────────────────
+
+        elif handling == "turnover":
+            events.append(_mk(identity, game_id, secs, eventnum,
+                              player_team, p1_id, "turnover"))
             if p2_type != PERSON_NONE and p2_id:
-                assist_evt = "fg3_assist" if is_3pt else "fg2_assist"
-                # Assists are attributed to the shooter's team
+                opp_team = _opponent(player_team, home_team_id, away_team_id)
+                events.append(_mk(identity, game_id, secs, eventnum,
+                                  opp_team, p2_id, "steal"))
+
+        elif handling == "foul":
+            events.append(_mk(identity, game_id, secs, eventnum,
+                              player_team, p1_id, "foul"))
+            if actiontype in OFFENSIVE_FOUL_ACTION_TYPES:
+                opp_team = _opponent(player_team, home_team_id, away_team_id)
+                o_foul_player = p2_id if p2_id and p2_id != "0" else ""
+                events.append(_mk(identity, game_id, secs, eventnum,
+                                  opp_team, o_foul_player, "o_foul_draw"))
+
+        elif handling == "jump_ball_win":
+            if p3_id and p3_id != "0":
+                _, tip_team = entity_resolver(p3_id)
+                tip_team = p3_team or tip_team
+                if tip_team:
+                    events.append(_mk(identity, game_id, secs, eventnum,
+                                      tip_team, "", "jump_ball_win"))
+
+        elif handling in ("period_start", "period_end"):
+            events.append(_mk(identity, game_id, secs, eventnum,
+                              "", "", handling))
+
+        # ── FG/FT: emit directly, track last_shot_team, handle secondaries ──
+
+        elif handling in ("fg2_make", "fg3_make"):
+            events.append(_mk(identity, game_id, secs, eventnum,
+                              player_team, p1_id, handling))
+            last_shot_team = player_team
+            if p2_type != PERSON_NONE and p2_id:
+                assist_evt = "fg3_assist" if handling == "fg3_make" else "fg2_assist"
                 events.append(_mk(identity, game_id, secs, eventnum,
                                   player_team, p2_id, assist_evt))
 
-        # ----------------------------------------------------------------
-        # Missed FG (MSGTYPE 2)
-        # ----------------------------------------------------------------
-        elif msgtype == MSG.MISSED_FG:
-            evt = "fg3_miss" if is_3pt else "fg2_miss"
+        elif handling in ("fg2_miss", "fg3_miss"):
             events.append(_mk(identity, game_id, secs, eventnum,
-                              player_team, p1_id, evt))
+                              player_team, p1_id, handling))
             last_shot_team = player_team
-
-            # Block: PERSON3TYPE != 0 indicates a blocker
             if p3_type != PERSON_NONE and p3_id:
                 blocker_team = p3_team or _opponent(player_team,
                                                     home_team_id,
@@ -116,98 +172,17 @@ def normalize_game(
                 events.append(_mk(identity, game_id, secs, eventnum,
                                   blocker_team, p3_id, "block"))
 
-        # ----------------------------------------------------------------
-        # Free Throw (MSGTYPE 3)
-        # ----------------------------------------------------------------
-        elif msgtype == MSG.FREE_THROW:
-            is_missed = "MISS" in desc.upper()
-            evt = "ft1_miss" if is_missed else "ft1_make"
+        elif handling in ("ft1_make", "ft1_miss"):
             events.append(_mk(identity, game_id, secs, eventnum,
-                              player_team, p1_id, evt))
+                              player_team, p1_id, handling))
             last_shot_team = player_team
 
-        # ----------------------------------------------------------------
-        # Rebound (MSGTYPE 4)
-        # ----------------------------------------------------------------
-        elif msgtype == MSG.REBOUND:
-            # Determine offensive vs defensive
-            is_offensive = (last_shot_team is not None
-                            and player_team == last_shot_team)
-            evt = "o_reb" if is_offensive else "d_reb"
-
-            # Team rebound: PLAYER1_ID is the team ID, no individual player
-            reb_player_id = "" if p1_type == PERSON_TEAM else p1_id
+        else:
+            # All other direct PBPEventType values -- emit as-is
             events.append(_mk(identity, game_id, secs, eventnum,
-                              player_team, reb_player_id, evt))
+                              player_team, p1_id, handling))
 
-        # ----------------------------------------------------------------
-        # Turnover (MSGTYPE 5)
-        # ----------------------------------------------------------------
-        elif msgtype == MSG.TURNOVER:
-            events.append(_mk(identity, game_id, secs, eventnum,
-                              player_team, p1_id, "turnover"))
-
-            # Steal: PERSON2TYPE != 0
-            if p2_type != PERSON_NONE and p2_id:
-                opp_team = _opponent(player_team, home_team_id, away_team_id)
-                events.append(_mk(identity, game_id, secs, eventnum,
-                                  opp_team, p2_id, "steal"))
-
-        # ----------------------------------------------------------------
-        # Foul (MSGTYPE 6)
-        # ----------------------------------------------------------------
-        elif msgtype == MSG.FOUL:
-            events.append(_mk(identity, game_id, secs, eventnum,
-                              player_team, p1_id, "foul"))
-
-            # Offensive foul draw: ACTIONTYPE IN (4, 26)
-            if actiontype in OFFENSIVE_FOUL_ACTION_TYPES:
-                opp_team = _opponent(player_team, home_team_id, away_team_id)
-                # PERSON2_ID may be populated for later seasons
-                o_foul_player = p2_id if p2_id and p2_id != "0" else ""
-                events.append(_mk(identity, game_id, secs, eventnum,
-                                  opp_team, o_foul_player, "o_foul_draw"))
-
-        # ----------------------------------------------------------------
-        # Substitution (MSGTYPE 8)
-        # ----------------------------------------------------------------
-        elif msgtype == MSG.SUBSTITUTION:
-            # Description: "SUB: PLAYER2 FOR PLAYER1"
-            #   => PLAYER2 enters, PLAYER1 leaves
-            sub_team = player_team
-
-            if p2_id and p2_id != "0":
-                events.append(_mk(identity, game_id, secs, eventnum,
-                                  sub_team, p2_id, "player_in"))
-            if p1_id and p1_id != "0":
-                events.append(_mk(identity, game_id, secs, eventnum,
-                                  sub_team, p1_id, "player_out"))
-
-        # ----------------------------------------------------------------
-        # Jump Ball (MSGTYPE 10) -- used for period-start tip-offs
-        # ----------------------------------------------------------------
-        elif msgtype == MSG.JUMP_BALL:
-            # PERSON3 is the player who received the tip
-            # Their team wins possession
-            if p3_id and p3_id != "0":
-                tip_team = p3_team or _resolve_player_team(p3_type, p3_id, "")
-                if tip_team:
-                    events.append(_mk(identity, game_id, secs, eventnum,
-                                      tip_team, "", "jump_ball_win"))
-
-        # ----------------------------------------------------------------
-        # Period start / end (MSGTYPE 12, 13)
-        # ----------------------------------------------------------------
-        elif msgtype == MSG.PERIOD_START:
-            events.append(_mk(identity, game_id, secs, eventnum,
-                              "", "", "period_start"))
-        elif msgtype == MSG.PERIOD_END:
-            events.append(_mk(identity, game_id, secs, eventnum,
-                              "", "", "period_end"))
-
-    # Sort by (secs, event_id) for consistent accumulation
     events.sort(key=lambda e: (e["secs"], e["event_id"]))
-    # Filter team rebounds sandwiched between FT attempts (data artifacts).
     events = _filter_intra_ft_rebounds(events)
     return events
 
@@ -263,11 +238,7 @@ def _infer_period_lengths(rows: List[Dict[str, Any]]) -> Tuple[int, int]:
 def _pctime_to_secs(
     period: int, pctimestring: str, reg_len: int, ot_len: int,
 ) -> int:
-    """Convert PERIOD + PCTIMESTRING to elapsed game-clock seconds.
-
-    Period 1 starts at 0, period 2 at reg_len, etc.  PCTIMESTRING
-    counts down within each period (e.g. "12:00" -> "00:00").
-    """
+    """Convert PERIOD + PCTIMESTRING to elapsed game-clock seconds."""
     remaining = _parse_pctime(pctimestring)
 
     if period <= 4:
@@ -283,13 +254,7 @@ def _pctime_to_secs(
 def _filter_intra_ft_rebounds(
     events: List[PBPEvent],
 ) -> List[PBPEvent]:
-    """Remove team offensive rebounds sandwiched between FT attempts.
-
-    When a team rebound (player_id='') occurs between two FT events of
-    the same team at the same timestamp, it is a dead-ball artifact
-    (e.g. the ball awarded to the shooting team between FT attempts)
-    rather than a real change of possession.
-    """
+    """Remove team offensive rebounds sandwiched between FT attempts."""
     n = len(events)
     keep = [True] * n
     for i in range(1, n - 1):
@@ -338,31 +303,6 @@ def _opponent(
     if team_id == away_team_id:
         return home_team_id
     return ""
-
-
-def _resolve_player_team(
-    person_type: int,
-    player_id: str,
-    player_team_id: str,
-) -> str:
-    """Resolve the team for an event.
-
-    For team-level events (PERSON1TYPE=3), PLAYER1_ID *is* the team ID
-    and PLAYER1_TEAM_ID may be empty.
-    """
-    if person_type == PERSON_TEAM:
-        return player_id
-    return player_team_id
-
-
-def _build_desc(row: Dict[str, Any]) -> str:
-    """Build combined description from home/neutral/visitor columns."""
-    parts = [
-        _to_str(row.get(COL["HOMEDESCRIPTION"])),
-        _to_str(row.get(COL["NEUTRALDESCRIPTION"])),
-        _to_str(row.get(COL["VISITORDESCRIPTION"])),
-    ]
-    return " ".join(p for p in parts if p)
 
 
 def _to_int(val: Any) -> int:

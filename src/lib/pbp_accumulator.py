@@ -270,22 +270,32 @@ def _handle_special(
                        if e["event"] == "poss_start" and e["team_id"] == opp_entity_id)
         return None
 
+    if handler == "player_start":
+        for e in all_events:
+            if (e["event"] == "player_in" and e["secs"] == 0
+                    and e["player_id"] == entity_id):
+                return True
+        return False
+
     if handler == "team_win":
-        team_pts = result.get("points")
-        if team_pts is None:
-            return None
-        opp_evts = partitions.get("opp_team", [])
-        opp_pts = _sum_points(opp_evts)
-        return team_pts > opp_pts
+        team_events = [e for e in all_events if e["team_id"] == entity_id]
+        team_pts = _sum_points(team_events)
+        opp_events = [e for e in all_events
+                      if opp_entity_id and e["team_id"] == opp_entity_id]
+        opp_pts = _sum_points(opp_events)
+        return team_pts > opp_pts if team_pts != opp_pts else None
 
     # -- Player handlers --
     if handler == "player_win":
-        team_pts = result.get("points")
-        if team_pts is None:
+        # DNP (0 seconds) -> no win value
+        if not player_team_id or result.get("secs", 0) == 0:
             return None
-        opp_evts = partitions.get("opp_player", [])
-        opp_pts = _sum_points(opp_evts)
-        return team_pts > opp_pts
+        team_events = [e for e in all_events if e["team_id"] == player_team_id]
+        team_pts = _sum_points(team_events)
+        opp_events = [e for e in all_events
+                      if opp_entity_id and e["team_id"] == opp_entity_id]
+        opp_pts = _sum_points(opp_events)
+        return team_pts > opp_pts if team_pts != opp_pts else None
 
     if handler == "player_secs":
         return _calc_player_secs(all_events, entity_id)
@@ -461,6 +471,7 @@ def _calc_player_secs(
 # ============================================================================
 # PBP EVENT DERIVATION (Phase 2 + 3)
 # ============================================================================
+
 
 
 def derive_game_context_events(

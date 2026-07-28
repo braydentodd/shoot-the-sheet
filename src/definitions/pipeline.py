@@ -19,7 +19,7 @@ from typing import Dict, List, Literal
 # ============================================================================
 
 Phase = Literal[
-    "build_schema",
+    "bootstrap_schema",
     "detect_season_activity",
     "seed_season_coverage",
     "maintain_leagues_teams",
@@ -48,7 +48,7 @@ Phase = Literal[
 
 PIPELINE: Dict[str, List[str]] = {
     "execution_start": [
-        "build_schema",
+        "bootstrap_schema",
     ],
     "league_setup": [
         "detect_season_activity",

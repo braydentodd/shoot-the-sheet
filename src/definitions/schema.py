@@ -594,6 +594,12 @@ SCHEMAS: Dict[str, Dict[str, Table]] = {
                 {"name": "idx_errors_phase", "columns": ["phase"]},
             ],
         },
+        "pbp_events": {
+            "primary_key": ["identity", "dataset", "event_key"],
+            "foreign_keys": None,
+            "unique_constraints": None,
+            "indexes": None,
+        },
     },
     # ========================================================================
     # STAGING — per-identity, first-write-wins within a run

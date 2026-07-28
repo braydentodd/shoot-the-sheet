@@ -2150,8 +2150,8 @@ def _run_phases(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def _phase_build_schema(ctx: dict) -> int:
-    logger.info(phase_marker("build_schema"))
+def _phase_bootstrap_schema(ctx: dict) -> int:
+    logger.info(phase_marker("bootstrap_schema"))
     with db_connection() as conn:
         bootstrap_schema(ctx["league_code"], conn=conn)
     return 0
@@ -2478,6 +2478,12 @@ def _maintain_pbp(
     4. Map result sets to db_columns
     5. Write to staging.team_games and staging.player_games
     """
+    from src.lib.entity_resolver import make_entity_resolver
+    from src.lib.pbp_classifier import (
+        EventClassifier,
+        FieldLookupStrategy,
+        UnclassifiedEventError,
+    )
     from src.lib.pbp_accumulator import (
         accumulate_result_set,
         derive_game_context_events,
@@ -2520,6 +2526,43 @@ def _maintain_pbp(
     # Build the PBP column mapping from db_columns
     pbp_col_map = _build_pbp_column_map(league_code, identity_code, dataset_name)
 
+    # Build entity resolver and event classifier (single DB connection).
+    try:
+        from src.lib.postgres import db_connection
+        with db_connection() as conn:
+            entity_resolver = make_entity_resolver(conn, identity_code)
+
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT event_key, handling "
+                    "FROM core.pbp_events "
+                    "WHERE identity = %s AND dataset = %s",
+                    (identity_code, dataset_name),
+                )
+                catalog_rows = [
+                    {"event_key": r[0], "handling": r[1]}
+                    for r in cur.fetchall()
+                ]
+            if catalog_rows:
+                classifier = EventClassifier(
+                    catalog_rows, FieldLookupStrategy(),
+                )
+                logger.info(
+                    "PBP classifier loaded: %d classified, %d unreviewed",
+                    classifier.classified_count, classifier.unreviewed_count,
+                )
+            else:
+                logger.warning(
+                    "PBP event catalog is empty for %s.%s. "
+                    "Run 'discover-pbp' first, then review and set handling. "
+                    "All games will be skipped until the catalog is populated.",
+                    identity_code, dataset_name,
+                )
+                return 0
+    except Exception as exc:
+        logger.warning("Failed to build PBP resolver/classifier: %s", exc)
+        return 0
+
     total_rows = 0
     for game_info in game_rows:
         ext_game_id = game_info["ext_game_id"]
@@ -2533,14 +2576,58 @@ def _maintain_pbp(
             )
             continue
 
-        # 1. Fetch + Normalize via source normalizer
+        # 1. Fetch raw rows and classify every event against the catalog.
+        #    Any unclassified event stops the entire phase.
+        try:
+            raw_rows = client_mod.fetch_raw_rows(ext_game_id, season)
+        except Exception as exc:
+            logger.warning("PBP fetch failed for game %s: %s", ext_game_id, exc)
+            failed.append({
+                "dataset": dataset_name,
+                "game_id": ext_game_id,
+                "error": str(exc),
+            })
+            continue
+
+        if not raw_rows:
+            logger.debug("No PBP events for game %s", ext_game_id)
+            continue
+
+        # Classify every raw row -- collect ALL unclassified, not just first
+        unclassified = []
+        for row in raw_rows:
+            try:
+                classifier.classify(row)
+            except UnclassifiedEventError as e:
+                unclassified.append(e)
+
+        if unclassified:
+            for uc in unclassified:
+                log_error_simple(
+                    "maintain_pbp",
+                    f"Unclassified event in game {ext_game_id}: "
+                    f"signature={uc.signature}",
+                )
+            logger.error(
+                "Game %s: %d unclassified event(s). "
+                "Skipping game and stopping PBP phase. "
+                "Run 'discover-pbp %s.%s' to find new event types, "
+                "then review core.pbp_events and set handling.",
+                ext_game_id, len(unclassified),
+                identity_code, dataset_name,
+            )
+            break  # Stop processing further games
+
+        # 2. Normalize (all events are classified)
         try:
             events = client_mod.fetch_game_pbp(
                 ext_game_id, season, home_team_id, away_team_id,
+                entity_resolver,
+                classifier,
                 identity=identity_code,
             )
         except Exception as exc:
-            logger.warning("PBP fetch failed for game %s: %s", ext_game_id, exc)
+            logger.warning("PBP normalize failed for game %s: %s", ext_game_id, exc)
             failed.append({
                 "dataset": dataset_name,
                 "game_id": ext_game_id,
@@ -2552,12 +2639,12 @@ def _maintain_pbp(
             logger.debug("No PBP events for game %s", ext_game_id)
             continue
 
-        # 2. Derive context events (possessions, substitutions)
+        # 3. Derive context events (possessions, substitutions)
         events = derive_game_context_events(
             events, home_team_id, away_team_id, lineup_size=lineup_size,
         )
 
-        # 3. Accumulate team result sets
+        # 4. Accumulate team result sets
         team_results = []
         for team_id in (home_team_id, away_team_id):
             opp_id = away_team_id if team_id == home_team_id else home_team_id
@@ -2715,7 +2802,7 @@ def _map_pbp_result_to_columns(
 
 
 PHASE_HANDLERS: Dict[str, Callable] = {
-    "build_schema": _phase_build_schema,
+    "bootstrap_schema": _phase_bootstrap_schema,
     "detect_season_activity": _phase_detect_season_activity,
     "seed_season_coverage": _phase_seed_season_coverage,
     "seed_game_coverage": _phase_seed_game_coverage,
