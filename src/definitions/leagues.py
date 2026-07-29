@@ -15,7 +15,7 @@ Dataset-level role assignments and source wiring live in
 Pure declarative data; helpers live in :mod:`src.lib.leagues_resolver`.
 """
 
-from typing import Dict, Literal, TypedDict, Union
+from typing import Literal, TypedDict
 
 # ============================================================================
 # SCHEMA
@@ -26,7 +26,7 @@ class SeasonType(TypedDict):
     """Per-season-type configuration within a league."""
 
     is_postseason: bool
-    min_season: Union[str, None]
+    min_season: str | None
 
 
 class League(TypedDict):
@@ -35,7 +35,7 @@ class League(TypedDict):
     name: str
     gender: Literal["M", "W"]
     season_format: str
-    season_types: Dict[str, SeasonType]
+    season_types: dict[str, SeasonType]
     calendar_flip: str
     season_retention_start: str
     lineup_size: int
@@ -45,7 +45,7 @@ class League(TypedDict):
 # LEAGUE REGISTRY
 # ============================================================================
 
-LEAGUES: Dict[str, League] = {
+LEAGUES: dict[str, League] = {
     "NBA": {
         "name": "National Basketball Association",
         "gender": "M",

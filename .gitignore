@@ -14,5 +14,6 @@ ENV/
 *.swo
 *.DS_Store
 *.log
+.ruff_cache/
 /tmp/
 data/

@@ -19,7 +19,7 @@ generator looks up type, nullable, default, and other metadata from the
 column registry.
 """
 
-from typing import Dict, List, Literal, TypedDict, Union
+from typing import Literal, TypedDict
 
 # ============================================================================
 # ALLOWED VALUE SETS
@@ -47,7 +47,7 @@ VALID_FK_STRATEGIES = frozenset({"direct", "profile_lookup"})
 
 # Default transform per PostgreSQL base type, applied when a source does not
 # declare its own ``transform`` and is not a pipeline / multi-call shape.
-DEFAULT_TYPE_TRANSFORMS: Dict[str, str] = {
+DEFAULT_TYPE_TRANSFORMS: dict[str, str] = {
     "SMALLINT": "safe_int",
     "INTEGER": "safe_int",
     "BIGINT": "safe_int",
@@ -73,10 +73,10 @@ class Sequence(TypedDict):
     """
 
     schema: Literal["core", "staging", "intermediate"]
-    owner_columns: List[str]
+    owner_columns: list[str]
 
 
-SEQUENCES: Dict[str, Sequence] = {
+SEQUENCES: dict[str, Sequence] = {
     "core.sts_id_seq": {
         "schema": "core",
         "owner_columns": ["sts_id"],
@@ -111,10 +111,10 @@ class FK(TypedDict):
         on_delete: Action on referenced row delete.
     """
 
-    columns: List[str]
+    columns: list[str]
     ref_schema: str
     ref_table: str
-    ref_columns: List[str]
+    ref_columns: list[str]
     strategy: str
     on_update: str
     on_delete: str
@@ -129,7 +129,7 @@ class Index(TypedDict):
     """
 
     name: str
-    columns: List[str]
+    columns: list[str]
 
 
 class Table(TypedDict, total=False):
@@ -142,10 +142,10 @@ class Table(TypedDict, total=False):
         indexes: Additional indexes.
     """
 
-    primary_key: Union[List[str], None]
-    foreign_keys: Union[List[FK], None]
-    unique_constraints: Union[List[List[str]], None]
-    indexes: Union[List[Index], None]
+    primary_key: list[str] | None
+    foreign_keys: list[FK] | None
+    unique_constraints: list[list[str]] | None
+    indexes: list[Index] | None
 
 
 # ============================================================================
@@ -161,7 +161,7 @@ class Table(TypedDict, total=False):
 # core with first-match-wins semantics, since they are not overwritten
 # across identities.
 
-SCHEMAS: Dict[str, Dict[str, Table]] = {
+SCHEMAS: dict[str, dict[str, Table]] = {
     # ========================================================================
     # CORE
     # ========================================================================

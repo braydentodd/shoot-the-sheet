@@ -34,7 +34,8 @@ Columns with no external source (system columns, or stats with no provider
 yet) have ``dataset_mapping: None``.
 """
 
-from typing import Any, Dict, FrozenSet, List, Literal, TypedDict, Union, get_args
+from collections.abc import Mapping
+from typing import Any, Literal, TypedDict, get_args
 
 # ============================================================================
 # TYPE ALIASES
@@ -64,7 +65,7 @@ Transform = Literal[
 # ============================================================================
 
 # Derived from the Transform Literal so it never drifts.
-VALID_TRANSFORMS: FrozenSet[str] = frozenset(get_args(Transform))
+VALID_TRANSFORMS: frozenset[str] = frozenset(get_args(Transform))
 
 
 class DatasetMapping(TypedDict, total=False):
@@ -95,14 +96,14 @@ class DatasetMapping(TypedDict, total=False):
             available from the dataset's earliest season.
     """
 
-    field: Union[str, None]
-    result_set: Union[str, None]
-    transform: Union[Transform, None]
-    scale: Union[int, None]
-    params: Union[Dict[str, Any], None]
-    derived: Union[Dict[str, Any], None]
-    cross_row: Union[Dict[str, Any], None]
-    min_season: Union[str, None]
+    field: str | None
+    result_set: str | None
+    transform: Transform | None
+    scale: int | None
+    params: dict[str, Any] | None
+    derived: dict[str, Any] | None
+    cross_row: dict[str, Any] | None
+    min_season: str | None
 
 
 class Column(TypedDict, total=True):
@@ -121,16 +122,16 @@ class Column(TypedDict, total=True):
     """
 
     type: str
-    tables: Union[str, List[str]]
+    tables: str | list[str]
     nullable: bool
-    default: Union[str, int, None]
-    dataset_mapping: Union[
-        Dict[str, Dict[str, Dict[str, Dict[str, DatasetMapping]]]],
-        None,
-    ]
+    default: str | int | None
+    dataset_mapping: (
+        dict[str, dict[str, dict[str, dict[str, DatasetMapping]]]]
+        | None
+    )
 
 
-DB_COLUMNS: Dict[str, Column] = {
+DB_COLUMNS: Mapping[str, Column] = {
     # ==================================================================
     # SYSTEM / IDENTITY
     # ==================================================================
@@ -884,16 +885,6 @@ DB_COLUMNS: Dict[str, Column] = {
     # ==================================================================
     # METADATA / STATUS
     # ==================================================================
-    "notes": {
-        "type": "TEXT",
-        "tables": [
-            "teams",
-            "players",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
     "active": {
         "type": "BOOLEAN",
         "tables": [

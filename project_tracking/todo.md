@@ -1,11 +1,10 @@
 Short term:
 - [ ] review secs pbp
 - [ ] review o_poss_secs pbp
-- [ ] games started for players
-- [ ] rosters by season?
-- [ ] stop at 2000? how far back do we go?
+- [ ] bump minimum nba season back
 - [ ] nba live pbp endpoints
 - [ ] game accums possible for db_columns seasons tables
+- [ ] add wnba, g-league
 - [ ] set up github actions
 
 Long term:

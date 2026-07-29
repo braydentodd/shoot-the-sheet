@@ -12,7 +12,7 @@ A dataset's ``phase`` field declares which phase triggers it.
 The orchestrator dispatches each phase directly.
 """
 
-from typing import Dict, List, Literal
+from typing import Literal
 
 # ============================================================================
 # TYPE ALIASES
@@ -46,7 +46,7 @@ Phase = Literal[
 # ALLOWED VALUE SETS
 # ============================================================================
 
-PIPELINE: Dict[str, List[str]] = {
+PIPELINE: dict[str, list[str]] = {
     "execution_start": [
         "bootstrap_schema",
     ],

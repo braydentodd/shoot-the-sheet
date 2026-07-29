@@ -12,8 +12,7 @@ Convention: definitions = config/dicts/constants.  Code lives in lib
 or source folders, never here.
 """
 
-from typing import Dict, Literal, Tuple, TypedDict
-
+from typing import Literal, TypedDict
 
 # ============================================================================
 # STANDARD EVENT TYPES
@@ -82,21 +81,21 @@ class PBPEvent(TypedDict):
 # normalizers.  Source-agnostic -- they describe the standard
 # PBPEventType values, not any specific API response.
 
-FT_MAKE_EVENTS: Tuple[str, ...] = ("ft1_make", "ft2_make", "ft3_make")
-FT_MISS_EVENTS: Tuple[str, ...] = ("ft1_miss",)
-FT_ALL_EVENTS: Tuple[str, ...] = FT_MAKE_EVENTS + FT_MISS_EVENTS
+FT_MAKE_EVENTS: tuple[str, ...] = ("ft1_make", "ft2_make", "ft3_make")
+FT_MISS_EVENTS: tuple[str, ...] = ("ft1_miss",)
+FT_ALL_EVENTS: tuple[str, ...] = FT_MAKE_EVENTS + FT_MISS_EVENTS
 
-FG_MAKE_EVENTS: Tuple[str, ...] = ("fg2_make", "fg3_make")
-FG_MISS_EVENTS: Tuple[str, ...] = ("fg2_miss", "fg3_miss")
-FG_ALL_EVENTS: Tuple[str, ...] = FG_MAKE_EVENTS + FG_MISS_EVENTS
+FG_MAKE_EVENTS: tuple[str, ...] = ("fg2_make", "fg3_make")
+FG_MISS_EVENTS: tuple[str, ...] = ("fg2_miss", "fg3_miss")
+FG_ALL_EVENTS: tuple[str, ...] = FG_MAKE_EVENTS + FG_MISS_EVENTS
 
-REB_EVENTS: Tuple[str, ...] = ("o_reb", "d_reb")
-TOV_EVENTS: Tuple[str, ...] = ("turnover",)
-FOUL_EVENTS: Tuple[str, ...] = ("foul",)
+REB_EVENTS: tuple[str, ...] = ("o_reb", "d_reb")
+TOV_EVENTS: tuple[str, ...] = ("turnover",)
+FOUL_EVENTS: tuple[str, ...] = ("foul",)
 
 # Events that definitively tell us which team has possession.
 # Used when scanning for possession after a made FT or at period start.
-POSSESSION_EVENTS: Tuple[str, ...] = (
+POSSESSION_EVENTS: tuple[str, ...] = (
     FG_MAKE_EVENTS + FG_MISS_EVENTS + FT_ALL_EVENTS + REB_EVENTS + TOV_EVENTS
 )
 
@@ -108,7 +107,7 @@ POSSESSION_EVENTS: Tuple[str, ...] = (
 # When multiple events share the same secs timestamp, this dict controls
 # their relative ordering (lower = earlier in the sorted output).
 
-EVENT_SORT_PRIORITY: Dict[str, int] = {
+EVENT_SORT_PRIORITY: dict[str, int] = {
     "foul": 0,
     "o_reb": 1,
     "d_reb": 1,
@@ -156,7 +155,7 @@ EVENT_SORT_PRIORITY: Dict[str, int] = {
 #
 # A field only appears in the result sets listed in its result_sets dict.
 
-RESULT_SET_FIELDS: Dict[str, dict] = {
+RESULT_SET_FIELDS: dict[str, dict] = {
 
     "fg2m": {
         "op": "count",

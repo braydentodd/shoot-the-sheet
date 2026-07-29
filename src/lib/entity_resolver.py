@@ -12,7 +12,7 @@ production the orchestrator provides a DB-backed resolver; in tests a
 mock resolver is injected.
 """
 
-from typing import Callable, Optional, Tuple
+from collections.abc import Callable
 
 # ---------------------------------------------------------------------------
 # Public types
@@ -21,7 +21,7 @@ from typing import Callable, Optional, Tuple
 # A resolver returns (entity_type, team_id) or (None, None) for unknown entities.
 #   entity_type: "player" | "team" | None
 #   team_id:     the team the entity belongs to, or None
-EntityResolver = Callable[[str], Tuple[Optional[str], Optional[str]]]
+EntityResolver = Callable[[str], tuple[str | None, str | None]]
 
 
 # ---------------------------------------------------------------------------
@@ -60,7 +60,7 @@ def make_entity_resolver(conn, identity_code: str) -> EntityResolver:
         for ext_id, team_id in cur:
             players[ext_id] = team_id
 
-    def resolve(entity_id: str) -> Tuple[Optional[str], Optional[str]]:
+    def resolve(entity_id: str) -> tuple[str | None, str | None]:
         """Resolve an entity ID to (entity_type, team_id).
 
         Returns (None, None) for blank, zero, or unknown IDs.

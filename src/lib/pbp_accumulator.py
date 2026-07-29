@@ -13,14 +13,14 @@ definitions (src.definitions.pbp).
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from src.definitions.pbp import (
-    PBPEvent,
-    RESULT_SET_FIELDS,
     EVENT_SORT_PRIORITY,
     FG_MAKE_EVENTS,
     POSSESSION_EVENTS,
+    RESULT_SET_FIELDS,
+    PBPEvent,
 )
 from src.lib.math_evaluator import evaluate as eval_math
 
@@ -33,8 +33,8 @@ logger = logging.getLogger(__name__)
 
 
 def _renumber_event_ids(
-    events: List[PBPEvent],
-) -> List[PBPEvent]:
+    events: list[PBPEvent],
+) -> list[PBPEvent]:
     """Assign sequential event_ids (1, 2, 3, ...) sorted by (secs, event)."""
     events.sort(key=lambda e: (
         e["secs"],
@@ -52,13 +52,13 @@ def _renumber_event_ids(
 
 
 def accumulate_result_set(
-    events: List[PBPEvent],
+    events: list[PBPEvent],
     result_set: str,
     entity_id: str,
-    opp_entity_id: Optional[str] = None,
-    player_team_id: Optional[str] = None,
-    on_court_intervals: Optional[List[Tuple[int, int]]] = None,
-) -> Dict[str, Any]:
+    opp_entity_id: str | None = None,
+    player_team_id: str | None = None,
+    on_court_intervals: list[tuple[int, int]] | None = None,
+) -> dict[str, Any]:
     """Accumulate standard PBP events into one result set row.
 
     Generic over result-set type.  Iterates RESULT_SET_FIELDS once,
@@ -80,7 +80,7 @@ def accumulate_result_set(
         player_team_id, on_court_intervals,
     )
 
-    result: Dict[str, Any] = {}
+    result: dict[str, Any] = {}
 
     for field_name, field_def in RESULT_SET_FIELDS.items():
         rs_map = field_def.get("result_sets", {})
@@ -121,13 +121,13 @@ def accumulate_result_set(
 
 
 def _build_partitions(
-    events: List[PBPEvent],
+    events: list[PBPEvent],
     result_set: str,
     entity_id: str,
-    opp_entity_id: Optional[str],
-    player_team_id: Optional[str],
-    on_court_intervals: Optional[List[Tuple[int, int]]],
-) -> Dict[str, List[PBPEvent]]:
+    opp_entity_id: str | None,
+    player_team_id: str | None,
+    on_court_intervals: list[tuple[int, int]] | None,
+) -> dict[str, list[PBPEvent]]:
     """Partition events by scope for the given result set type."""
     if result_set == "team":
         return {
@@ -166,8 +166,8 @@ def _build_partitions(
 
 def _scope_events(
     scope: str,
-    partitions: Dict[str, List[PBPEvent]],
-) -> List[PBPEvent]:
+    partitions: dict[str, list[PBPEvent]],
+) -> list[PBPEvent]:
     """Route to the correct event list based on scope."""
     return partitions.get(scope, [])
 
@@ -178,13 +178,13 @@ def _scope_events(
 
 
 def _evaluate_derived(
-    field_def: Dict[str, Any],
-    result: Dict[str, Any],
-) -> Optional[float]:
+    field_def: dict[str, Any],
+    result: dict[str, Any],
+) -> float | None:
     """Evaluate a derived field formula using the safe math evaluator."""
     formula = field_def["formula"]
     fields = field_def["fields"]
-    variables: Dict[str, float] = {}
+    variables: dict[str, float] = {}
     for f in fields:
         val = result.get(f)
         if val is None:
@@ -195,16 +195,16 @@ def _evaluate_derived(
             return None
     try:
         return eval_math(formula, variables)
-    except Exception:
+    except Exception as exc:
         logger.debug(
-            "Derived formula failed: %s with %s", formula, variables
+            "Derived formula failed: %s with %s -- %s", formula, variables, exc
         )
         return None
 
 
 def _is_on_court(
     event: PBPEvent,
-    on_court_intervals: Optional[List[Tuple[int, int]]] = None,
+    on_court_intervals: list[tuple[int, int]] | None = None,
 ) -> bool:
     """Check if an event falls within any on-court interval."""
     if on_court_intervals is None:
@@ -215,7 +215,7 @@ def _is_on_court(
     )
 
 
-def _sum_points(team_events: List[PBPEvent]) -> int:
+def _sum_points(team_events: list[PBPEvent]) -> int:
     """Sum points from a list of events."""
     pts = 0
     for e in team_events:
@@ -240,13 +240,13 @@ def _sum_points(team_events: List[PBPEvent]) -> int:
 
 def _handle_special(
     handler: str,
-    all_events: List[PBPEvent],
-    partitions: Dict[str, List[PBPEvent]],
+    all_events: list[PBPEvent],
+    partitions: dict[str, list[PBPEvent]],
     entity_id: str,
-    opp_entity_id: Optional[str],
-    player_team_id: Optional[str],
-    on_court_intervals: Optional[List[Tuple[int, int]]],
-    result: Dict[str, Any],
+    opp_entity_id: str | None,
+    player_team_id: str | None,
+    on_court_intervals: list[tuple[int, int]] | None,
+    result: dict[str, Any],
 ) -> Any:
     """Dispatch a special field handler by name."""
 
@@ -327,9 +327,9 @@ def _handle_special(
 
 
 def _calc_possession_secs(
-    events: List[PBPEvent],
+    events: list[PBPEvent],
     team_id: str,
-) -> Optional[int]:
+) -> int | None:
     """Sum seconds between poss_start/poss_end pairs for a team."""
     starts = [
         e for e in events
@@ -354,11 +354,11 @@ def _calc_possession_secs(
 
 
 def _player_possession_windows(
-    events: List[PBPEvent],
+    events: list[PBPEvent],
     team_id: str,
     player_id: str,
-    on_court_intervals: Optional[List[Tuple[int, int]]],
-) -> Tuple[int, int]:
+    on_court_intervals: list[tuple[int, int]] | None,
+) -> tuple[int, int]:
     """Count possession windows and total secs where a player qualifies.
 
     A player qualifies for a possession window if:
@@ -419,11 +419,11 @@ def _player_possession_windows(
 
 
 def _player_possession_count(
-    events: List[PBPEvent],
+    events: list[PBPEvent],
     team_id: str,
     player_id: str,
-    on_court_intervals: Optional[List[Tuple[int, int]]],
-) -> Optional[int]:
+    on_court_intervals: list[tuple[int, int]] | None,
+) -> int | None:
     """Count qualified possession windows for a player."""
     count, _ = _player_possession_windows(
         events, team_id, player_id, on_court_intervals)
@@ -431,11 +431,11 @@ def _player_possession_count(
 
 
 def _player_possession_secs(
-    events: List[PBPEvent],
+    events: list[PBPEvent],
     team_id: str,
     player_id: str,
-    on_court_intervals: Optional[List[Tuple[int, int]]],
-) -> Optional[int]:
+    on_court_intervals: list[tuple[int, int]] | None,
+) -> int | None:
     """Sum full possession secs for qualified windows for a player."""
     count, total = _player_possession_windows(
         events, team_id, player_id, on_court_intervals)
@@ -443,9 +443,9 @@ def _player_possession_secs(
 
 
 def _calc_player_secs(
-    events: List[PBPEvent],
+    events: list[PBPEvent],
     player_id: str,
-) -> Optional[int]:
+) -> int | None:
     """Sum seconds between player_in and player_out events."""
     ins = [
         e for e in events
@@ -475,11 +475,11 @@ def _calc_player_secs(
 
 
 def derive_game_context_events(
-    events: List[PBPEvent],
+    events: list[PBPEvent],
     home_team_id: str,
     away_team_id: str,
     lineup_size: int = 5,
-) -> List[PBPEvent]:
+) -> list[PBPEvent]:
     """Derive possession, substitution, and lineup events from raw events.
 
     This is the Phase 2/3 entry point that adds derived events to the
@@ -517,7 +517,7 @@ _derived_id_counter = 0
 
 
 def _mk_derived(
-    events: List[PBPEvent],
+    events: list[PBPEvent],
     event_type: str,
     secs: int,
     team_id: str,
@@ -543,7 +543,7 @@ def _mk_derived(
     return ev
 
 
-def _reset_derived_id(events: List[PBPEvent]) -> None:
+def _reset_derived_id(events: list[PBPEvent]) -> None:
     """Seed the derived event_id counter from the given event list."""
     global _derived_id_counter
     _derived_id_counter = max(e["event_id"] for e in events) + 1 if events else 1
@@ -555,8 +555,8 @@ def _reset_derived_id(events: List[PBPEvent]) -> None:
 
 
 def _derive_substitution_events(
-    events: List[PBPEvent],
-) -> List[PBPEvent]:
+    events: list[PBPEvent],
+) -> list[PBPEvent]:
     """Convert raw substitution events into standard player_in/player_out.
 
     Source normalizers may emit non-standard substitution event types
@@ -575,9 +575,9 @@ def _derive_substitution_events(
 
 
 def _derive_lineup_events(
-    events: List[PBPEvent],
+    events: list[PBPEvent],
     lineup_size: int,
-) -> List[PBPEvent]:
+) -> list[PBPEvent]:
     """Derive player_in at period start and player_out at period end.
 
     Tracks on-court players per team via explicit substitution events.
@@ -592,10 +592,10 @@ def _derive_lineup_events(
         return events
 
     result = list(events)
-    derived: List[PBPEvent] = []
+    derived: list[PBPEvent] = []
 
-    on_court: Dict[str, set[str]] = {}
-    period_start_secs: Optional[int] = None
+    on_court: dict[str, set[str]] = {}
+    period_start_secs: int | None = None
     in_period = False
 
     for event in result:
@@ -633,6 +633,7 @@ def _derive_lineup_events(
         elif in_period and team and player:
             # Non-sub event with a player: if they aren't already on
             # court, they must have started the period.
+            assert period_start_secs is not None
             court = on_court.setdefault(team, set())
             if player not in court:
                 court.add(player)
@@ -650,10 +651,10 @@ def _derive_lineup_events(
 
 
 def _derive_possession_events(
-    events: List[PBPEvent],
+    events: list[PBPEvent],
     home_team_id: str,
     away_team_id: str,
-) -> List[PBPEvent]:
+) -> list[PBPEvent]:
     """Derive poss_start, poss_end, and poss_ending_ft_trip events.
 
     Standard possession rules:
@@ -665,7 +666,7 @@ def _derive_possession_events(
     - Shooting foul: emits poss_ending_ft_trip at the foul timestamp.
     """
     result = list(events)
-    derived: List[PBPEvent] = []
+    derived: list[PBPEvent] = []
 
     if not events:
         return result
@@ -679,7 +680,6 @@ def _derive_possession_events(
     for i, event in enumerate(events):
         ev = event["event"]
         team = event["team_id"]
-        player = event["player_id"]
         secs = event["secs"]
 
         # --- Period boundaries ---

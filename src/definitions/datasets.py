@@ -39,7 +39,7 @@ run) after this dataset's fetch completes.
 This mirrors the ``dataset_mapping`` pattern in ``db_columns.py``.
 """
 
-from typing import Dict, List, Literal, TypedDict, Union
+from typing import Literal, TypedDict
 
 from src.definitions.pipeline import Phase
 
@@ -60,18 +60,18 @@ class SourceMapping(TypedDict, total=False):
     """Source-specific wire parameters -- how to call the API endpoint."""
 
     class_name: str
-    result_set: Union[str, None]
-    season_type_param: Union[str, None]
-    per_mode_param: Union[str, None]
-    season_param: Union[str, None]
-    season_param_format: Union[Dict[str, str], None]
-    endpoint: Union[str, None]
+    result_set: str | None
+    season_type_param: str | None
+    per_mode_param: str | None
+    season_param: str | None
+    season_param_format: dict[str, str] | None
+    endpoint: str | None
 
     # Pass-through — forwarded directly as API params.
-    measure_type_detailed_defense: Union[str, None]
-    pt_measure_type: Union[str, None]
-    player_or_team: Union[str, None]
-    player_or_team_abbreviation: Union[str, None]
+    measure_type_detailed_defense: str | None
+    pt_measure_type: str | None
+    player_or_team: str | None
+    player_or_team_abbreviation: str | None
 
 
 class RowFilter(TypedDict):
@@ -114,20 +114,20 @@ class Dataset(TypedDict):
         row_filters: Post-fetch row filters.
     """
 
-    min_season: Union[str, None]
-    max_season: Union[str, None]
+    min_season: str | None
+    max_season: str | None
     source: str
     phase: Phase
     coverage: Coverage
     iterates_by: IteratesBy
     per_season_type: bool
     source_mapping: SourceMapping
-    target_tables: Union[Dict[str, str], None]
-    prune_tables: Union[List[str], None]
-    row_filters: Union[List[RowFilter], None]
+    target_tables: dict[str, str] | None
+    prune_tables: list[str] | None
+    row_filters: list[RowFilter] | None
 
 
-DATASETS: Dict[str, Dict[str, Dataset]] = {
+DATASETS: dict[str, dict[str, Dataset]] = {
     "nba_id": {
         "league_schedule": {
             "min_season": None,

@@ -1,4 +1,3 @@
-# ruff: noqa: E402  -- load_dotenv() must run before src.* imports that read os.getenv at module load.
 """
 Shoot the Sheet - ETL CLI
 
@@ -136,17 +135,17 @@ def _run_etl(args) -> int:
                 "main",
                 "ETL run failed at top level -- see traceback above",
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("log_error_simple failed: %s", exc)
         return 1
 
 
 def _run_discovery(args) -> int:
     """Run PBP event discovery."""
+    from src.definitions.leagues import LEAGUES
     from src.lib.pbp_discover import discover
     from src.lib.postgres import db_connection
     from src.lib.schema_builder import bootstrap_schema
-    from src.definitions.leagues import LEAGUES
 
     # Ensure schema exists before discovery
     for league_code in LEAGUES:
