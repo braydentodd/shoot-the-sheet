@@ -31,11 +31,12 @@ ExecutionContext) lives here.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict, List, Union
+from collections.abc import Callable
+from typing import Any
 
 from psycopg2 import sql
 
-from src.definitions.datasets import DATASETS
+from src.definitions.datasets import DATASETS, Dataset
 from src.definitions.execution import GAME_LOOKBACK_DAYS
 from src.definitions.leagues import LEAGUES
 from src.definitions.pipeline import PIPELINE
@@ -74,7 +75,7 @@ logger = logging.getLogger(__name__)
 # Every target writes to its namesake table (e.g. "players" → players).
 # ---------------------------------------------------------------------------
 
-_active_types_cache: Dict[str, List[str]] = {}
+_active_types_cache: dict[str, list[str]] = {}
 
 
 # ============================================================================
@@ -98,12 +99,12 @@ def _load_source(source_code: str):
 
 def _run_groups(
     table_name: str,
-    targets: List[str],
-    seasons: List[str],
+    targets: list[str],
+    seasons: list[str],
     season_type: str,
     season_type_name: str,
-    team_ids: Dict[str, int],
-    failed: List[Dict[str, Any]],
+    team_ids: dict[str, int],
+    failed: list[dict[str, Any]],
     *,
     phase: str,
     league_code: str,
@@ -112,9 +113,7 @@ def _run_groups(
     source_config: dict,
     api_config: dict,
     make_fetcher: Callable,
-    on_target_finished: Union[
-        Callable[[str, str, List[Dict[str, Any]], int, bool, Any], None], None
-    ] = None,
+    on_target_finished: Callable[[str, str, list[dict[str, Any]], int, bool, Any], None] | None = None,
     in_season: bool = True,
 ) -> int:
     """Execute call groups for *table_name* across targets and seasons.
@@ -178,8 +177,8 @@ def _run_groups(
             dataset_name = group["dataset"]
             try:
                 result = shared_fetcher(dataset_name, group.get("params"))
-            except Exception as exc:
-                logger.exception("Group %s fetch failed: %s", dataset_name, exc)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Group %s fetch failed: %s", dataset_name, str(exc))
                 failed.append({"dataset": dataset_name, "error": str(exc)})
                 log_error_simple(
                     phase,
@@ -232,12 +231,12 @@ def _run_groups(
                     total_rows += rows
                     if rows:
                         group_succeeded = True
-                except Exception as exc:
-                    logger.exception(
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
                         "Group %s target %s failed: %s",
                         dataset_name,
                         target,
-                        exc,
+                        str(exc),
                     )
                     failed.append(
                         {
@@ -274,10 +273,11 @@ def _run_groups(
 # ============================================================================
 
 
-def _get_datasets_by_phase(phase_name: str) -> Dict[str, List[str]]:
+def _get_datasets_by_phase(phase_name: str) -> dict[str, list[str]]:
     """Return ``{identity_code: [dataset_name, ...]}`` for a pipeline stage."""
-    result: Dict[str, List[str]] = {}
-    for identity_code, datasets in DATASETS.items():
+    result: dict[str, list[str]] = {}
+    for identity_code in DATASETS:
+        datasets = DATASETS[identity_code]
         for ds_name, ds_def in datasets.items():
             if ds_def.get("phase") == phase_name:
                 result.setdefault(identity_code, []).append(ds_name)
@@ -292,7 +292,7 @@ _ROSTER_TABLES = frozenset({"teams_players", "leagues_teams", "countries_players
 
 
 def _resolve_entity_for_target(
-    source_config: dict, dataset_config: dict, target: str
+    source_config: dict, dataset_config: dict | Dataset, target: str
 ) -> tuple:
     """Resolve entity_type, entity_id_field, and entity_param for a target table.
 
@@ -329,7 +329,7 @@ def _resolve_entity_for_target(
 
 def _generic_targets_for_dataset(
     identity_code: str, dataset_name: str, identity_source: str
-) -> List[str]:
+) -> list[str]:
     """Return the bare staging table names a dataset writes to via the
     generic per-row column-mapping / entity-extraction path.
 
@@ -350,7 +350,7 @@ def _generic_targets_for_dataset(
     config_mod, _ = _load_source(identity_source)
     entity_fields = getattr(config_mod, "API_FIELD_NAMES", {}).get("entity_fields", {})
 
-    resolved: List[str] = []
+    resolved: list[str] = []
     for qualified, entity_type in target_tables.items():
         table = qualified.split(".", 1)[1] if "." in qualified else qualified
         if entity_type in entity_fields:
@@ -368,7 +368,7 @@ def _generic_targets_for_dataset(
     return resolved
 
 
-def _load_team_ids(league_code: str) -> Dict[str, int]:
+def _load_team_ids(league_code: str) -> dict[str, int]:
     """Return ``{ext_id: int(ext_id)}`` for teams in staging."""
     table = "staging.teams"
     with db_connection() as conn:
@@ -409,10 +409,10 @@ def _iter_league_identities(league_code: str, phase_name: str):
 # ============================================================================
 
 
-def _detect_season_activity(league_code: str, season: str) -> List[str]:
+def _detect_season_activity(league_code: str, season: str) -> list[str]:
     """Query detect_season_activity datasets and return active canonical season types."""
-    active: List[str] = []
-    for identity_code, datasets in DATASETS.items():
+    active: list[str] = []
+    for identity_code in DATASETS:
         for dataset_name in _get_datasets_by_phase("detect_season_activity").get(
             identity_code, []
         ):
@@ -440,8 +440,8 @@ def _discover_entities(
     identity_source: str,
     season_type: str,
     season_type_name: str,
-    failed: List[Dict[str, Any]],
-    team_ids: Dict[str, int] = None,  # type: ignore[assignment]
+    failed: list[dict[str, Any]],
+    team_ids: dict[str, int] | None = None,
 ) -> int:
     """Execute a maintainer stage: call each dataset, extract columns, prune stale records."""
     if team_ids is None:
@@ -460,7 +460,7 @@ def _discover_entities(
             f"the source's client module."
         )
 
-    from datetime import datetime, timezone
+    from datetime import UTC, datetime
 
     for dataset_name in dataset_names:
         logger.info(
@@ -472,7 +472,7 @@ def _discover_entities(
 
         ds_cfg = DATASETS.get(identity_code, {}).get(dataset_name, {})
         prune_tables = ds_cfg.get("prune_tables")
-        prune_start = datetime.now(timezone.utc) if prune_tables else None
+        prune_start = datetime.now(UTC) if prune_tables else None
 
         resolved_targets = _generic_targets_for_dataset(
             identity_code, dataset_name, identity_source
@@ -557,10 +557,10 @@ def _discover_entities(
 def _maintain_seasons(
     league_code: str,
     season: str,
-    season_range: List[str],
+    season_range: list[str],
     identity_code: str,
     identity_source: str,
-    failed: List[Dict[str, Any]],
+    failed: list[dict[str, Any]],
 ) -> int:
     """Fetch season-level stats in two passes.
 
@@ -819,10 +819,10 @@ def _maintain_seasons(
 def _maintain_games(
     league_code: str,
     season: str,
-    season_range: List[str],
+    season_range: list[str],
     identity_code: str,
     identity_source: str,
-    failed: List[Dict[str, Any]],
+    failed: list[dict[str, Any]],
 ) -> int:
     """Fetch game-level stats in two passes.
 
@@ -1116,9 +1116,9 @@ def _execute_stats_groups(
     identity_code: str,
     identity_source: str,
     dataset: str,
-    filtered_groups: List[Dict[str, Any]],
-    team_ids: Dict[str, int],
-    failed: List[Dict[str, Any]],
+    filtered_groups: list[dict[str, Any]],
+    team_ids: dict[str, int],
+    failed: list[dict[str, Any]],
     use_coverage: bool,
 ) -> int:
     """Execute stats call groups for a single dataset / target slice."""
@@ -1206,8 +1206,8 @@ def _maintain_profiles(
     identity_source: str,
     season_type: str,
     season_type_name: str,
-    failed: List[Dict[str, Any]],
-    team_ids: Dict[str, int] = None,  # type: ignore[assignment]
+    failed: list[dict[str, Any]],
+    team_ids: dict[str, int] | None = None,
 ) -> int:
     """Update profile fields for entities already in staging."""
     if team_ids is None:
@@ -1267,7 +1267,7 @@ def _maintain_profiles(
 
 def _match_entities(
     league_code: str,
-    failed: List[Dict[str, Any]],
+    failed: list[dict[str, Any]],
 ) -> int:
     """Cross-league: match all staging identities against identity registries.
 
@@ -1330,7 +1330,7 @@ def _match_entities(
 
 def _match_games(
     league_code: str,
-    failed: List[Dict[str, Any]],
+    failed: list[dict[str, Any]],
 ) -> int:
     """Resolve staged games to core game_ids.
 
@@ -1514,8 +1514,8 @@ MERGE_TABLE_CONFIG = {
             "game_id": "COALESCE(ig.game_id, nextval('core.game_id_seq'))",
         },
         "extra_joins": [
-            "LEFT JOIN core.identities_games ig"
-            "  ON s.identity = ig.identity AND s.ext_game_id = ig.ext_id",
+            ("LEFT JOIN core.identities_games ig"
+             "  ON s.identity = ig.identity AND s.ext_game_id = ig.ext_id"),
         ],
     },
     "team_games": {
@@ -1530,10 +1530,10 @@ MERGE_TABLE_CONFIG = {
             "game_id": "ig.game_id",
         },
         "extra_joins": [
-            "JOIN staging.games sg"
-            "  ON s.identity = sg.identity AND s.ext_game_id = sg.ext_game_id",
-            "LEFT JOIN core.identities_games ig"
-            "  ON sg.identity = ig.identity AND sg.ext_game_id = ig.ext_id",
+            ("JOIN staging.games sg"
+             "  ON s.identity = sg.identity AND s.ext_game_id = sg.ext_game_id"),
+            ("LEFT JOIN core.identities_games ig"
+             "  ON sg.identity = ig.identity AND sg.ext_game_id = ig.ext_id"),
         ],
     },
     "player_games": {
@@ -1549,16 +1549,16 @@ MERGE_TABLE_CONFIG = {
             "game_id": "ig.game_id",
         },
         "extra_joins": [
-            "JOIN staging.games sg"
-            "  ON s.identity = sg.identity AND s.ext_game_id = sg.ext_game_id",
-            "LEFT JOIN core.identities_games ig"
-            "  ON sg.identity = ig.identity AND sg.ext_game_id = ig.ext_id",
+            ("JOIN staging.games sg"
+             "  ON s.identity = sg.identity AND s.ext_game_id = sg.ext_game_id"),
+            ("LEFT JOIN core.identities_games ig"
+             "  ON sg.identity = ig.identity AND sg.ext_game_id = ig.ext_id"),
         ],
     },
 }
 
 
-def _get_cols_for_table(table_name: str, schema_qualifier: str = "") -> List[str]:
+def _get_cols_for_table(table_name: str, schema_qualifier: str = "") -> list[str]:
     """Return DB_COLUMNS column names that belong to *table_name*.
 
     If *schema_qualifier* is set (e.g. "staging"), only columns that
@@ -1579,10 +1579,9 @@ def _get_cols_for_table(table_name: str, schema_qualifier: str = "") -> List[str
                 # Qualified: match exact schema.table
                 schema_part = entry.split(".", 1)[0]
                 table_part = entry.split(".", 1)[1]
-                if table_part == table_name:
-                    if not schema_qualifier or schema_part == schema_qualifier:
-                        cols.append(col_name)
-                        break
+                if table_part == table_name and (not schema_qualifier or schema_part == schema_qualifier):
+                    cols.append(col_name)
+                    break
             else:
                 # Bare: match table name regardless of schema
                 if entry == table_name:
@@ -2020,8 +2019,8 @@ def _prune_countries() -> int:
 
 
 def run_etl(
-    league_code: Union[str, None] = None,
-    stage: Union[str, None] = None,
+    league_code: str | None = None,
+    stage: str | None = None,
 ) -> None:
     """Run all ETL phase clusters for a league or all leagues.
 
@@ -2080,7 +2079,7 @@ def _run_cluster(cluster: str, league_code: str) -> None:
                 f"Cluster aborted: league={league_code} cluster={cluster} "
                 f"-- see traceback above",
             )
-        except Exception:
+        except (ConnectionError, OSError, RuntimeError):
             logger.warning(
                 "Failed to record cluster error to core.errors (DB may be unavailable)."
             )
@@ -2088,9 +2087,9 @@ def _run_cluster(cluster: str, league_code: str) -> None:
 
 def _run_phases(
     league_code: str,
-    phases: List[str],
+    phases: list[str],
     cluster: str,
-    season_range: Union[List[str], None] = None,
+    season_range: list[str] | None = None,
 ) -> int:
     """Run phases for a single league for a single league. Returns total rows written."""
     _league_or_raise(league_code)
@@ -2105,7 +2104,7 @@ def _run_phases(
         season,
     )
 
-    failed: List[Dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
     total_rows = 0
 
     ctx = {
@@ -2166,10 +2165,10 @@ def _phase_detect_season_activity(ctx: dict) -> int:
     logger.info("Season detector result: active=%s in_season=%s", active, bool(active))
 
     if active:
-        from datetime import datetime, timedelta
+        from datetime import UTC, datetime, timedelta
 
         lookback_date = (
-            datetime.now().date() - timedelta(days=GAME_LOOKBACK_DAYS)
+            datetime.now(UTC).date() - timedelta(days=GAME_LOOKBACK_DAYS)
         ).isoformat()
 
         with db_connection() as conn:
@@ -2466,7 +2465,7 @@ def _maintain_pbp(
     identity_code: str,
     identity_source: str,
     dataset_name: str,
-    failed: List[Dict[str, Any]],
+    failed: list[dict[str, Any]],
     season_type: str = "regular_season",
 ) -> int:
     """Iterate over games and accumulate PBP into staging.
@@ -2479,16 +2478,16 @@ def _maintain_pbp(
     5. Write to staging.team_games and staging.player_games
     """
     from src.lib.entity_resolver import make_entity_resolver
+    from src.lib.load import write_staged_stats_rows
+    from src.lib.pbp_accumulator import (
+        accumulate_result_set,
+        derive_game_context_events,
+    )
     from src.lib.pbp_classifier import (
         EventClassifier,
         FieldLookupStrategy,
         UnclassifiedEventError,
     )
-    from src.lib.pbp_accumulator import (
-        accumulate_result_set,
-        derive_game_context_events,
-    )
-    from src.lib.load import write_staged_stats_rows
 
     # Get game IDs for this season from staging.games
     game_rows = _load_pbp_games(league_code, season, identity_code)
@@ -2559,7 +2558,7 @@ def _maintain_pbp(
                     identity_code, dataset_name,
                 )
                 return 0
-    except Exception as exc:
+    except (ConnectionError, OSError, RuntimeError, ValueError) as exc:
         logger.warning("Failed to build PBP resolver/classifier: %s", exc)
         return 0
 
@@ -2580,7 +2579,7 @@ def _maintain_pbp(
         #    Any unclassified event stops the entire phase.
         try:
             raw_rows = client_mod.fetch_raw_rows(ext_game_id, season)
-        except Exception as exc:
+        except (ConnectionError, OSError, TimeoutError, ValueError) as exc:
             logger.warning("PBP fetch failed for game %s: %s", ext_game_id, exc)
             failed.append({
                 "dataset": dataset_name,
@@ -2626,7 +2625,7 @@ def _maintain_pbp(
                 classifier,
                 identity=identity_code,
             )
-        except Exception as exc:
+        except (ConnectionError, OSError, TimeoutError, ValueError) as exc:
             logger.warning("PBP normalize failed for game %s: %s", ext_game_id, exc)
             failed.append({
                 "dataset": dataset_name,
@@ -2679,7 +2678,7 @@ def _maintain_pbp(
                     identity_code,
                 )
                 total_rows += written
-            except Exception as exc:
+            except (ConnectionError, OSError, RuntimeError, ValueError) as exc:
                 logger.warning(
                     "PBP team write failed for game %s: %s", ext_game_id, exc
                 )
@@ -2697,10 +2696,10 @@ def _load_pbp_games(
     league_code: str,
     season: str,
     identity_code: str,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Load game IDs and team IDs from staging.games for PBP processing."""
-    from src.lib.postgres import db_connection
     from src.lib.load import _resolve_league_id
+    from src.lib.postgres import db_connection
 
     query = """
         SELECT
@@ -2736,7 +2735,7 @@ def _load_pbp_games(
                     return []
                 columns = [desc[0] for desc in cur.description]
                 return [dict(zip(columns, row)) for row in cur.fetchall()]
-    except Exception as exc:
+    except (ConnectionError, OSError, RuntimeError) as exc:
         logger.warning("Failed to load PBP games: %s", exc)
         return []
 
@@ -2745,7 +2744,7 @@ def _build_pbp_column_map(
     league_code: str,
     identity_code: str,
     dataset_name: str = "pbp_stats",
-) -> Dict[str, Dict[str, str]]:
+) -> dict[str, dict[str, str]]:
     """Build mapping from PBP result set fields to DB columns.
 
     Returns:
@@ -2759,7 +2758,7 @@ def _build_pbp_column_map(
     """
     from src.definitions.db_columns import DB_COLUMNS
 
-    col_map: Dict[str, Dict[str, str]] = {}
+    col_map: dict[str, dict[str, str]] = {}
 
     for col_name, col_meta in DB_COLUMNS.items():
         mapping = col_meta.get("dataset_mapping")
@@ -2787,13 +2786,13 @@ def _build_pbp_column_map(
 
 
 def _map_pbp_result_to_columns(
-    result_set: Dict[str, Any],
-    pbp_col_map: Dict[str, Dict[str, str]],
+    result_set: dict[str, Any],
+    pbp_col_map: dict[str, dict[str, str]],
     target_table: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Map accumulator result set fields to DB column names."""
     target_map = pbp_col_map.get(target_table, {})
-    row: Dict[str, Any] = {}
+    row: dict[str, Any] = {}
     for field, col_name in target_map.items():
         val = result_set.get(field)
         if val is not None:
@@ -2801,7 +2800,7 @@ def _map_pbp_result_to_columns(
     return row
 
 
-PHASE_HANDLERS: Dict[str, Callable] = {
+PHASE_HANDLERS: dict[str, Callable] = {
     "bootstrap_schema": _phase_bootstrap_schema,
     "detect_season_activity": _phase_detect_season_activity,
     "seed_season_coverage": _phase_seed_season_coverage,

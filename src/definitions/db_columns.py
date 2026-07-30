@@ -1887,7 +1887,7 @@ DB_COLUMNS: Mapping[str, Column] = {
             }
         },
     },
-    "poss_ending_ft_trips": {
+    "pot_poss_ending_scoring_opp": {
         "type": "SMALLINT",
         "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
@@ -1897,14 +1897,14 @@ DB_COLUMNS: Mapping[str, Column] = {
                 "nba_id": {
                     "player_games": {
                         "pbp_stats": {
-                            "field": "poss_ending_ft_trips",
+                            "field": "pot_poss_ending_scoring_opp",
                             "min_season": None,
                             "result_set": "player",
                         },
                     },
                     "team_games": {
                         "pbp_stats": {
-                            "field": "poss_ending_ft_trips",
+                            "field": "pot_poss_ending_scoring_opp",
                             "min_season": None,
                             "result_set": "team",
                         },

@@ -8,7 +8,7 @@ Only rows with ``handling != 'unreviewed'`` are trusted.
 """
 
 import logging
-from typing import Any, Dict, List, Protocol
+from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class Classification:
     """Result of classifying a raw source row."""
 
-    __slots__ = ("handling", "event_key")
+    __slots__ = ("event_key", "handling")
 
     def __init__(self, handling: str, event_key: str):
         self.handling = handling
@@ -39,7 +39,7 @@ class Classification:
 class MatchStrategy(Protocol):
     """How to build an event key from a raw source row."""
 
-    def build_signature(self, row: Dict[str, Any]) -> dict: ...
+    def build_signature(self, row: dict[str, Any]) -> dict: ...
 
     def build_event_key(self, signature: dict) -> str: ...
 
@@ -47,7 +47,7 @@ class MatchStrategy(Protocol):
 class UnclassifiedEventError(Exception):
     """Raised when a raw event doesn't match any catalog entry."""
 
-    def __init__(self, signature: dict, raw_row: Dict[str, Any]):
+    def __init__(self, signature: dict, raw_row: dict[str, Any]):
         self.signature = signature
         self.raw_row = raw_row
         super().__init__(f"Unclassified event: {signature}")
@@ -63,10 +63,10 @@ class EventClassifier:
 
     def __init__(
         self,
-        catalog_rows: List[Dict[str, Any]],
+        catalog_rows: list[dict[str, Any]],
         strategy: MatchStrategy,
     ):
-        self._classified: Dict[str, Classification] = {}
+        self._classified: dict[str, Classification] = {}
         self._unreviewed_keys: set[str] = set()
 
         for row in catalog_rows:
@@ -81,7 +81,7 @@ class EventClassifier:
 
         self._strategy = strategy
 
-    def classify(self, row: Dict[str, Any]) -> Classification:
+    def classify(self, row: dict[str, Any]) -> Classification:
         signature = self._strategy.build_signature(row)
         event_key = self._strategy.build_event_key(signature)
 
@@ -108,14 +108,14 @@ class EventClassifier:
 class FieldLookupStrategy:
     """Build event keys from nba_data CSV rows."""
 
-    def build_signature(self, row: Dict[str, Any]) -> dict:
+    def build_signature(self, row: dict[str, Any]) -> dict:
         return {
             "EVENTMSGTYPE": _to_int(row.get("EVENTMSGTYPE")),
             "EVENTMSGACTIONTYPE": _to_int(row.get("EVENTMSGACTIONTYPE")),
         }
 
-    def build_event_key(self, sig: dict) -> str:
-        return f"MSG={sig['EVENTMSGTYPE']}_ACT={sig['EVENTMSGACTIONTYPE']}"
+    def build_event_key(self, signature: dict) -> str:
+        return f"MSG={signature['EVENTMSGTYPE']}_ACT={signature['EVENTMSGACTIONTYPE']}"
 
 
 # ---------------------------------------------------------------------------

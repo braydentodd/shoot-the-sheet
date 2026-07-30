@@ -12,7 +12,7 @@ Pure functions -- no side effects, no I/O.
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from src.definitions.pbp import PBPEvent
 from src.lib.entity_resolver import EntityResolver
@@ -33,14 +33,14 @@ logger = logging.getLogger(__name__)
 
 
 def normalize_game(
-    rows: List[Dict[str, Any]],
+    rows: list[dict[str, Any]],
     game_id: str,
     home_team_id: str,
     away_team_id: str,
     entity_resolver: EntityResolver,
     classifier: EventClassifier,
     identity: str = "nba_id",
-) -> List[PBPEvent]:
+) -> list[PBPEvent]:
     """Normalize nbastats CSV rows into standard PBPEvent rows.
 
     Args:
@@ -56,11 +56,11 @@ def normalize_game(
     Returns:
         List of PBPEvent rows sorted by (secs, event_id).
     """
-    events: List[PBPEvent] = []
+    events: list[PBPEvent] = []
 
     reg_len, ot_len = _infer_period_lengths(rows)
 
-    last_shot_team: Optional[str] = None
+    last_shot_team: str | None = None
 
     for row in rows:
         eventnum = _to_int(row.get(COL["EVENTNUM"]))
@@ -68,7 +68,6 @@ def normalize_game(
         pctime = _to_str(row.get(COL["PCTIMESTRING"]))
 
         p1_id = _to_str(row.get(COL["PLAYER1_ID"]))
-        p1_team = _to_str(row.get(COL["PLAYER1_TEAM_ID"]))
         p1_type = _to_int(row.get(COL["PERSON1TYPE"]))
         p2_id = _to_str(row.get(COL["PLAYER2_ID"]))
         p2_type = _to_int(row.get(COL["PERSON2TYPE"]))
@@ -82,7 +81,7 @@ def normalize_game(
 
         # Resolve entity via staging lookup
         entity_type, resolved_team = entity_resolver(p1_id)
-        if entity_type is None:
+        if entity_type is None or resolved_team is None:
             logger.debug(
                 "Unknown entity %r (PERSON1TYPE=%s) in game %s event %s",
                 p1_id, p1_type, game_id, eventnum,
@@ -204,7 +203,7 @@ def _parse_pctime(pctimestring: str) -> int:
         return 0
 
 
-def _infer_period_lengths(rows: List[Dict[str, Any]]) -> Tuple[int, int]:
+def _infer_period_lengths(rows: list[dict[str, Any]]) -> tuple[int, int]:
     """Infer regulation and overtime period lengths from the data.
 
     Reads PCTIMESTRING from period_start events (EVENTMSGTYPE=12).
@@ -252,8 +251,8 @@ def _pctime_to_secs(
 
 
 def _filter_intra_ft_rebounds(
-    events: List[PBPEvent],
-) -> List[PBPEvent]:
+    events: list[PBPEvent],
+) -> list[PBPEvent]:
     """Remove team offensive rebounds sandwiched between FT attempts."""
     n = len(events)
     keep = [True] * n

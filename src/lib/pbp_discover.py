@@ -10,7 +10,7 @@ Run via::
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -20,9 +20,9 @@ def discover(
     identity_code: str,
     dataset_name: str,
     *,
-    season: Optional[str] = None,
-    game_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    season: str | None = None,
+    game_id: str | None = None,
+) -> dict[str, Any]:
     """Discover event shapes and populate ``core.pbp_events``."""
     client_module = _resolve_source(identity_code, dataset_name)
 
@@ -39,7 +39,7 @@ def discover(
     def build_signature(row: dict) -> dict:
         msgtype = _ctoi(row.get("EVENTMSGTYPE"))
         actiontype = _ctoi(row.get("EVENTMSGACTIONTYPE"))
-        sig = {"EVENTMSGTYPE": msgtype, "EVENTMSGACTIONTYPE": actiontype}
+        sig: dict[str, Any] = {"EVENTMSGTYPE": msgtype, "EVENTMSGACTIONTYPE": actiontype}
         desc = _desc(row)
         if msgtype in (1, 2):
             if "3PT" in desc.upper():
@@ -123,7 +123,7 @@ def _load_games(conn, identity_code, dataset_name, season, game_id):
     ds_cfg = DATASETS.get(identity_code, {}).get(dataset_name, {})
     min_s, max_s = ds_cfg.get("min_season"), ds_cfg.get("max_season")
     query = "SELECT g.ext_id, g.season FROM staging.games g WHERE g.identity = %s"
-    params: List[Any] = [identity_code]
+    params: list[Any] = [identity_code]
     if season:
         query += " AND g.season = %s"; params.append(season)
     elif min_s and max_s:

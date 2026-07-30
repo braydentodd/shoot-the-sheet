@@ -10,8 +10,9 @@ JSON response that the provider client returns.
 """
 
 import logging
-from typing import Any, Dict, List, Union
+from typing import Any
 
+from src.definitions.datasets import RowFilter
 from src.lib.math_evaluator import evaluate as eval_math_expr
 from src.lib.transform import apply_transform
 
@@ -28,9 +29,9 @@ _STATS_TABLES = frozenset({"player_seasons", "team_seasons", "player_games", "te
 
 
 def extract_field(
-    row: List[Any],
-    headers: List[str],
-    source: Dict[str, Any],
+    row: list[Any],
+    headers: list[str],
+    source: dict[str, Any],
 ) -> Any:
     """Extract and transform a single field from an API result row.
 
@@ -65,9 +66,9 @@ def extract_field(
 
 
 def extract_derived_field(
-    row: List[Any],
-    headers: List[str],
-    source: Dict[str, Any],
+    row: list[Any],
+    headers: list[str],
+    source: dict[str, Any],
 ) -> Any:
     """Extract a derived field via concat or algebraic expression."""
     derived = source.get("derived")
@@ -141,7 +142,7 @@ def extract_derived_field(
 
     try:
         value = eval_math_expr(math_expr, locals_dict)
-    except Exception:
+    except (TypeError, NameError, ArithmeticError, SyntaxError):
         return None
 
     transform_name = source.get("transform", "safe_int")
@@ -155,10 +156,10 @@ def extract_derived_field(
 
 
 def apply_row_filters(
-    api_result: Dict[str, Any],
-    row_filters: Union[List[Dict[str, Any]], None],
+    api_result: dict[str, Any],
+    row_filters: list[RowFilter] | None,
     **template_vars: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Filter rows in every result set by dataset-level row_filters config.
 
     ``row_filters`` is a list of conditions from the dataset config,
@@ -241,13 +242,13 @@ def _to_num(val: Any) -> float:
 
 
 def extract_columns_from_result(
-    api_result: Dict[str, Any],
-    columns: Dict[str, Dict[str, Any]],
+    api_result: dict[str, Any],
+    columns: dict[str, dict[str, Any]],
     target: str,
     entity_id_field: str,
-    id_aliases: Union[Dict[str, List[str]], None] = None,
-    season: Union[str, None] = None,
-) -> Dict[int, Dict[str, Any]]:
+    id_aliases: dict[str, list[str]] | None = None,
+    season: str | None = None,
+) -> dict[int, dict[str, Any]]:
     """Extract all mapped columns from an API result for every entity.
 
     Columns route to resultSets via their ``result_set`` field.  Columns
@@ -270,7 +271,7 @@ def extract_columns_from_result(
     Returns:
         ``{entity_id: {col_name: value, ...}, ...}``
     """
-    all_entities: Dict[int, Dict[str, Any]] = {}
+    all_entities: dict[int, dict[str, Any]] = {}
 
     for rs in api_result.get("resultSets", []):
         headers = rs["headers"]
@@ -360,7 +361,7 @@ def extract_columns_from_result(
                     continue
 
                 # Group all rows by group_by field
-                groups: Dict[Any, List[List]] = {}
+                groups: dict[Any, list[list]] = {}
                 for row in rows:
                     key = row[group_by_idx]
                     if key is not None:
@@ -394,22 +395,22 @@ def extract_columns_from_result(
 
 
 def get_simple_columns(
-    columns: Dict[str, Dict[str, Any]],
-) -> Dict[str, Dict[str, Any]]:
+    columns: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
     """Filter to columns with direct field extraction."""
     return {name: src for name, src in columns.items() if "pipeline" not in src}
 
 
 def get_pipeline_columns(
-    columns: Dict[str, Dict[str, Any]],
-) -> Dict[str, Dict[str, Any]]:
+    columns: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
     """Filter to columns that require a transformation pipeline."""
     return {name: src for name, src in columns.items() if "pipeline" in src}
 
 
 def extract_value_from_raw_dict(
-    raw_dict: Dict[str, Any],
-    source: Dict[str, Any],
+    raw_dict: dict[str, Any],
+    source: dict[str, Any],
 ) -> Any:
     """Extract a single value from a raw row dict using source config.
 
@@ -459,7 +460,7 @@ def extract_value_from_raw_dict(
         math_expr = derived.get("math")
         if math_expr:
             fields = derived.get("fields", [])
-            locals_dict: Dict[str, float] = {}
+            locals_dict: dict[str, float] = {}
             valid = True
             for field_name in fields:
                 raw = raw_dict.get(field_name)
@@ -475,7 +476,7 @@ def extract_value_from_raw_dict(
                 return None
             try:
                 value = eval_math_expr(math_expr, locals_dict)
-            except Exception:
+            except (TypeError, NameError, ArithmeticError, SyntaxError):
                 return None
             transform_name = source.get("transform", "safe_int")
             scale = source.get("scale", 1)
@@ -493,12 +494,12 @@ def extract_value_from_raw_dict(
 
 
 def extract_raw_rows(
-    api_result: Dict[str, Any],
+    api_result: dict[str, Any],
     entity_id_field: str,
-    result_set_name: Union[str, None] = None,
-    filter_field: Union[str, None] = None,
-    filter_values: Union[List[str], None] = None,
-) -> Dict[int, List[Dict[str, Any]]]:
+    result_set_name: str | None = None,
+    filter_field: str | None = None,
+    filter_values: list[str] | None = None,
+) -> dict[int, list[dict[str, Any]]]:
     """Extract raw row dicts from an API result, grouped by entity ID.
 
     Returns ``{entity_id: [row_dict, ...]}``.
@@ -507,7 +508,7 @@ def extract_raw_rows(
     Optional *filter_field* and *filter_values* restrict rows to those whose
     *filter_field* value is in *filter_values*.
     """
-    grouped: Dict[int, List[Dict[str, Any]]] = {}
+    grouped: dict[int, list[dict[str, Any]]] = {}
     accepted = set(filter_values) if filter_values else None
 
     for rs in api_result.get("resultSets", []):
@@ -523,9 +524,8 @@ def extract_raw_rows(
             else None
         )
         for row in rs["rowSet"]:
-            if filter_idx is not None and accepted is not None:
-                if row[filter_idx] not in accepted:
-                    continue
+            if filter_idx is not None and accepted is not None and row[filter_idx] not in accepted:
+                continue
             eid = row[id_idx]
             if eid is not None:
                 grouped.setdefault(eid, []).append(dict(zip(headers, row)))

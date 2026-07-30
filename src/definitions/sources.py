@@ -72,7 +72,7 @@ The config module should expose:
         to ``_run_groups``.
 """
 
-from typing import Dict, TypedDict
+from typing import TypedDict
 
 
 class LeagueEntry(TypedDict):
@@ -84,7 +84,7 @@ class LeagueEntry(TypedDict):
     """
 
     id: str
-    season_types: Dict[str, str]
+    season_types: dict[str, str]
 
 
 class Source(TypedDict):
@@ -98,11 +98,11 @@ class Source(TypedDict):
             after each season is processed when this is True.
     """
 
-    leagues: Dict[str, LeagueEntry]
+    leagues: dict[str, LeagueEntry]
     local_files: bool
 
 
-SOURCES: Dict[str, Source] = {
+SOURCES: dict[str, Source] = {
     "nba_api": {
         "leagues": {
             "NBA": {

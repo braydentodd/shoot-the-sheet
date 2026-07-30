@@ -17,8 +17,10 @@ from typing import Any
 
 from src.definitions.pbp import (
     EVENT_SORT_PRIORITY,
-    FG_MAKE_EVENTS,
+    PBP_EVENT_DEFINITIONS,
     POSSESSION_EVENTS,
+    POSS_INDICATION_EVENTS,
+    POT_POSS_ENDING_EVENTS,
     RESULT_SET_FIELDS,
     PBPEvent,
 )
@@ -195,7 +197,7 @@ def _evaluate_derived(
             return None
     try:
         return eval_math(formula, variables)
-    except Exception as exc:
+    except (TypeError, NameError, ArithmeticError, SyntaxError) as exc:
         logger.debug(
             "Derived formula failed: %s with %s -- %s", formula, variables, exc
         )
@@ -473,7 +475,6 @@ def _calc_player_secs(
 # ============================================================================
 
 
-
 def derive_game_context_events(
     events: list[PBPEvent],
     home_team_id: str,
@@ -489,7 +490,7 @@ def derive_game_context_events(
         - player_in / player_out from substitution events
         - player_in at period start / player_out at period end (inferred)
         - poss_start / poss_end from scoring/turnover/rebound events
-        - poss_ending_ft_trip from free throw sequences
+        - pot_poss_ending_scoring_opp from live-shot events
 
     Args:
         events: Normalized PBPEvent rows (must be sorted by secs).
@@ -655,15 +656,13 @@ def _derive_possession_events(
     home_team_id: str,
     away_team_id: str,
 ) -> list[PBPEvent]:
-    """Derive poss_start, poss_end, and poss_ending_ft_trip events.
+    """Stateless possession derivation driven by PBP_EVENT_DEFINITIONS.
 
-    Standard possession rules:
-    - Made FG: scoring team's possession ends, other team gets ball.
-    - Defensive rebound: previous team's possession ends, rebounding
-      team starts a new possession.
-    - Turnover: turnover team's possession ends, other team gets ball.
-    - Jump ball win: winning team starts a new possession.
-    - Shooting foul: emits poss_ending_ft_trip at the foul timestamp.
+    Iterates normalized events once.  For each event, reads its
+    PossessionTransition from config, evaluates the condition by
+    scanning surrounding context, and emits derived events.
+
+    No mutable ``current_poss`` -- each event is evaluated independently.
     """
     result = list(events)
     derived: list[PBPEvent] = []
@@ -674,159 +673,171 @@ def _derive_possession_events(
     def _opp(team_id: str) -> str:
         return away_team_id if team_id == home_team_id else home_team_id
 
-    n = len(events)
-    current_poss: str = ""
+    def _resolve_team(spec, event_team, events_list, idx):
+        if spec == "self":
+            return event_team
+        if spec == "opponent":
+            return _opp(event_team)
+        if spec == "last_possessing":
+            return last_possessing if last_possessing else None
+        if spec == "next_poss_event":
+            return _find_next_poss_team(events_list, idx)
+        return None
+
+    last_possessing: str = ""
 
     for i, event in enumerate(events):
-        ev = event["event"]
+        evt = event["event"]
+        event_def = PBP_EVENT_DEFINITIONS.get(evt)
+        if not event_def:
+            continue
+
+        transition = event_def.get("transition")
+        if not transition:
+            continue
+
         team = event["team_id"]
         secs = event["secs"]
+        condition = transition.get("condition")
 
-        # --- Period boundaries ---
+        # --- Evaluate condition ---
+        should_emit = False
+        start_team_override: str | None = None
 
-        if ev == "period_start":
-            # Infer possession from the first definitive team event
-            # after period_start.
-            for j in range(i + 1, n):
-                nx = events[j]
-                if nx["team_id"] and nx["event"] in POSSESSION_EVENTS:
-                    derived.append(_mk_derived(
-                        result, "poss_start", secs, nx["team_id"]))
-                    current_poss = nx["team_id"]
-                    break
+        if condition == "always":
+            should_emit = True
 
-        elif ev == "period_end":
-            if current_poss:
+        elif condition == "live_shot":
+            if not _is_live_shot(event, i, events):
+                continue
+            next_evt, next_team = _next_poss_indication(event, i, events)
+            if next_evt is None:
+                continue  # No next event found -- cannot determine transition
+
+            # Emit pot_poss_ending_scoring_opp on any live shot followed by
+            # opponent action or an offensive rebound.
+            if next_team != team or next_evt == "o_reb":
                 derived.append(_mk_derived(
-                    result, "poss_end", secs, current_poss))
-                current_poss = ""
+                    result, "pot_poss_ending_scoring_opp", secs, team,
+                    event.get("player_id", ""),
+                ))
 
-        # --- Made FG -> possession changes (unless and-one follows) ---
+            # Actual possession transition: only if next is by the opponent
+            # AND the next event is not a rebound (d_reb/o_reb handle their
+            # own transitions; shots transition on non-rebound events like
+            # made FGs, turnovers, or period boundaries).
+            if next_team != team and not _is_rebound_event(next_evt):
+                should_emit = True
+                start_team_override = next_team
 
-        elif ev in FG_MAKE_EVENTS:
-            # And-one check: does a foul + FT by this team follow at the
-            # same secs?  If so, the FG + bonus FT is one possession.
-            has_and_one = False
-            for j in range(i + 1, n):
-                nx = events[j]
-                if nx["secs"] != secs:
-                    break
-                if nx["event"] == "foul":
-                    # Look ahead from the foul for FTs by this team.
-                    for k in range(j + 1, n):
-                        fk = events[k]
-                        if fk["secs"] != secs:
-                            break
-                        if fk["event"] in ("ft1_make", "ft1_miss") and fk["team_id"] == team:
-                            has_and_one = True
-                            break
-                    if has_and_one:
-                        break
-            if not has_and_one:
-                derived.append(_mk_derived(result, "poss_end", secs, team))
-                derived.append(_mk_derived(result, "poss_start", secs, _opp(team)))
-                current_poss = _opp(team)
+        elif condition == "jump_ball_changes_possession":
+            should_emit = _cond_jump_ball_changes_possession(event, i, events)
 
-        # --- Defensive rebound -> possession changes ---
+        if should_emit:
+            end_spec = transition.get("end_team")
+            start_spec = transition.get("start_team")
 
-        elif ev == "d_reb":
-            opp = _opp(team)
-            derived.append(_mk_derived(result, "poss_end", secs, opp))
-            derived.append(_mk_derived(result, "poss_start", secs, team))
-            current_poss = team
+            if end_spec:
+                end_team = _resolve_team(end_spec, team, events, i)
+                if end_team:
+                    derived.append(_mk_derived(result, "poss_end", secs, end_team))
 
-        # --- Turnover -> possession changes ---
-
-        elif ev == "turnover":
-            derived.append(_mk_derived(result, "poss_end", secs, team))
-            derived.append(_mk_derived(result, "poss_start", secs, _opp(team)))
-            current_poss = _opp(team)
-
-        # --- Made FT: last FT of trip followed by other team? ---
-
-        elif ev == "ft1_make":
-            # Is this the last FT of the trip?
-            if i + 1 < n and events[i + 1]["event"] in ("ft1_make", "ft1_miss"):
-                continue
-            # Last FT of trip: scan for the next definitive possession
-            # event.  Skip fouls and other non-possession events.
-            for j in range(i + 1, n):
-                nx = events[j]
-                if nx["event"] in ("ft1_make", "ft1_miss"):
-                    continue
-                if nx["event"] not in POSSESSION_EVENTS:
-                    continue
-                if not nx["team_id"]:
-                    continue
-                if nx["team_id"] != team:
-                    # Other team has the next definitive event.
-                    derived.append(_mk_derived(
-                        result, "poss_end", secs, team))
-                    derived.append(_mk_derived(
-                        result, "poss_start", secs, nx["team_id"]))
-                    current_poss = nx["team_id"]
-                # If same team has the next event, possession continued
-                # (e.g. o_reb after missed FT) -- no change needed.
-                break
-
-        # --- Foul leading to FTs -> poss_ending_ft_trip ---
-
-        elif ev == "foul":
-            ft_idx = -1
-            for j in range(i + 1, n):
-                nx = events[j]
-                if nx["secs"] != secs:
-                    break
-                if nx["event"] in ("ft1_make", "ft1_miss"):
-                    ft_idx = j
-                    break
-            if ft_idx < 0:
-                continue
-
-            ft_event = events[ft_idx]
-            ft_secs = ft_event["secs"]
-            ft_team = ft_event["team_id"]
-            ft_shooter = ft_event["player_id"]
-
-            # Find the last FT at this timestamp.
-            ft_end = ft_idx
-            for j in range(ft_idx + 1, n):
-                nx = events[j]
-                if nx["secs"] != ft_secs:
-                    break
-                if nx["event"] in ("ft1_make", "ft1_miss"):
-                    ft_end = j
-
-            # Rule 1: and-one? Made FG by FT team at FT's secs.
-            is_and_one = any(
-                events[k]["event"] in FG_MAKE_EVENTS
-                and events[k]["team_id"] == ft_team
-                and events[k]["secs"] == ft_secs
-                for k in range(max(0, ft_idx - 5), ft_idx)
-            )
-            if is_and_one:
-                continue
-
-            # Rule 2: FT team keeps possession after the FTs?
-            same_team_after = False
-            for j in range(ft_end + 1, n):
-                nx = events[j]
-                if nx["secs"] != ft_secs:
-                    break
-                if nx["event"] in ("ft1_make", "ft1_miss"):
-                    continue
-                if nx["team_id"] == ft_team:
-                    same_team_after = True
-                break
-            if same_team_after:
-                continue
-
-            # Rule 3: period_end is the next event (any secs)?
-            if ft_end + 1 < n and events[ft_end + 1]["event"] == "period_end":
-                continue
-
-            derived.append(_mk_derived(
-                result, "poss_ending_ft_trip", ft_secs, ft_team, ft_shooter))
+            if start_spec:
+                start_team = (
+                    start_team_override
+                    if start_team_override is not None
+                    else _resolve_team(start_spec, team, events, i)
+                )
+                if start_team:
+                    derived.append(_mk_derived(result, "poss_start", secs, start_team))
+                    last_possessing = start_team
 
     result.extend(derived)
     return result
+
+
+# ============================================================================
+# POSSESSION CONDITION FUNCTIONS
+# ============================================================================
+
+
+def _is_live_shot(
+    event: PBPEvent,
+    idx: int,
+    events: list[PBPEvent],
+) -> bool:
+    """True if this shot is the last of its trip.
+
+    For FGs: always True (no trip concept).
+    For FTs: True if the next event at the same second is NOT a FT.
+    """
+    evt = event["event"]
+    if evt in ("fg2_make", "fg2_miss", "fg3_make", "fg3_miss"):
+        return True
+    # FT: check if next same-second event is also a FT
+    n = len(events)
+    if idx + 1 < n and events[idx + 1]["secs"] == event["secs"]:
+        next_evt = events[idx + 1]["event"]
+        if next_evt in ("ft1_make", "ft1_miss", "ft2_make", "ft3_make"):
+            return False
+    return True
+
+
+def _next_poss_indication(
+    event: PBPEvent,
+    idx: int,
+    events: list[PBPEvent],
+) -> tuple[str | None, str | None]:
+    """Find the next possession-indicating event after *event*.
+
+    Skips same-second FTs (part of the same trip).
+    Returns (event_type, team_id) or (None, None).
+    """
+    n = len(events)
+    for j in range(idx + 1, n):
+        nx = events[j]
+        # Skip same-second FTs (they're part of the current trip)
+        if nx["secs"] == event["secs"] and nx["event"] in (
+            "ft1_make", "ft1_miss", "ft2_make", "ft3_make",
+        ):
+            continue
+        if nx["event"] in POSS_INDICATION_EVENTS and nx["team_id"]:
+            return nx["event"], nx["team_id"]
+    return None, None
+
+
+def _is_rebound_event(event_type: str) -> bool:
+    """True if the event type is a rebound (o_reb or d_reb)."""
+    return event_type in ("o_reb", "d_reb")
+
+
+def _cond_jump_ball_changes_possession(
+    event: PBPEvent,
+    idx: int,
+    events: list[PBPEvent],
+) -> bool:
+    """True if the jump ball winner differs from the last possessing team.
+
+    Scans backward for the last poss_indication event.  If that team
+    is different from the jump ball winner, possession changes.
+    """
+    for j in range(idx - 1, -1, -1):
+        prev = events[j]
+        if prev["event"] in POSS_INDICATION_EVENTS and prev["team_id"]:
+            return prev["team_id"] != event["team_id"]
+    return True  # No prior possession found -> assume change
+
+
+def _find_next_poss_team(
+    events: list[PBPEvent],
+    idx: int,
+) -> str | None:
+    """Find the team of the first poss_indication event after *idx*.
+
+    Used by period_start to infer opening possession.
+    """
+    for j in range(idx + 1, len(events)):
+        nx = events[j]
+        if nx["event"] in POSS_INDICATION_EVENTS and nx["team_id"]:
+            return nx["team_id"]
+    return None

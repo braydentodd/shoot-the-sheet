@@ -38,8 +38,8 @@ PBPEventType = Literal[
     "block",
     "steal",
     "o_foul_draw",
-    # Possession events (derived, complex)
-    "poss_ending_ft_trip",
+    # Possession events (derived)
+    "pot_poss_ending_scoring_opp",
     "poss_start",
     "poss_end",
     # Game context events
@@ -74,64 +74,187 @@ class PBPEvent(TypedDict):
 
 
 # ============================================================================
-# STANDARD EVENT GROUPINGS
+# CONSOLIDATED EVENT DEFINITIONS
 # ============================================================================
 
-# Groupings of standard event types for use across accumulators and
-# normalizers.  Source-agnostic -- they describe the standard
-# PBPEventType values, not any specific API response.
+# Single authoritative registry of every PBPEventType property.
+# All derived groupings below are computed from this dict -- never edited
+# manually.  No drift possible between scattered constants.
 
-FT_MAKE_EVENTS: tuple[str, ...] = ("ft1_make", "ft2_make", "ft3_make")
-FT_MISS_EVENTS: tuple[str, ...] = ("ft1_miss",)
-FT_ALL_EVENTS: tuple[str, ...] = FT_MAKE_EVENTS + FT_MISS_EVENTS
+
+class PossessionTransition(TypedDict):
+    end_team: Literal["self", "opponent", "last_possessing", None]
+    start_team: Literal["self", "opponent", "next_poss_event", None]
+    condition: Literal[
+        "always",
+        "live_shot",
+        "jump_ball_changes_possession",
+        None,
+    ]
+
+
+class EventDef(TypedDict):
+    category: str
+    sort_priority: int
+    poss_indication: bool
+    transition: PossessionTransition | None
+    pot_poss_ending: bool
+
+
+PBP_EVENT_DEFINITIONS: dict[str, EventDef] = {
+    # --- Shots (all share live_shot + pot_poss_ending) ---
+    "fg2_make": {
+        "category": "shot",
+        "sort_priority": 10,
+        "poss_indication": True,
+        "transition": {"end_team": "self", "start_team": "opponent", "condition": "live_shot"},
+        "pot_poss_ending": True,
+    },
+    "fg2_miss": {
+        "category": "shot",
+        "sort_priority": 20,
+        "poss_indication": True,
+        "transition": {"end_team": "self", "start_team": "opponent", "condition": "live_shot"},
+        "pot_poss_ending": True,
+    },
+    "fg3_make": {
+        "category": "shot",
+        "sort_priority": 10,
+        "poss_indication": True,
+        "transition": {"end_team": "self", "start_team": "opponent", "condition": "live_shot"},
+        "pot_poss_ending": True,
+    },
+    "fg3_miss": {
+        "category": "shot",
+        "sort_priority": 20,
+        "poss_indication": True,
+        "transition": {"end_team": "self", "start_team": "opponent", "condition": "live_shot"},
+        "pot_poss_ending": True,
+    },
+    "ft1_make": {
+        "category": "shot",
+        "sort_priority": 15,
+        "poss_indication": True,
+        "transition": {"end_team": "self", "start_team": "opponent", "condition": "live_shot"},
+        "pot_poss_ending": True,
+    },
+    "ft2_make": {
+        "category": "shot",
+        "sort_priority": 15,
+        "poss_indication": True,
+        "transition": {"end_team": "self", "start_team": "opponent", "condition": "live_shot"},
+        "pot_poss_ending": True,
+    },
+    "ft3_make": {
+        "category": "shot",
+        "sort_priority": 15,
+        "poss_indication": True,
+        "transition": {"end_team": "self", "start_team": "opponent", "condition": "live_shot"},
+        "pot_poss_ending": True,
+    },
+    "ft1_miss": {
+        "category": "shot",
+        "sort_priority": 25,
+        "poss_indication": True,
+        "transition": {"end_team": "self", "start_team": "opponent", "condition": "live_shot"},
+        "pot_poss_ending": True,
+    },
+
+    # --- Rebounds ---
+    "d_reb": {
+        "category": "rebound",
+        "sort_priority": 30,
+        "poss_indication": True,
+        "transition": {"end_team": "opponent", "start_team": "self", "condition": "always"},
+    },
+    "o_reb": {
+        "category": "rebound",
+        "sort_priority": 30,
+        "poss_indication": True,
+    },
+
+    # --- Turnover ---
+    "turnover": {
+        "category": "turnover",
+        "sort_priority": 35,
+        "poss_indication": True,
+        "transition": {"end_team": "self", "start_team": "opponent", "condition": "always"},
+    },
+
+    # --- Fouls ---
+    "foul": {"category": "foul", "sort_priority": 40},
+    "o_foul_draw": {"category": "foul", "sort_priority": 40},
+
+    # --- Jump ball ---
+    "jump_ball_win": {
+        "category": "possession",
+        "sort_priority": 50,
+        "poss_indication": True,
+        "transition": {"end_team": "opponent", "start_team": "self", "condition": "jump_ball_changes_possession"},
+    },
+
+    # --- Period boundaries ---
+    "period_start": {
+        "category": "system",
+        "sort_priority": 0,
+        "transition": {"end_team": None, "start_team": "next_poss_event", "condition": "always"},
+    },
+    "period_end": {
+        "category": "system",
+        "sort_priority": 100,
+        "transition": {"end_team": "last_possessing", "start_team": None, "condition": "always"},
+    },
+
+    # --- Lineup ---
+    "player_in": {"category": "lineup", "sort_priority": 5},
+    "player_out": {"category": "lineup", "sort_priority": 95},
+
+    # --- Secondary events ---
+    "fg2_assist": {"category": "secondary", "sort_priority": 10},
+    "fg3_assist": {"category": "secondary", "sort_priority": 10},
+    "block": {"category": "secondary", "sort_priority": 25},
+    "steal": {"category": "secondary", "sort_priority": 35},
+
+    # --- Derived events (emitted by accumulator, not raw sources) ---
+    "pot_poss_ending_scoring_opp": {"category": "derived", "sort_priority": 999},
+    "poss_start": {"category": "derived", "sort_priority": 999},
+    "poss_end": {"category": "derived", "sort_priority": 999},
+}
+
+
+# ============================================================================
+# DERIVED GROUPINGS (computed from PBP_EVENT_DEFINITIONS)
+# ============================================================================
+
+SHOT_EVENTS: tuple[str, ...] = tuple(
+    e for e, d in PBP_EVENT_DEFINITIONS.items() if d.get("category") == "shot"
+)
 
 FG_MAKE_EVENTS: tuple[str, ...] = ("fg2_make", "fg3_make")
 FG_MISS_EVENTS: tuple[str, ...] = ("fg2_miss", "fg3_miss")
 FG_ALL_EVENTS: tuple[str, ...] = FG_MAKE_EVENTS + FG_MISS_EVENTS
 
+FT_MAKE_EVENTS: tuple[str, ...] = ("ft1_make", "ft2_make", "ft3_make")
+FT_MISS_EVENTS: tuple[str, ...] = ("ft1_miss",)
+FT_ALL_EVENTS: tuple[str, ...] = FT_MAKE_EVENTS + FT_MISS_EVENTS
+
 REB_EVENTS: tuple[str, ...] = ("o_reb", "d_reb")
 TOV_EVENTS: tuple[str, ...] = ("turnover",)
 FOUL_EVENTS: tuple[str, ...] = ("foul",)
 
-# Events that definitively tell us which team has possession.
-# Used when scanning for possession after a made FT or at period start.
-POSSESSION_EVENTS: tuple[str, ...] = (
-    FG_MAKE_EVENTS + FG_MISS_EVENTS + FT_ALL_EVENTS + REB_EVENTS + TOV_EVENTS
+POSS_INDICATION_EVENTS: tuple[str, ...] = tuple(
+    e for e, d in PBP_EVENT_DEFINITIONS.items() if d.get("poss_indication")
 )
 
+# Backward-compatible alias.
+POSSESSION_EVENTS: tuple[str, ...] = POSS_INDICATION_EVENTS
 
-# ============================================================================
-# EVENT SORT PRIORITY
-# ============================================================================
-
-# When multiple events share the same secs timestamp, this dict controls
-# their relative ordering (lower = earlier in the sorted output).
+POT_POSS_ENDING_EVENTS: tuple[str, ...] = tuple(
+    e for e, d in PBP_EVENT_DEFINITIONS.items() if d.get("pot_poss_ending")
+)
 
 EVENT_SORT_PRIORITY: dict[str, int] = {
-    "foul": 0,
-    "o_reb": 1,
-    "d_reb": 1,
-    "fg2_make": 2,
-    "fg3_make": 2,
-    "fg2_miss": 2,
-    "fg3_miss": 2,
-    "turnover": 2,
-    "poss_ending_ft_trip": 3,
-    "ft1_make": 4,
-    "ft1_miss": 4,
-    "ft2_make": 4,
-    "ft3_make": 4,
-    "block": 5,
-    "steal": 5,
-    "fg2_assist": 6,
-    "fg3_assist": 6,
-    "period_end": 7,
-    "poss_start": 8,
-    "poss_end": 9,
-    "player_out": 10,
-    "player_in": 11,
-    "period_start": 12,
-    "jump_ball_win": 13,
+    e: d["sort_priority"] for e, d in PBP_EVENT_DEFINITIONS.items()
 }
 
 
@@ -291,7 +414,7 @@ RESULT_SET_FIELDS: dict[str, dict] = {
     "poss_ending_ft_trips": {
         "op": "count",
         "type": "int",
-        "events": ["poss_ending_ft_trip"],
+        "events": ["pot_poss_ending_scoring_opp"],
         "formula": None,
         "fields": None,
         "result_sets": {"team": "team", "player": "player"},
@@ -430,7 +553,7 @@ RESULT_SET_FIELDS: dict[str, dict] = {
     "opp_poss_ending_ft_trips": {
         "op": "count",
         "type": "int",
-        "events": ["poss_ending_ft_trip"],
+        "events": ["pot_poss_ending_scoring_opp"],
         "formula": None,
         "fields": None,
         "result_sets": {"team": "opp_team", "player": "opp_player"},
@@ -566,7 +689,7 @@ RESULT_SET_FIELDS: dict[str, dict] = {
     "on_poss_ending_ft_trips": {
         "op": "count",
         "type": "int",
-        "events": ["poss_ending_ft_trip"],
+        "events": ["pot_poss_ending_scoring_opp"],
         "formula": None,
         "fields": None,
         "result_sets": {"player": "on_player"},

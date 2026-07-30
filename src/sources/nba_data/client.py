@@ -13,14 +13,15 @@ import csv
 import logging
 import os
 import shutil
-import sys
 import tarfile
 import urllib.error
 import urllib.request
-from typing import Any, Dict, List
+from typing import Any
 
 from src.definitions.pbp import PBPEvent
+from src.lib.entity_resolver import EntityResolver
 from src.lib.error_recorder import log_error_simple
+from src.lib.pbp_classifier import EventClassifier
 from src.lib.rate_limiter import get_rate_limiter
 from src.sources.nba_data.config import (
     ARCHIVE_DIR,
@@ -28,15 +29,13 @@ from src.sources.nba_data.config import (
     COL,
     EXTRACTED_DIR,
 )
-from src.lib.entity_resolver import EntityResolver
-from src.lib.pbp_classifier import EventClassifier
 from src.sources.nba_data.pbp_normalizer import normalize_game
 
 logger = logging.getLogger(__name__)
 
 # Cache: {csv_path: {game_id: [rows]}} to avoid re-reading the full
 # season CSV for every game during backfills.
-_season_cache: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+_season_cache: dict[str, dict[str, list[dict[str, Any]]]] = {}
 
 
 
@@ -56,7 +55,7 @@ def fetch_game_pbp(
     identity: str = "nba_id",
     extracted_dir: str = EXTRACTED_DIR,
     archive_dir: str = ARCHIVE_DIR,
-) -> List[PBPEvent]:
+) -> list[PBPEvent]:
     """Load and normalize PBP events for a single game.
 
     Extracts the nbastats CSV from its .tar.xz archive if not already
@@ -87,7 +86,7 @@ def fetch_raw_rows(
     season: str,
     extracted_dir: str = EXTRACTED_DIR,
     archive_dir: str = ARCHIVE_DIR,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Load raw CSV rows for a single game without normalization.
 
     Used by discovery to inspect raw event shapes before building
@@ -226,11 +225,7 @@ def _ensure_csv_extracted(
     os.makedirs(tmp_dir, exist_ok=True)
     try:
         with tarfile.open(archive_path, "r:xz") as tar:
-            # filter="data" prevents path traversal (Python 3.12+)
-            if sys.version_info >= (3, 12):
-                tar.extractall(path=tmp_dir, filter="data")
-            else:
-                tar.extractall(path=tmp_dir)
+            tar.extractall(path=tmp_dir, filter="data")
         logger.info("Extracted %s -> %s", archive_path, tmp_dir)
     except (tarfile.TarError, OSError) as exc:
         log_error_simple(
@@ -277,9 +272,11 @@ def _download_archive(season: str, archive_dir: str) -> str:
 
     def _do_download() -> str:
         """Single download attempt using urlopen + streaming write."""
-        with urllib.request.urlopen(url, timeout=rate_limiter.get_timeout()) as resp:
-            with open(dest, "wb") as fh:
-                shutil.copyfileobj(resp, fh)
+        with (
+            urllib.request.urlopen(url, timeout=rate_limiter.get_timeout()) as resp,
+            open(dest, "wb") as fh,
+        ):
+            shutil.copyfileobj(resp, fh)
         return dest
 
     try:
@@ -307,7 +304,7 @@ def _download_archive(season: str, archive_dir: str) -> str:
 def _load_game_rows(
     game_id: str,
     csv_path: str,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Load CSV rows for a single game from the season file.
 
     Reads the full season CSV once and indexes by game_id.  Subsequent
@@ -316,7 +313,7 @@ def _load_game_rows(
     if csv_path in _season_cache:
         return _season_cache[csv_path].get(game_id, [])
 
-    indexed: Dict[str, List[Dict[str, Any]]] = {}
+    indexed: dict[str, list[dict[str, Any]]] = {}
     try:
         with open(csv_path, "r", encoding="utf-8", newline="") as fh:
             reader = csv.DictReader(fh)

@@ -10,7 +10,6 @@ No functions -- only constants consumed by the normalizer and client.
 
 import os
 
-
 # ============================================================================
 # DATA DIRECTORIES
 # ============================================================================

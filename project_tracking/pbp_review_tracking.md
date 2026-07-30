@@ -2,19 +2,19 @@
 
 **Created:** 2026-07-25
 **Source:** 30-point review of the PBP accumulation engine
-**Status:** Under discussion
+**Status:** Active -- possession redesign in progress (updated 2026-07-30)
 
 ---
 
 ## Verdict Summary
 
-> Strong architectural prototype, credible traditional-stat normalizer, but an
-> unreliable lineup/possession engine.
-
-The config-driven design, source-agnostic event contract, and generic accumulator
-are fundamentally sound. Traditional team statistics (FG, FT, steals, blocks,
-turnovers, fouls) look correct in tested games. The lineup/possession layer
-requires significant work before outputs are authoritative.
+> Strong architectural prototype, credible traditional-stat normalizer.
+> The lineup/possession engine requires a stateless redesign (in progress).
+>
+> The config-driven design, source-agnostic event contract, and generic accumulator
+> are fundamentally sound. Traditional team statistics (FG, FT, steals, blocks,
+> turnovers, fouls) look correct in tested games. The possession derivation layer
+> has been redesigned as a stateless, config-driven engine (see Point 3-REDESIGN).
 
 ---
 
@@ -58,75 +58,204 @@ validation errors. Message field carries structured context.
 
 ### Point 2: Every player's `win` value is false
 
-**Verdict: CONFIRMED**
+**Verdict: FIXED (2026-07-28)**
 
-**Code evidence:** `player_win` handler (L282-288):
+The original bug used `result.get("points")` (the individual player's points).
+The current code at `pbp_accumulator.py` L289-298 now correctly computes team
+point totals from all events attributed to each team:
+
 ```python
-team_pts = result.get("points")  # <-- THIS IS THE PLAYER'S points
-opp_evts = partitions.get("opp_player", [])
-opp_pts = _sum_points(opp_evts)
-return team_pts > opp_pts
+if handler == "player_win":
+    if not player_team_id or result.get("secs", 0) == 0:
+        return None
+    team_events = [e for e in all_events if e["team_id"] == player_team_id]
+    team_pts = _sum_points(team_events)
+    opp_events = [e for e in all_events
+                  if opp_entity_id and e["team_id"] == opp_entity_id]
+    opp_pts = _sum_points(opp_events)
+    return team_pts > opp_pts if team_pts != opp_pts else None
 ```
 
-`result["points"]` is computed from the player's own FG/FT counts via the
-`derived` formula in `RESULT_SET_FIELDS`. It is not the team total. The handler
-asks: "did this individual player personally outscore the opponent's on-court
-production during his minutes?" -- which is not a win indicator.
-
-The `team_win` handler (L273-279) uses the same pattern but on team partitions,
-where `result["points"]` is the team's total points and `opp_team` events are
-the opponent's team events. For the **team** case, this actually works correctly
-because `result["points"]` there is the full team total.
-
-**Required fix:** `win` should be game-level context, identical for all players
-on the same team:
-```python
-team_final_points > opponent_final_points
-```
-Best implemented by passing a `GameContext` object rather than computing inside
-the generic accumulator.
+`_sum_points` sums FG/FT point values from team-attributed events, producing
+the correct team total. DNP players (0 seconds) return None for `win`.
 
 ---
 
 ### Point 3: Team possession starts and ends are internally inconsistent
 
-**Verdict: CONFIRMED**
+**Verdict: CONFIRMED -- root cause identified 2026-07-30**
 
-**Code evidence:** `_derive_possession_events` (L641-821) unconditionally emits
-poss_end/poss_start on:
-- Made FG (L714-717) -- always emits, even if `current_poss` doesn't match
-- Defensive rebound (L721-725) -- always emits for `opp` and `team`
-- Turnover (L729-732) -- always emits for `team` and `opp`
+**Diagnostic trace of game 21000001:** Two phantom/duplicate transitions found:
 
-The `current_poss` variable is updated but is **not used as a guard** for most
-transitions. For example, on a defensive rebound (L721-725):
-```python
-derived.append(_mk_derived(result, "poss_end", secs, opp))   # always
-derived.append(_mk_derived(result, "poss_start", secs, team)) # always
-current_poss = team
-```
+1. **secs=742, d_reb by Celtics:** `current_poss` was already Celtics (set by a d_reb at
+   702). Between 702 and 742, the Heat took two shots with an offensive rebound -- but
+   `fg2_miss` and `o_reb` have NO handlers in `_derive_possession_events`, so
+   `current_poss` stayed frozen. The d_reb emitted `poss_end(Heat)` + `poss_start(Celtics)`
+   -- phantom end for Heat, duplicate start for Celtics.
 
-If `current_poss` was already `team` (e.g., after a prior malformed sequence),
-this still emits a poss_end for `opp` even though `opp` may not have had
-possession. This creates phantom ends and mismatched start/end counts.
+2. **secs=1419, ft1_make by Heat:** The ft1_make handler emitted `poss_end(Heat),
+   poss_start(Celtics)` but `current_poss` was already Celtics (from a prior made FG
+   transition). The ft1_make handler doesn't check `current_poss` before emitting.
 
-**Required fix:** Validate `current_poss` before each transition:
-```python
-if current_poss == opp:
-    # Normal transition
-elif current_poss == "":
-    # Recover with warning
-elif current_poss == team:
-    # Integrity error: team already has ball
-```
+**Root cause:** `current_poss` is a mutable state variable that drifts because many
+possession-indicating events (fg_miss, o_reb, jump_ball_win, steal) have no handler.
+State goes stale, then the next unconditional emission creates phantom/duplicate pairs.
+
+**Resolution:** Replaced by stateless config-driven possession derivation.
+See Point 3-REDESIGN below.
 
 ---
 
+### Point 3-REDESIGN: Stateless, config-driven possession derivation (2026-07-30)
+
+**Decision:** Replace the stateful `_derive_possession_events` with a stateless engine
+driven by a single authoritative `PBP_EVENT_DEFINITIONS` dict in `src/definitions/pbp.py`.
+
+All shot events (fg2_make, fg2_miss, fg3_make, fg3_miss, ft1_make, ft2_make,
+ft3_make, ft1_miss) follow the same conditional logic: possession changes IFF
+the shot is the last of its trip AND the next possession-indicating event is by
+the opponent. No special and-one handling -- the FT after a made FG at the same
+second means the FG IS the last of its trip, so the FG transition fires normally;
+the last FT of the trip fires its own transition.
+
+`poss_ending_ft_trip` is replaced by `pot_poss_ending_scoring_opp`, a derived
+event emitted on ANY shot that is the last of its trip and is followed by
+opponent action or an offensive rebound.
+
+`jump_ball_win` is a conditional transition: emits `poss_start` for the winning
+team and `poss_end` for the opponent, but ONLY if the winning team did not
+already have possession (determined by scanning backward for the last
+possession-indicating event).
+
+**Design principle: one authoritative dict.** Instead of scattered constants
+(`SHOT_EVENTS`, `FG_MAKE_EVENTS`, `POSSESSION_EVENTS`, `EVENT_SORT_PRIORITY`,
+`POSSESSION_TRANSITIONS`), every property of every PBPEventType lives in a single
+`PBP_EVENT_DEFINITIONS` dict. Derived groupings are computed from it. No drift.
+
+```python
+# src/definitions/pbp.py -- consolidated event definitions
+
+class PossessionTransition(TypedDict):
+    end_team: Literal["self", "opponent", "last_possessing", None]
+    start_team: Literal["self", "opponent", "next_poss_event", None]
+    condition: Literal["always", "shot_last_of_trip",
+                        "jump_ball_changes_possession", None]
+
+class EventDef(TypedDict):
+    category: str           # "shot", "rebound", "turnover", "foul", "system"
+    sort_priority: int      # lower = earlier when secs tie
+    poss_indication: bool   # does this event indicate who has possession?
+    transition: PossessionTransition | None
+    pot_poss_ending: bool   # emits pot_poss_ending_scoring_opp on last-of-trip
+
+PBP_EVENT_DEFINITIONS: dict[str, EventDef] = {
+    # --- Shots (all share shot_last_of_trip + pot_poss_ending) ---
+    "fg2_make":  {"category": "shot", "sort_priority": 10, "poss_indication": True,
+                   "transition": {"end": "self", "start": "opponent",
+                                  "condition": "shot_last_of_trip"},
+                   "pot_poss_ending": True},
+    "fg2_miss":  {"category": "shot", "sort_priority": 20, "poss_indication": True,
+                   "transition": {"end": "self", "start": "opponent",
+                                  "condition": "shot_last_of_trip"},
+                   "pot_poss_ending": True},
+    "fg3_make":  {"category": "shot", "sort_priority": 10, "poss_indication": True,
+                   "transition": {"end": "self", "start": "opponent",
+                                  "condition": "shot_last_of_trip"},
+                   "pot_poss_ending": True},
+    "fg3_miss":  {"category": "shot", "sort_priority": 20, "poss_indication": True,
+                   "transition": {"end": "self", "start": "opponent",
+                                  "condition": "shot_last_of_trip"},
+                   "pot_poss_ending": True},
+    "ft1_make":  {"category": "shot", "sort_priority": 15, "poss_indication": True,
+                   "transition": {"end": "self", "start": "opponent",
+                                  "condition": "shot_last_of_trip"},
+                   "pot_poss_ending": True},
+    "ft2_make":  {"category": "shot", "sort_priority": 15, "poss_indication": True,
+                   "transition": {"end": "self", "start": "opponent",
+                                  "condition": "shot_last_of_trip"},
+                   "pot_poss_ending": True},
+    "ft3_make":  {"category": "shot", "sort_priority": 15, "poss_indication": True,
+                   "transition": {"end": "self", "start": "opponent",
+                                  "condition": "shot_last_of_trip"},
+                   "pot_poss_ending": True},
+    "ft1_miss":  {"category": "shot", "sort_priority": 25, "poss_indication": True,
+                   "transition": {"end": "self", "start": "opponent",
+                                  "condition": "shot_last_of_trip"},
+                   "pot_poss_ending": True},
+
+    # --- Rebounds ---
+    "d_reb":     {"category": "rebound", "sort_priority": 30, "poss_indication": True,
+                   "transition": {"end": "opponent", "start": "self",
+                                  "condition": "always"}},
+    "o_reb":     {"category": "rebound", "sort_priority": 30, "poss_indication": True},
+
+    # --- Turnover ---
+    "turnover":  {"category": "turnover", "sort_priority": 35, "poss_indication": True,
+                   "transition": {"end": "self", "start": "opponent",
+                                  "condition": "always"}},
+
+    # --- Fouls ---
+    "foul":      {"category": "foul", "sort_priority": 40},
+    "o_foul_draw": {"category": "foul", "sort_priority": 40},
+
+    # --- Jump ball ---
+    "jump_ball_win": {"category": "possession", "sort_priority": 50,
+                       "poss_indication": True,
+                       "transition": {"end": "opponent", "start": "self",
+                                      "condition": "jump_ball_changes_possession"}},
+
+    # --- Period boundaries ---
+    "period_start": {"category": "system", "sort_priority": 0,
+                      "transition": {"end": None, "start": "next_poss_event",
+                                     "condition": "always"}},
+    "period_end":   {"category": "system", "sort_priority": 100,
+                      "transition": {"end": "last_possessing", "start": None,
+                                     "condition": "always"}},
+
+    # --- Derived events (no raw trigger, included for completeness) ---
+    "player_in":  {"category": "lineup", "sort_priority": 5},
+    "player_out": {"category": "lineup", "sort_priority": 95},
+    "poss_start": {"category": "derived", "sort_priority": 999},
+    "poss_end":   {"category": "derived", "sort_priority": 999},
+    "pot_poss_ending_scoring_opp": {"category": "derived", "sort_priority": 999},
+
+    # --- Secondary events ---
+    "fg2_assist": {"category": "secondary", "sort_priority": 10},
+    "fg3_assist": {"category": "secondary", "sort_priority": 10},
+    "block":      {"category": "secondary", "sort_priority": 25},
+    "steal":      {"category": "secondary", "sort_priority": 35},
+}
+
+# Derived groupings (computed from PBP_EVENT_DEFINITIONS, never edited manually)
+SHOT_EVENTS = tuple(e for e, d in PBP_EVENT_DEFINITIONS.items()
+                    if d.get("category") == "shot")
+POSS_INDICATION_EVENTS = tuple(e for e, d in PBP_EVENT_DEFINITIONS.items()
+                                if d.get("poss_indication"))
+POT_POSS_ENDING_EVENTS = tuple(e for e, d in PBP_EVENT_DEFINITIONS.items()
+                                if d.get("pot_poss_ending"))
+EVENT_SORT_PRIORITY = {e: d["sort_priority"]
+                       for e, d in PBP_EVENT_DEFINITIONS.items()}
+```
+
+The engine (`_derive_possession_events` in `src/lib/pbp_accumulator.py`) is a
+single-pass loop that reads `PBP_EVENT_DEFINITIONS` and evaluates each event
+independently by scanning its surrounding context (no mutable state except
+`last_possessing` for `period_end`). Condition functions (`shot_last_of_trip`,
+`jump_ball_changes_possession`) live in lib as pure functions.
+
+**Resolves:** Points 3, 4, 8, 10, 11, 12, 13 in one redesign.
+
 ### Point 4: Possession duration pairs starts and ends incorrectly
 
-**Verdict: CONFIRMED**
+**Verdict: CONFIRMED -- resolved by Point 3-REDESIGN**
 
-**Code evidence:** `_calc_possession_secs` (L319-343):
+`_calc_possession_secs` uses non-consuming `next()` pairing (`secs >=` only, no
+event_id ordering). Multiple starts match the same end. When Point 3's phantom
+events are eliminated by the stateless engine, possession pairs are clean, and
+the correct fix is to build explicit `Possession` objects in a single ordered
+pass, consuming each start and end exactly once.
+
+---
 ```python
 matching_end = next(
     (e for e in events
@@ -218,25 +347,10 @@ would improve robustness for edge cases.
 
 ### Point 8: Free throws are over-normalized into a single event type
 
-**Verdict: VALID-DESIGN**
+**Verdict: VALID-DESIGN -- partially addressed by Point 3-REDESIGN**
 
-**Code evidence:** The normalizer (L122-127) emits only `ft1_make`/`ft1_miss`
-for all free throws. The definitions file declares `ft1_make`, `ft2_make`,
-`ft3_make` but `ft2_make` and `ft3_make` are never emitted.
-
-The naming is confusing: `ft1_make` means "free throw worth 1 point" (which
-is always true in NBA), not "first free throw of a trip." `ft2_make`/`ft3_make`
-would mean "free throw worth 2/3 points" which doesn't exist in basketball.
-
-**Recommendation:** Simplify to `ft_make`/`ft_miss` with metadata:
-```python
-attempt_number: int | None
-trip_size: int | None
-is_possession_ending: bool | None
-```
-
-This is a P1 improvement -- the current approach works for counting stats but
-limits possession-end detection.
+The unified shot logic treats `ft1_make` and `ft1_miss` identically to FGs for
+possession purposes. The naming confusion (ft1 vs ft2/ft3) remains a P2 cleanup.
 
 ---
 
@@ -262,109 +376,61 @@ rebuilding this logic.
 
 ### Point 10: `poss_ending_ft_trip` is skipped for some real possession endings
 
-**Verdict: CONFIRMED**
+**Verdict: RESOLVED by Point 3-REDESIGN**
 
-**Code evidence:** L813-815:
-```python
-# Rule 3: period_end is the next event (any secs)?
-if ft_end + 1 < n and events[ft_end + 1]["event"] == "period_end":
-    continue
-```
-
-This skips `poss_ending_ft_trip` when the period ends right after FTs. But a
-shooting foul at the end of a quarter followed by FTs and the horn **does**
-end the offensive possession -- the FTs were the final action of that
-possession.
-
-**Impact:** Missing possession-ending FT trips means the final possession of
-each period may not be properly closed. This affects possession counts and
-duration calculations.
-
-**Required fix:** Remove this rule. A possession can end without another
-possession starting.
+`poss_ending_ft_trip` is replaced by `poss_ending_attempt`, which fires on ANY
+shot (FG or FT) that is the last of its trip and is followed by opponent action
+or an offensive rebound. The "skip if period_end follows" rule is removed.
 
 ---
 
 ### Point 11: Missed final free throws are not handled symmetrically
 
-**Verdict: PARTIALLY-VALID**
+**Verdict: RESOLVED by Point 3-REDESIGN**
 
-**Code evidence:** The possession-change logic for last-FTs (L736-759) runs
-only for `ft1_make`. A missed final FT would fall through to no handling at
-the FT level, relying on the subsequent defensive rebound to change possession.
-
-In most cases, a missed final FT is followed by a rebound (offensive or
-defensive), which triggers a possession change via the rebound handler. So
-the practical impact is limited.
-
-However, if the missed final FT is followed by a period end, team rebound, or
-other non-rebound event, the possession may not change correctly.
-
-**Assessment:** Partially valid -- works for the common case but has gaps.
-P1 priority.
+The old code only handled `ft1_make` for possession-change logic. The new
+unified shot engine handles `ft1_miss` identically -- both go through the
+same `shot_last_of_trip` condition.
 
 ---
 
 ### Point 12: And-one detection is fragile
 
-**Verdict: PARTIALLY-VALID**
+**Verdict: RESOLVED by Point 3-REDESIGN**
 
-**Code evidence:** And-one detection (L696-717):
-```python
-for j in range(i + 1, n):
-    nx = events[j]
-    if nx["secs"] != secs:
-        break
-    if nx["event"] == "foul":
-        for k in range(j + 1, n):
-            fk = events[k]
-            if fk["secs"] != secs:
-                break
-            if fk["event"] in ("ft1_make", "ft1_miss") and fk["team_id"] == team:
-                has_and_one = True
-                break
-```
-
-The logic: made FG + same-second foul + same-second FT by same team = and-one.
-
-The review correctly notes this can misclassify technical FTs after baskets,
-flagrant administration, etc. However, in practice, the and-one pattern in
-NBA PBP is quite distinctive: the foul and FT follow the FG at the same
-timestamp, and the FT is by the scoring team. Technicals after baskets are
-typically at the same timestamp but are by a different player and may not
-have a FT at all (they're recorded differently).
-
-**Assessment:** The current heuristic works for the vast majority of and-ones.
-The false-positive risk is low. P2 priority.
+No special and-one detection needed. A made FG followed by a foul + FT at the
+same second: the FG IS the last of its trip (the next event at the same second
+is a foul, not another FT), so the FG transition fires normally. The FT after
+the foul is part of a trip, and the LAST FT of that trip fires its own
+transition. The and-one case falls out of the unified shot logic naturally.
 
 ---
 
 ### Point 13: Jump-ball possession resolution can fail
 
-**Verdict: CONFIRMED**
+**Verdict: IMPROVED (2026-07-28) -- further addressed by Point 3-REDESIGN**
 
-**Code evidence:** Jump ball handling (L189-196):
+Current code at `pbp_normalizer.py` L142-147 uses `entity_resolver(p3_id)` as a
+fallback. The redesign adds `jump_ball_win` to `PBP_EVENT_DEFINITIONS` with
+`condition: "jump_ball_changes_possession"` -- the engine scans backward for the
+last possessing team and only emits a transition if the winner differs. Stateless,
+no reliance on `current_poss`.
+
+---
+
 ```python
-if p3_id and p3_id != "0":
-    tip_team = p3_team or _resolve_player_team(p3_type, p3_id, "")
-    if tip_team:
-        events.append(...)
+elif handling == "jump_ball_win":
+    if p3_id and p3_id != "0":
+        _, tip_team = entity_resolver(p3_id)
+        tip_team = p3_team or tip_team
+        if tip_team:
+            events.append(...)
 ```
 
-`p3_team` comes from `PLAYER3_TEAM_ID` in the CSV. The review states this
-field may be empty in some source files. If it is, `_resolve_player_team` is
-called with an empty `player_team_id`, which returns empty when `person_type`
-is `PERSON_HOME` or `PERSON_VISITOR` (not `PERSON_TEAM`).
-
-The fix is straightforward: maintain a game-roster map (`player_id -> team_id`)
-and use it as a fallback.
-
-**Impact:** Low for most games (only opening jump ball affected). The opening
-jump ball is also handled by `period_start` -> "infer from first definitive
-event" (L677-685), so the jump_ball_win is a secondary signal.
-
-**Required fix:** Add roster-based fallback for jump ball team resolution.
-P1 priority.
+Remaining edge case: if PLAYER3 is unknown to staging (neither team nor player),
+resolution still fails. Mitigated by the `period_start` inference path
+(`_derive_possession_events` L688-696) which infers possession from the first
+definitive team event after tip-off.
 
 ---
 
@@ -388,39 +454,18 @@ actually correct; the issue is interpretation, not computation.
 
 ### Point 15: Fouls are being treated as one broad count
 
-**Verdict: VALID-DESIGN** (revised 2026-07-28)
+**Verdict: RESOLVED -- no action needed**
 
-**Code evidence:** Every `MSGTYPE == 6` becomes `foul` (L159-161). No subtype
-classification.
-
-**Decision:** User wants ALL foul types (personal, technical, flagrant,
-defensive 3-seconds) included in the `fouls` count. The current behavior is
-correct for this use case.
-
-**Flagrant foul double-counting -- CONFIRMED NOT AN ISSUE:** In the NBA PBP
-data format, a flagrant foul generates exactly ONE `MSGTYPE=6` row with
-`ACTIONTYPE=7`. There is no separate "normal foul" row. Each row in the CSV
-is a single recorded event, and there is no mechanism for a single play to
-produce two `MSGTYPE=6` rows. The current implementation correctly counts
-each flagrant as exactly one foul.
-
-**All ACTIONTYPEs verified in test game:** 1 (P.FOUL), 2 (S.FOUL), 4
-(OFF.Foul), 11 (Def 3-sec), 17 (Def 3-sec T), 26 (Offensive Charge), 27
-(Personal Block). Additional types expected in other games: 6 (Technical),
-7 (Flagrant).
-
-**MSGTYPE=7 is VIOLATIONS (not fouls):** Lane violation, kicked ball, delay
-of game. Correctly ignored by the normalizer. These are not fouls and should
-not be counted.
-
-**Priority:** P2 (no change needed for current behavior; ACTIONTYPE
-classification could be added later if distinguishing foul subtypes is desired).
+All MSGTYPE=6 events are correctly emitted as `foul`. This is the desired
+behavior per user decision (all foul types included in one count). Flagrant
+fouls produce a single MSGTYPE=6 row (no double-counting). MSGTYPE=7 violations
+are correctly excluded. ACTIONTYPE sub-classification deferred to P2 if needed.
 
 ---
 
 ### Point 16: Team traditional statistics are encouraging
 
-**Verdict: AGREED**
+**Verdict: AGREED -- no action needed**
 
 The config-driven field registry and generic accumulator produce correct team
 traditional stats in tested games. This is a genuine success and should be
@@ -681,11 +726,10 @@ possession issues.
 
 | # | Issue | Verdict | Status |
 |---|-------|---------|--------|
-| 1 | Player minutes wrong | PARTIALLY-VALID | REFORMULATED |
-| 2 | Player win always false | CONFIRMED | OPEN |
-| 3 | Possession starts/ends inconsistent | CONFIRMED | OPEN |
-| 4 | Possession duration pairing broken | CONFIRMED | OPEN |
-| 10 | poss_ending_ft_trip skipped at period end | CONFIRMED | OPEN |
+| 1 | Player minutes wrong | PARTIALLY-VALID | Needs diagnosis |
+| 3 | Possession starts/ends inconsistent | CONFIRMED | **REDESIGN in progress** |
+| 4 | Possession duration pairing broken | CONFIRMED | Resolved by 3-REDESIGN |
+| 10 | poss_ending_ft_trip skipped at period end | CONFIRMED | Resolved by 3-REDESIGN |
 | 18 | Team secs derived incorrectly | CONFIRMED | OPEN |
 | 19 | Orchestrator doesn't write player results | CONFIRMED | OPEN |
 | 20 | Season type hardcoded | CONFIRMED | OPEN |
@@ -697,10 +741,9 @@ possession issues.
 | 5 | Player possession definition unclear | CONFIRMED | OPEN |
 | 6 | on_poss misnamed | VALID-DESIGN | OPEN |
 | 7 | Rebound classification fragile | PARTIALLY-VALID | OPEN |
-| 8 | FT event model too simple | VALID-DESIGN | OPEN |
+| 8 | FT event model too simple | VALID-DESIGN | Partially addressed by 3-REDESIGN |
 | 9 | FT trip grouping unsafe | PARTIALLY-VALID | OPEN |
-| 11 | Missed final FTs not handled | PARTIALLY-VALID | OPEN |
-| 13 | Jump-ball team resolution can fail | CONFIRMED | OPEN |
+| 11 | Missed final FTs not handled | PARTIALLY-VALID | Resolved by 3-REDESIGN |
 | 14 | o_foul_draw availability semantics | VALID-DESIGN | OPEN |
 | 17 | Team rebounds not exposed | AGREED | OPEN |
 | 24 | Archive integrity missing | VALID-DESIGN | OPEN |
@@ -708,20 +751,28 @@ possession issues.
 | 26 | Source event ordering lost | PARTIALLY-VALID | OPEN |
 | 27 | Source event ID overwritten | CONFIRMED | OPEN |
 | 30 | Quality/coverage columns needed | VALID-DESIGN | OPEN |
-| 31 | Cross-game validation & regression suite | **NEW** | OPEN |
-| 32 | Entity validation via staging lookup | **NEW** | OPEN |
+| 31 | Cross-game validation & regression suite | **NEW** | Partially implemented |
 
 ### P2: Best-practice hardening
 
 | # | Issue | Verdict | Status |
 |---|-------|---------|--------|
-| 12 | And-one detection fragile | PARTIALLY-VALID | OPEN |
-| 16 | Team stats encouraging | AGREED | OPEN |
+| 12 | And-one detection fragile | PARTIALLY-VALID | Resolved by 3-REDESIGN |
+| 13 | Jump-ball team resolution | IMPROVED | Resolved by 3-REDESIGN |
 | 21 | Dataset/source coupling | VALID-DESIGN | OPEN |
 | 22 | Lexical season comparisons | VALID-DESIGN | OPEN |
 | 23 | Season cache memory | VALID-DESIGN | OPEN |
 | 28 | Provenance markers needed | VALID-DESIGN | OPEN |
 | 29 | Missing values vs zeros | VALID-DESIGN | OPEN |
+
+### Resolved / No Action Required
+
+| # | Issue | Verdict | Resolution |
+|---|-------|---------|------------|
+| 2 | Player win always false | CONFIRMED -> FIXED | Fixed 2026-07-28: team-level point summation |
+| 15 | Fouls one broad count | VALID-DESIGN -> RESOLVED | Desired behavior confirmed |
+| 16 | Team stats encouraging | AGREED | Confirmed correct, no action needed |
+| 32 | Entity validation via staging lookup | **NEW** -> IMPLEMENTED | entity_resolver + classifier built 2026-07-28 |
 
 ---
 
@@ -1720,3 +1771,44 @@ single source of truth.
 **Detailed implementation plan:** `project_tracking/pbp_implementation_plan.md`
 (Created 2026-07-28. Covers event catalog DB schema, discovery vs production
 modes, entity resolver design, classifier module, and implementation order.)
+
+---
+
+### 2026-07-28: Implementation Complete
+
+**What was built:**
+
+- `core.pbp_events` table (identity, dataset, event_key, handling). PK-only,
+  4 columns. No seed file, no match_fields. Discovery populates, human reviews,
+  production enforces.
+- `src/lib/entity_resolver.py` -- staging-table lookup. Required parameter,
+  no fallback. `_resolve_player_team` deleted.
+- `src/lib/pbp_classifier.py` -- `EventClassifier` + `FieldLookupStrategy`.
+  Key-based lookup, no pattern matching. `UnclassifiedEventError` on unknowns.
+- `src/lib/pbp_discover.py` -- `discover()` iterates games, builds event keys,
+  upserts into `core.pbp_events` with `handling='unreviewed'`.
+- `src/lib/pbp_accumulator.py` -- `player_start` handler (bool from `player_in`
+  at secs=0). `win` handlers fixed (team total points, not individual).
+  `_derive_starter_events` deleted.
+- `src/sources/nba_data/pbp_normalizer.py` -- hardcoded `if msgtype == MSG.`
+  chain replaced with classifier-driven mapping. Two pseudo-types remain:
+  `rebound` (o_reb vs d_reb from runtime state) and `substitution` (one row
+  -> two events).
+- `src/sources/nba_data/client.py` -- `fetch_raw_rows()` added. `fetch_game_pbp`
+  delegates to `fetch_raw_rows` (DRY).
+- `src/orchestrator.py` -- entity resolver + classifier built once, passed to
+  normalizer. Production enforcement: all events classified or phase stops.
+  `bootstrap_schema` phase name fixed (was `build_schema`).
+- `src/cli.py` -- subcommands: `etl` and `discover-pbp`. Discovery runs
+  `bootstrap_schema` first.
+- `src/definitions/pbp.py` -- `RESULT_SET_FIELDS` normalized: every entry has
+  same 6 keys (op, type, events, formula, fields, result_sets). `start` and
+  `win` are special/bool.
+- `src/definitions/pipeline.py` -- phase renamed `build_schema` -> `bootstrap_schema`.
+
+**Files deleted:**
+- `project_tracking/pbp_implementation_plan.md` -- plan is built.
+
+**Still open (not in scope of this round):**
+- Points 1, 3-14, 16-30 from original review (lineup, possession, event model)
+- `pbp_handoff.md` -- historical discussion log, kept for reference.

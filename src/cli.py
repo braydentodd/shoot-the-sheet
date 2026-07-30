@@ -135,7 +135,7 @@ def _run_etl(args) -> int:
                 "main",
                 "ETL run failed at top level -- see traceback above",
             )
-        except Exception as exc:
+        except (ConnectionError, OSError, RuntimeError) as exc:
             logger.debug("log_error_simple failed: %s", exc)
         return 1
 
