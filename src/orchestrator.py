@@ -2466,7 +2466,6 @@ def _maintain_pbp(
     identity_source: str,
     dataset_name: str,
     failed: list[dict[str, Any]],
-    season_type: str = "regular_season",
 ) -> int:
     """Iterate over games and accumulate PBP into staging.
 
@@ -2567,6 +2566,7 @@ def _maintain_pbp(
         ext_game_id = game_info["ext_game_id"]
         home_team_id = game_info.get("home_ext_id", "")
         away_team_id = game_info.get("away_ext_id", "")
+        game_season_type = game_info.get("season_type", "regular_season")
 
         if not home_team_id or not away_team_id:
             logger.debug(
@@ -2651,10 +2651,42 @@ def _maintain_pbp(
             result_set["game_id"] = ext_game_id
             team_results.append((team_id, result_set))
 
-        # 4. Accumulate player result sets (if we have player data)
-        # For Phase 1, we only do team-level.  Player-level requires
-        # lineup data (player_in/player_out events) which is Phase 2.
-        # TODO: Phase 2 - accumulate player result sets with on-court tracking
+        # 4. Accumulate player result sets
+        player_results: dict[str, dict[str, Any]] = {}
+        player_in_events = [e for e in events if e["event"] == "player_in"]
+        player_out_events = [e for e in events if e["event"] == "player_out"]
+
+        if player_in_events:
+            player_teams: dict[str, str] = {}
+            for e in player_in_events:
+                pid = e.get("player_id", "")
+                if pid and pid != "0":
+                    player_teams[pid] = e["team_id"]
+
+            for player_id, player_team in player_teams.items():
+                ins = sorted(
+                    [e["secs"] for e in player_in_events
+                     if e.get("player_id") == player_id],
+                )
+                outs = sorted(
+                    [e["secs"] for e in player_out_events
+                     if e.get("player_id") == player_id],
+                )
+                intervals: list[tuple[int, int]] = []
+                for start in ins:
+                    end = next((o for o in outs if o >= start), None)
+                    if end is not None:
+                        intervals.append((start, end))
+
+                opp_team = away_team_id if player_team == home_team_id else home_team_id
+                result_set = accumulate_result_set(
+                    events, "player", player_id,
+                    opp_entity_id=opp_team,
+                    player_team_id=player_team,
+                    on_court_intervals=intervals if intervals else None,
+                )
+                result_set["game_id"] = ext_game_id
+                player_results[player_id] = result_set
 
         # 5. Write team results to staging
         team_rows = {}
@@ -2673,7 +2705,7 @@ def _maintain_pbp(
                     "team",
                     team_rows,
                     season,
-                    season_type,
+                    game_season_type,
                     league_code,
                     identity_code,
                 )
@@ -2688,6 +2720,39 @@ def _maintain_pbp(
                     "error": str(exc),
                 })
 
+        # 6. Write player results to staging
+        if player_results:
+            player_rows = {}
+            for player_id, result_set in player_results.items():
+                row = _map_pbp_result_to_columns(
+                    result_set, pbp_col_map, "player_games"
+                )
+                if row:
+                    row["ext_player_id"] = player_id
+                    row["ext_game_id"] = ext_game_id
+                    player_rows[player_id] = row
+
+            if player_rows:
+                try:
+                    written = write_staged_stats_rows(
+                        "player",
+                        player_rows,
+                        season,
+                        game_season_type,
+                        league_code,
+                        identity_code,
+                    )
+                    total_rows += written
+                except Exception as exc:
+                    logger.warning(
+                        "PBP player write failed for game %s: %s", ext_game_id, exc
+                    )
+                    failed.append({
+                        "dataset": dataset_name,
+                        "game_id": ext_game_id,
+                        "error": str(exc),
+                    })
+
     logger.info("PBP complete: %d rows written for %s", total_rows, season)
     return total_rows
 
@@ -2697,13 +2762,14 @@ def _load_pbp_games(
     season: str,
     identity_code: str,
 ) -> list[dict[str, Any]]:
-    """Load game IDs and team IDs from staging.games for PBP processing."""
+    """Load game IDs, team IDs, and season types from staging.games for PBP processing."""
     from src.lib.load import _resolve_league_id
     from src.lib.postgres import db_connection
 
     query = """
         SELECT
             g.ext_id AS ext_game_id,
+            g.season_type,
             ht.ext_id AS home_ext_id,
             at.ext_id AS away_ext_id
         FROM staging.games g

@@ -77,20 +77,10 @@ class PBPEvent(TypedDict):
 # CONSOLIDATED EVENT DEFINITIONS
 # ============================================================================
 
-# Single authoritative registry of every PBPEventType property.
-# All derived groupings below are computed from this dict -- never edited
-# manually.  No drift possible between scattered constants.
-
-
 class PossessionTransition(TypedDict):
     end_team: Literal["self", "opponent", "last_possessing", None]
     start_team: Literal["self", "opponent", "next_poss_event", None]
-    condition: Literal[
-        "always",
-        "live_shot",
-        "jump_ball_changes_possession",
-        None,
-    ]
+    condition: Literal["always", "live_shot", "jump_ball_changes_possession", None]
 
 
 class EventDef(TypedDict):
@@ -102,129 +92,54 @@ class EventDef(TypedDict):
 
 
 PBP_EVENT_DEFINITIONS: dict[str, EventDef] = {
-    # --- Shots (all share live_shot + pot_poss_ending) ---
-    "fg2_make": {
-        "category": "shot",
-        "sort_priority": 10,
-        "poss_indication": True,
-        "transition": {"end_team": "self", "start_team": "opponent", "condition": "live_shot"},
-        "pot_poss_ending": True,
-    },
-    "fg2_miss": {
-        "category": "shot",
-        "sort_priority": 20,
-        "poss_indication": True,
-        "transition": {"end_team": "self", "start_team": "opponent", "condition": "live_shot"},
-        "pot_poss_ending": True,
-    },
-    "fg3_make": {
-        "category": "shot",
-        "sort_priority": 10,
-        "poss_indication": True,
-        "transition": {"end_team": "self", "start_team": "opponent", "condition": "live_shot"},
-        "pot_poss_ending": True,
-    },
-    "fg3_miss": {
-        "category": "shot",
-        "sort_priority": 20,
-        "poss_indication": True,
-        "transition": {"end_team": "self", "start_team": "opponent", "condition": "live_shot"},
-        "pot_poss_ending": True,
-    },
-    "ft1_make": {
-        "category": "shot",
-        "sort_priority": 15,
-        "poss_indication": True,
-        "transition": {"end_team": "self", "start_team": "opponent", "condition": "live_shot"},
-        "pot_poss_ending": True,
-    },
-    "ft2_make": {
-        "category": "shot",
-        "sort_priority": 15,
-        "poss_indication": True,
-        "transition": {"end_team": "self", "start_team": "opponent", "condition": "live_shot"},
-        "pot_poss_ending": True,
-    },
-    "ft3_make": {
-        "category": "shot",
-        "sort_priority": 15,
-        "poss_indication": True,
-        "transition": {"end_team": "self", "start_team": "opponent", "condition": "live_shot"},
-        "pot_poss_ending": True,
-    },
-    "ft1_miss": {
-        "category": "shot",
-        "sort_priority": 25,
-        "poss_indication": True,
-        "transition": {"end_team": "self", "start_team": "opponent", "condition": "live_shot"},
-        "pot_poss_ending": True,
-    },
-
-    # --- Rebounds ---
-    "d_reb": {
-        "category": "rebound",
-        "sort_priority": 30,
-        "poss_indication": True,
-        "transition": {"end_team": "opponent", "start_team": "self", "condition": "always"},
-    },
-    "o_reb": {
-        "category": "rebound",
-        "sort_priority": 30,
-        "poss_indication": True,
-    },
-
-    # --- Turnover ---
-    "turnover": {
-        "category": "turnover",
-        "sort_priority": 35,
-        "poss_indication": True,
-        "transition": {"end_team": "self", "start_team": "opponent", "condition": "always"},
-    },
-
-    # --- Fouls ---
+    "fg2_make": {"category": "shot", "sort_priority": 10, "poss_indication": True,
+                   "transition": {"end_team": "self", "start_team": "opponent", "condition": "live_shot"},
+                   "pot_poss_ending": True},
+    "fg2_miss": {"category": "shot", "sort_priority": 20, "poss_indication": True,
+                   "transition": {"end_team": "self", "start_team": "opponent", "condition": "live_shot"},
+                   "pot_poss_ending": True},
+    "fg3_make": {"category": "shot", "sort_priority": 10, "poss_indication": True,
+                   "transition": {"end_team": "self", "start_team": "opponent", "condition": "live_shot"},
+                   "pot_poss_ending": True},
+    "fg3_miss": {"category": "shot", "sort_priority": 20, "poss_indication": True,
+                   "transition": {"end_team": "self", "start_team": "opponent", "condition": "live_shot"},
+                   "pot_poss_ending": True},
+    "ft1_make": {"category": "shot", "sort_priority": 15, "poss_indication": True,
+                   "transition": {"end_team": "self", "start_team": "opponent", "condition": "live_shot"},
+                   "pot_poss_ending": True},
+    "ft2_make": {"category": "shot", "sort_priority": 15, "poss_indication": True,
+                   "transition": {"end_team": "self", "start_team": "opponent", "condition": "live_shot"},
+                   "pot_poss_ending": True},
+    "ft3_make": {"category": "shot", "sort_priority": 15, "poss_indication": True,
+                   "transition": {"end_team": "self", "start_team": "opponent", "condition": "live_shot"},
+                   "pot_poss_ending": True},
+    "ft1_miss": {"category": "shot", "sort_priority": 25, "poss_indication": True,
+                   "transition": {"end_team": "self", "start_team": "opponent", "condition": "live_shot"},
+                   "pot_poss_ending": True},
+    "d_reb": {"category": "rebound", "sort_priority": 30, "poss_indication": True,
+               "transition": {"end_team": "opponent", "start_team": "self", "condition": "always"}},
+    "o_reb": {"category": "rebound", "sort_priority": 30, "poss_indication": True},
+    "turnover": {"category": "turnover", "sort_priority": 35, "poss_indication": True,
+                  "transition": {"end_team": "self", "start_team": "opponent", "condition": "always"}},
     "foul": {"category": "foul", "sort_priority": 40},
     "o_foul_draw": {"category": "foul", "sort_priority": 40},
-
-    # --- Jump ball ---
-    "jump_ball_win": {
-        "category": "possession",
-        "sort_priority": 50,
-        "poss_indication": True,
-        "transition": {"end_team": "opponent", "start_team": "self", "condition": "jump_ball_changes_possession"},
-    },
-
-    # --- Period boundaries ---
-    "period_start": {
-        "category": "system",
-        "sort_priority": 0,
-        "transition": {"end_team": None, "start_team": "next_poss_event", "condition": "always"},
-    },
-    "period_end": {
-        "category": "system",
-        "sort_priority": 100,
-        "transition": {"end_team": "last_possessing", "start_team": None, "condition": "always"},
-    },
-
-    # --- Lineup ---
+    "jump_ball_win": {"category": "possession", "sort_priority": 50, "poss_indication": True,
+                       "transition": {"end_team": "opponent", "start_team": "self",
+                                      "condition": "jump_ball_changes_possession"}},
+    "period_start": {"category": "system", "sort_priority": 0,
+                      "transition": {"end_team": None, "start_team": "next_poss_event", "condition": "always"}},
+    "period_end": {"category": "system", "sort_priority": 100,
+                    "transition": {"end_team": "last_possessing", "start_team": None, "condition": "always"}},
     "player_in": {"category": "lineup", "sort_priority": 5},
     "player_out": {"category": "lineup", "sort_priority": 95},
-
-    # --- Secondary events ---
     "fg2_assist": {"category": "secondary", "sort_priority": 10},
     "fg3_assist": {"category": "secondary", "sort_priority": 10},
     "block": {"category": "secondary", "sort_priority": 25},
     "steal": {"category": "secondary", "sort_priority": 35},
-
-    # --- Derived events (emitted by accumulator, not raw sources) ---
     "pot_poss_ending_scoring_opp": {"category": "derived", "sort_priority": 999},
     "poss_start": {"category": "derived", "sort_priority": 999},
     "poss_end": {"category": "derived", "sort_priority": 999},
 }
-
-
-# ============================================================================
-# DERIVED GROUPINGS (computed from PBP_EVENT_DEFINITIONS)
-# ============================================================================
 
 SHOT_EVENTS: tuple[str, ...] = tuple(
     e for e, d in PBP_EVENT_DEFINITIONS.items() if d.get("category") == "shot"
@@ -246,7 +161,6 @@ POSS_INDICATION_EVENTS: tuple[str, ...] = tuple(
     e for e, d in PBP_EVENT_DEFINITIONS.items() if d.get("poss_indication")
 )
 
-# Backward-compatible alias.
 POSSESSION_EVENTS: tuple[str, ...] = POSS_INDICATION_EVENTS
 
 POT_POSS_ENDING_EVENTS: tuple[str, ...] = tuple(

@@ -254,9 +254,10 @@ def _handle_special(
 
     # -- Team handlers --
     if handler == "team_secs":
-        team_evts = partitions.get("team", [])
-        if team_evts:
-            return max(e["secs"] for e in team_evts)
+        # Derive from period_end events (game length), not max team-event timestamp.
+        period_ends = [e for e in all_events if e["event"] == "period_end"]
+        if period_ends:
+            return max(e["secs"] for e in period_ends)
         return None
 
     if handler == "team_o_poss_secs":
@@ -333,26 +334,30 @@ def _calc_possession_secs(
     team_id: str,
 ) -> int | None:
     """Sum seconds between poss_start/poss_end pairs for a team."""
-    starts = [
-        e for e in events
-        if e["event"] == "poss_start" and e["team_id"] == team_id
-    ]
+    starts = sorted(
+        [e for e in events
+         if e["event"] == "poss_start" and e["team_id"] == team_id],
+        key=lambda e: (e["secs"], e["event_id"]),
+    )
+    remaining = sorted(
+        [e for e in events
+         if e["event"] == "poss_end" and e["team_id"] == team_id],
+        key=lambda e: (e["secs"], e["event_id"]),
+    )
     if not starts:
         return None
+
     total = 0
     for s in starts:
-        matching_end = next(
-            (
-                e for e in events
-                if e["event"] == "poss_end"
-                and e["team_id"] == team_id
-                and e["secs"] >= s["secs"]
-            ),
-            None,
-        )
-        if matching_end:
-            total += matching_end["secs"] - s["secs"]
-    return total
+        match_idx = None
+        for idx, e in enumerate(remaining):
+            if (e["secs"], e["event_id"]) > (s["secs"], s["event_id"]):
+                match_idx = idx
+                break
+        if match_idx is not None:
+            matched = remaining.pop(match_idx)
+            total += matched["secs"] - s["secs"]
+    return total if total > 0 else None
 
 
 def _player_possession_windows(
@@ -373,30 +378,33 @@ def _player_possession_windows(
     if on_court_intervals is None:
         return 0, 0
 
-    starts = [
-        e for e in events
-        if e["event"] == "poss_start" and e["team_id"] == team_id
-    ]
+    starts = sorted(
+        [e for e in events
+         if e["event"] == "poss_start" and e["team_id"] == team_id],
+        key=lambda e: (e["secs"], e["event_id"]),
+    )
+    remaining = sorted(
+        [e for e in events
+         if e["event"] == "poss_end" and e["team_id"] == team_id],
+        key=lambda e: (e["secs"], e["event_id"]),
+    )
     if not starts:
         return 0, 0
 
     count = 0
     total_secs = 0
     for s in starts:
-        matching_end = next(
-            (
-                e for e in events
-                if e["event"] == "poss_end"
-                and e["team_id"] == team_id
-                and e["secs"] >= s["secs"]
-            ),
-            None,
-        )
-        if matching_end is None:
+        match_idx = None
+        for idx, e in enumerate(remaining):
+            if (e["secs"], e["event_id"]) > (s["secs"], s["event_id"]):
+                match_idx = idx
+                break
+        if match_idx is None:
             continue
+        matched = remaining.pop(match_idx)
 
         w_start = s["secs"]
-        w_end = matching_end["secs"]
+        w_end = matched["secs"]
 
         # Check each court interval for overlap with this window.
         for oc_start, oc_end in on_court_intervals:

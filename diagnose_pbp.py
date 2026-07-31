@@ -320,6 +320,48 @@ def diagnose(game_id: str, season: str, home_team_id: str, away_team_id: str):
             print(f"    {k:20s} = {result.get(k)}")
 
     # ==================================================================
+    # POINT 1: Player minutes and coverage
+    # ==================================================================
+    print(f"\n{'=' * 65}")
+    print("POINT 1: Player minutes and lineup coverage")
+    print("=" * 65)
+
+    player_in_events = [e for e in events if e["event"] == "player_in"]
+    player_out_events = [e for e in events if e["event"] == "player_out"]
+    player_teams: dict[str, str] = {}
+    for e in player_in_events:
+        pid = e.get("player_id", "")
+        if pid and pid != "0":
+            player_teams[pid] = e["team_id"]
+
+    from src.lib.pbp_accumulator import _calc_player_secs
+    total_player_secs = 0
+    print(f"\n  {'Player':30s} {'Team':15s} {'Secs':>6s} {'Started':>8s}")
+    print(f"  {'-'*30} {'-'*15} {'-'*6} {'-'*8}")
+    for player_id, team in sorted(player_teams.items(), key=lambda x: x[1]):
+        secs = _calc_player_secs(events, player_id)
+        if secs is not None:
+            total_player_secs += secs
+        in_events = [e for e in player_in_events if e.get("player_id") == player_id]
+        out_events = [e for e in player_out_events if e.get("player_id") == player_id]
+        started = any(e["secs"] == 0 for e in in_events)
+        print(f"  {player_id[:30]:30s} {team[:15]:15s} {secs or 0:6d} {str(started):>8s}")
+
+    lineup_size = 5
+    period_ends_list = [e for e in events if e["event"] == "period_end"]
+    if period_ends_list:
+        game_length_secs = max(e["secs"] for e in period_ends_list)
+    else:
+        game_length_secs = max(e["secs"] for e in events)
+    expected_secs = lineup_size * game_length_secs * 2  # 5 players x game_len x 2 teams
+    coverage_pct = (total_player_secs / expected_secs * 100) if expected_secs else 0
+
+    print(f"\n  Total player secs:     {total_player_secs}")
+    print(f"  Expected (5 x {game_length_secs}s x 2):  {expected_secs}")
+    print(f"  Coverage:              {coverage_pct:.1f}%")
+    print(f"  Players tracked:       {len(player_teams)}")
+
+    # ==================================================================
     # EVENT TYPE COUNTS
     # ==================================================================
     print(f"\n{'=' * 65}")
