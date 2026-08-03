@@ -44,13 +44,16 @@ def _column_in_table(col_meta: Any, qualified_table: str) -> bool:
         tables = [tables]
     if "all" in tables:
         return True
-    schema, table = qualified_table.split(".", 1)
+    if "." in qualified_table:
+        schema, table = qualified_table.split(".", 1)
+    else:
+        schema, table = None, qualified_table
     for entry in tables:
         if "." in entry:
-            if entry == qualified_table:
+            if schema is not None and entry == qualified_table:
                 return True
         else:
-            if entry == table and schema in _TABLE_SCHEMAS.get(entry, []):
+            if entry == table and (schema is None or schema in _TABLE_SCHEMAS.get(entry, [])):
                 return True
     return False
 
@@ -305,26 +308,27 @@ def _sync_table(
     schema_name: str,
 ) -> List[str]:
     """Sync table structure against config; purely additive."""
+    unqualified = table_name.split(".", 1)[1] if "." in table_name else table_name
     actions: List[str] = []
 
-    if not _table_exists(cur, schema_name, table_name):
-        n = _create_table(cur, schema_name, table_name, meta)
-        _ensure_updated_at_trigger(cur, schema_name, table_name)
+    if not _table_exists(cur, schema_name, unqualified):
+        n = _create_table(cur, schema_name, unqualified, meta)
+        _ensure_updated_at_trigger(cur, schema_name, unqualified)
         actions.append(f"created ({n} columns)")
         return actions
 
     expected = _get_expected_columns(table_name, meta)
 
-    existing = _existing_columns(cur, schema_name, table_name)
+    existing = _existing_columns(cur, schema_name, unqualified)
     for col_name, col_meta in expected:
         if col_name not in existing:
             cur.execute(
-                f"ALTER TABLE {schema_name}.{table_name} "
+                f"ALTER TABLE {schema_name}.{unqualified} "
                 f"ADD COLUMN IF NOT EXISTS {quote_col(col_name)} {col_meta['type']}"
             )
             actions.append(f"added {col_name}")
 
-    _ensure_updated_at_trigger(cur, schema_name, table_name)
+    _ensure_updated_at_trigger(cur, schema_name, unqualified)
     return actions
 
 
@@ -474,7 +478,7 @@ def _topological_table_order() -> List[Tuple[str, Any]]:
 
     while queue:
         key = queue.popleft()
-        ordered.append((key, SCHEMAS[key.split(".", 1)[0]][key.split(".", 1)[1]]))
+        ordered.append((key, {**meta, "schema": key.split(".", 1)[0]}))
         for dependent in dependents[key]:
             in_degree[dependent] -= 1
             if in_degree[dependent] == 0:

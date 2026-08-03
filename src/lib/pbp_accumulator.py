@@ -457,25 +457,30 @@ def _calc_player_secs(
     player_id: str,
 ) -> int | None:
     """Sum seconds between player_in and player_out events."""
-    ins = [
-        e for e in events
-        if e["event"] == "player_in" and e["player_id"] == player_id
-    ]
-    outs = [
-        e for e in events
-        if e["event"] == "player_out" and e["player_id"] == player_id
-    ]
+    ins = sorted(
+        [e for e in events
+         if e["event"] == "player_in" and e["player_id"] == player_id],
+        key=lambda e: (e["secs"], e["event_id"]),
+    )
+    outs = sorted(
+        [e for e in events
+         if e["event"] == "player_out" and e["player_id"] == player_id],
+        key=lambda e: (e["secs"], e["event_id"]),
+    )
     if not ins and not outs:
         return None
+    remaining = list(outs)
     total = 0
     for inp in ins:
-        matching_out = next(
-            (o for o in outs if o["secs"] >= inp["secs"]),
-            None,
-        )
-        if matching_out:
-            total += matching_out["secs"] - inp["secs"]
-    return total
+        match_idx = None
+        for idx, o in enumerate(remaining):
+            if (o["secs"], o["event_id"]) > (inp["secs"], inp["event_id"]):
+                match_idx = idx
+                break
+        if match_idx is not None:
+            matched = remaining.pop(match_idx)
+            total += matched["secs"] - inp["secs"]
+    return total if total > 0 else None
 
 
 # ============================================================================
@@ -512,7 +517,7 @@ def derive_game_context_events(
     result = list(events)
     _reset_derived_id(result)
     result = _derive_substitution_events(result)
-    result = _derive_lineup_events(result, lineup_size)
+    result = _derive_lineup_events(result, lineup_size, home_team_id, away_team_id)
     result = _derive_possession_events(result, home_team_id, away_team_id)
     result = _renumber_event_ids(result)
     return result
@@ -586,6 +591,8 @@ def _derive_substitution_events(
 def _derive_lineup_events(
     events: list[PBPEvent],
     lineup_size: int,
+    home_team_id: str = "",
+    away_team_id: str = "",
 ) -> list[PBPEvent]:
     """Derive player_in at period start and player_out at period end.
 
@@ -596,6 +603,7 @@ def _derive_lineup_events(
     retroactively at the period_start secs.
 
     At period_end, every player currently on court gets a ``player_out``.
+    Team entities (home/away team IDs) are never tracked as players.
     """
     if not events:
         return events
@@ -606,8 +614,10 @@ def _derive_lineup_events(
     on_court: dict[str, set[str]] = {}
     period_start_secs: int | None = None
     in_period = False
+    redundant_indices: set[int] = set()
+    prev_lineup: dict[str, set[str]] = {}
 
-    for event in result:
+    for idx, event in enumerate(result):
         evt = event["event"]
         team = event["team_id"]
         player = event["player_id"]
@@ -616,10 +626,20 @@ def _derive_lineup_events(
         if evt == "period_start":
             period_start_secs = secs
             in_period = True
+            # Carry forward the previous period's lineup (minus any
+            # players subbed out between periods).
             on_court = {}
+            for t, pids in prev_lineup.items():
+                on_court[t] = set(pids)
+                for pid in pids:
+                    derived.append(
+                        _mk_derived(result, "player_in", secs, t, pid))
+            prev_lineup = {}
 
         elif evt == "period_end":
             if in_period:
+                # Save lineup to carry forward to the next period.
+                prev_lineup = {t: set(pids) for t, pids in on_court.items()}
                 for t, players in on_court.items():
                     if len(players) != lineup_size:
                         logger.debug(
@@ -633,13 +653,21 @@ def _derive_lineup_events(
 
         elif evt == "player_in":
             if team and player and in_period:
-                on_court.setdefault(team, set()).add(player)
+                if player not in (home_team_id, away_team_id):
+                    on_court.setdefault(team, set()).add(player)
 
         elif evt == "player_out":
             if team and player and in_period:
-                on_court.get(team, set()).discard(player)
+                if player in on_court.get(team, set()):
+                    on_court[team].discard(player)
+                else:
+                    # Player already off court (period_end beat the sub).
+                    redundant_indices.add(idx)
 
         elif in_period and team and player:
+            # Skip team entities -- they are not players.
+            if player in (home_team_id, away_team_id):
+                continue
             # Non-sub event with a player: if they aren't already on
             # court, they must have started the period.
             assert period_start_secs is not None
@@ -649,6 +677,7 @@ def _derive_lineup_events(
                 derived.append(
                     _mk_derived(result, "player_in", period_start_secs, team, player))
 
+    result = [e for i, e in enumerate(result) if i not in redundant_indices]
     result.extend(derived)
     result.sort(key=lambda e: (e["secs"], e["event_id"]))
     return result
@@ -833,7 +862,7 @@ def _cond_jump_ball_changes_possession(
         prev = events[j]
         if prev["event"] in POSS_INDICATION_EVENTS and prev["team_id"]:
             return prev["team_id"] != event["team_id"]
-    return True  # No prior possession found -> assume change
+    return False  # No prior possession found -> opening tip, no change
 
 
 def _find_next_poss_team(

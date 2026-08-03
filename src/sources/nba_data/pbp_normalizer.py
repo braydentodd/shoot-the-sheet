@@ -79,26 +79,31 @@ def normalize_game(
 
         secs = _pctime_to_secs(period, pctime, reg_len, ot_len)
 
-        # Resolve entity via staging lookup
-        entity_type, resolved_team = entity_resolver(p1_id)
-        if entity_type is None or resolved_team is None:
-            logger.debug(
-                "Unknown entity %r (PERSON1TYPE=%s) in game %s event %s",
-                p1_id, p1_type, game_id, eventnum,
-            )
-            continue
-        player_team = resolved_team
-
-        # Classify the raw row via the catalog
+        # Classify first -- system events don't need entity resolution.
         try:
             classification = classifier.classify(row)
         except UnclassifiedEventError:
-            continue  # Should not happen -- enforced upstream in _maintain_pbp
+            continue
 
         if classification.is_ignore:
             continue
 
         handling = classification.handling
+
+        # Resolve entity via staging lookup (skip for system events).
+        if handling in ("period_start", "period_end"):
+            entity_type = "system"
+            resolved_team = ""
+            player_team = ""
+        else:
+            entity_type, resolved_team = entity_resolver(p1_id)
+            if entity_type is None or resolved_team is None:
+                logger.debug(
+                    "Unknown entity %r (PERSON1TYPE=%s) in game %s event %s",
+                    p1_id, p1_type, game_id, eventnum,
+                )
+                continue
+            player_team = resolved_team
 
         # ── Context-dependent pseudo-types ────────────────────────────
 

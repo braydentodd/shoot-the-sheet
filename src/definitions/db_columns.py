@@ -1679,7 +1679,47 @@ DB_COLUMNS: Mapping[str, Column] = {
             }
         },
     },
-    "fouls": {
+    "standard_fouls": {
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_basic_stats": {
+                            "field": "FLS",
+                            "min_season": None,
+                            "result_set": "LeagueDashPlayerStats",
+                        }
+                    },
+                    "player_games": {
+                        "player_game_stats": {
+                            "field": "FLS",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                    },
+                    "team_seasons": {
+                        "team_basic_stats": {
+                            "field": "FLS",
+                            "min_season": None,
+                            "result_set": "LeagueDashTeamStats",
+                        }
+                    },
+                    "team_games": {
+                        "team_game_stats": {
+                            "field": "FLS",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "elevated_fouls": {
         "type": "SMALLINT",
         "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
@@ -1689,14 +1729,14 @@ DB_COLUMNS: Mapping[str, Column] = {
                 "nba_id": {
                     "player_games": {
                         "pbp_stats": {
-                            "field": "fouls",
+                            "field": "elevated_fouls",
                             "min_season": None,
                             "result_set": "player",
                         },
                     },
                     "team_games": {
                         "pbp_stats": {
-                            "field": "fouls",
+                            "field": "elevated_fouls",
                             "min_season": None,
                             "result_set": "team",
                         },
