@@ -90,6 +90,44 @@ class MSG:
 # Offensive foul action types for detecting o_foul_draw events.
 OFFENSIVE_FOUL_ACTION_TYPES = frozenset({4, 26})
 
+# Foul taxonomy: every MSG=6 EVENTMSGACTIONTYPE maps to exactly one
+# canonical foul event.  This is the source's declarative foul semantics:
+#
+#   standard_foul -- a normal foul.  Resulting free throws are
+#       pot_poss_ending_scoring_opp candidates.
+#   elevated_foul -- a pause in action (flagrant / technical / clear
+#       path / away-from-play / team / taunting ...).  Never possession
+#       changing, never pot_poss_ending_scoring_opp; the trip is
+#       transparent to scoring-sequence tracking.
+#
+# The elevated classification is proposed here and confirmed during the
+# core.pbp_events catalog migration (discover-pbp over MSG=6, then
+# review).  Verified against the 2010-11 nbastats archive (actions 6, 9,
+# 11-19 are technical/flagrant/clear-path family fouls).
+FOUL_TAXONOMY: dict[int, str] = {
+    1: "standard_foul",   # personal
+    2: "standard_foul",   # shooting
+    3: "standard_foul",   # loose ball
+    4: "standard_foul",   # offensive
+    5: "standard_foul",   # inbound
+    6: "elevated_foul",   # away from play
+    9: "elevated_foul",   # clear path
+    10: "standard_foul",  # double personal
+    11: "elevated_foul",  # technical
+    12: "elevated_foul",  # non-unsportsmanlike (bench technical)
+    13: "elevated_foul",  # hanging tech
+    14: "elevated_foul",  # flagrant 1
+    15: "elevated_foul",  # flagrant 2
+    16: "elevated_foul",  # double technical
+    17: "elevated_foul",  # defensive 3 seconds
+    18: "elevated_foul",  # team foul
+    19: "elevated_foul",  # taunting
+    26: "standard_foul",  # offensive charge
+    27: "standard_foul",  # personal block
+    28: "standard_foul",  # personal take
+    29: "standard_foul",  # shooting block
+}
+
 
 # ============================================================================
 # PERSON TYPE CONSTANTS

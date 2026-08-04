@@ -26,7 +26,11 @@ def discover(
     """Discover event shapes and populate ``core.pbp_events``."""
     client_module = _resolve_source(identity_code, dataset_name)
 
-    from src.lib.pbp_classifier import _to_int as _ctoi
+    from src.lib.pbp_classifier import (
+        build_nba_event_key,
+        build_nba_signature,
+        _to_int as _ctoi,
+    )
 
     def _desc(row: dict) -> str:
         parts = [
@@ -36,30 +40,8 @@ def discover(
         ]
         return " ".join(p for p in parts if p)
 
-    def build_signature(row: dict) -> dict:
-        msgtype = _ctoi(row.get("EVENTMSGTYPE"))
-        actiontype = _ctoi(row.get("EVENTMSGACTIONTYPE"))
-        sig: dict[str, Any] = {"EVENTMSGTYPE": msgtype, "EVENTMSGACTIONTYPE": actiontype}
-        desc = _desc(row)
-        if msgtype in (1, 2):
-            if "3PT" in desc.upper():
-                sig["text_contains"] = "3PT"
-            else:
-                sig["text_not_contains"] = "3PT"
-        elif msgtype == 3:
-            if "MISS" in desc.upper():
-                sig["text_contains"] = "MISS"
-            else:
-                sig["text_not_contains"] = "MISS"
-        return sig
-
-    def build_event_key(sig: dict) -> str:
-        key = f"MSG={sig['EVENTMSGTYPE']}_ACT={sig['EVENTMSGACTIONTYPE']}"
-        if "text_contains" in sig:
-            key += f"_HAS={sig['text_contains']}"
-        elif "text_not_contains" in sig:
-            key += f"_NO={sig['text_not_contains']}"
-        return key
+    build_signature = build_nba_signature
+    build_event_key = build_nba_event_key
 
     games = _load_games(conn, identity_code, dataset_name, season, game_id)
     if not games:

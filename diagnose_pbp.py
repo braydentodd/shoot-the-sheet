@@ -181,10 +181,8 @@ def diagnose(game_id: str, season: str, home_team_id: str, away_team_id: str):
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
     from src.sources.nba_data.pbp_normalizer import normalize_game
-    from src.lib.pbp_accumulator import (
-        derive_game_context_events,
-        accumulate_result_set,
-    )
+    from src.lib.pbp_accumulator import accumulate_result_set
+    from src.lib.pbp_derive import derive_game_context_events
 
     # 1. Load raw data
     csv_path = ensure_csv(season)
@@ -209,9 +207,14 @@ def diagnose(game_id: str, season: str, home_team_id: str, away_team_id: str):
     print(f"Normalized: {len(events)} events")
 
     # 4. Derive context events (possessions, lineups)
-    events = derive_game_context_events(
+    derive_result = derive_game_context_events(
         events, home_team_id, away_team_id, lineup_size=5,
     )
+    events = derive_result.events
+    if derive_result.errors:
+        print(f"  DERIVE ERRORS: {len(derive_result.errors)}")
+        for err in derive_result.errors:
+            print(f"    - {err.rule}: {err.message}")
     print(f"After derivation: {len(events)} events\n")
 
     # ==================================================================

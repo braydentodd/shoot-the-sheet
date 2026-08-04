@@ -4,9 +4,13 @@ Shoot the Sheet - PBP Accumulation Engine
 Config-driven accumulation of standard PBP events into per-game
 result sets for teams and players.
 
-Reads the single unified RESULT_SET_FIELDS dict from
+Reads the single unified ``RESULT_SET_FIELDS`` dict from
 :data:`src.definitions.pbp` and applies it generically.  Each field
 defines which result sets it appears in and how to compute it.
+
+All on-court / possession window logic operates on ``seq`` -- never
+``secs``.  Clock-derived fields (``secs``, possession seconds) are
+``requires_clock`` gated and output ``None`` for untimed games.
 
 Convention: code lives in lib.  Config/dicts/constants live in
 definitions (src.definitions.pbp).
@@ -15,37 +19,10 @@ definitions (src.definitions.pbp).
 import logging
 from typing import Any
 
-from src.definitions.pbp import (
-    EVENT_SORT_PRIORITY,
-    PBP_EVENT_DEFINITIONS,
-    POSSESSION_EVENTS,
-    POSS_INDICATION_EVENTS,
-    POT_POSS_ENDING_EVENTS,
-    RESULT_SET_FIELDS,
-    PBPEvent,
-)
+from src.definitions.pbp import PBP_EVENTS, RESULT_SET_FIELDS, PBPEvent
 from src.lib.math_evaluator import evaluate as eval_math
 
 logger = logging.getLogger(__name__)
-
-
-# ============================================================================
-# EVENT ID RENUMBERING
-# ============================================================================
-
-
-def _renumber_event_ids(
-    events: list[PBPEvent],
-) -> list[PBPEvent]:
-    """Assign sequential event_ids (1, 2, 3, ...) sorted by (secs, event)."""
-    events.sort(key=lambda e: (
-        e["secs"],
-        EVENT_SORT_PRIORITY.get(e["event"], 50),
-        e["event_id"],
-    ))
-    for i, e in enumerate(events):
-        e["event_id"] = i + 1
-    return events
 
 
 # ============================================================================
@@ -63,20 +40,23 @@ def accumulate_result_set(
 ) -> dict[str, Any]:
     """Accumulate standard PBP events into one result set row.
 
-    Generic over result-set type.  Iterates RESULT_SET_FIELDS once,
+    Generic over result-set type.  Iterates ``RESULT_SET_FIELDS`` once,
     skipping fields that don't apply to *result_set*.
 
     Args:
-        events: Standard PBPEvent rows for a single game.
+        events: Standard PBPEvent rows for a single game (final seq).
         result_set: Which result set to produce ("team" or "player").
         entity_id: Subject entity ID (team_id or player_id).
         opp_entity_id: Opposing entity ID.
         player_team_id: Subject player's team ID (player result set only).
-        on_court_intervals: Court-time intervals (player result set only).
+        on_court_intervals: Court-time intervals as ``(start_seq, end_seq)``
+            pairs (player result set only).
 
     Returns:
         Dict of field_name -> value.
     """
+    timed = all(e.get("secs") is not None for e in events)
+
     partitions = _build_partitions(
         events, result_set, entity_id, opp_entity_id,
         player_team_id, on_court_intervals,
@@ -103,6 +83,9 @@ def accumulate_result_set(
             result[field_name] = _evaluate_derived(field_def, result)
 
         elif op == "special":
+            if field_def.get("requires_clock") and not timed:
+                result[field_name] = None
+                continue
             result[field_name] = _handle_special(
                 scope_or_handler,
                 events,
@@ -119,7 +102,7 @@ def accumulate_result_set(
 
 # ==============================================================================
 # EVENT PARTITIONING
-# ============================================================================
+# ==============================================================================
 
 
 def _build_partitions(
@@ -208,31 +191,43 @@ def _is_on_court(
     event: PBPEvent,
     on_court_intervals: list[tuple[int, int]] | None = None,
 ) -> bool:
-    """Check if an event falls within any on-court interval."""
+    """Check if an event falls within any on-court interval (by seq)."""
     if on_court_intervals is None:
         return True
-    return any(
-        start <= event["secs"] <= end
-        for start, end in on_court_intervals
+    seq = event.get("seq", 0)
+    return any(start <= seq <= end for start, end in on_court_intervals)
+
+
+def _sum_points(events: list[PBPEvent]) -> int:
+    """Sum points from a list of events (points live in PBP_EVENTS)."""
+    return sum(PBP_EVENTS[e["event"]]["points"] for e in events)
+
+
+def player_on_court_intervals(
+    events: list[PBPEvent],
+    player_id: str,
+) -> list[tuple[int, int]] | None:
+    """Build ``(start_seq, end_seq)`` on-court intervals for a player.
+
+    Pairs the player's ``player_in``/``player_out`` markers in seq
+    order.  Returns ``None`` when the player has no intervals.
+    """
+    ins = sorted(
+        (e["seq"] for e in events
+         if e["event"] == "player_in" and e.get("player_id") == player_id),
     )
-
-
-def _sum_points(team_events: list[PBPEvent]) -> int:
-    """Sum points from a list of events."""
-    pts = 0
-    for e in team_events:
-        ev = e["event"]
-        if ev == "fg2_make":
-            pts += 2
-        elif ev == "fg3_make":
-            pts += 3
-        elif ev == "ft1_make":
-            pts += 1
-        elif ev == "ft2_make":
-            pts += 2
-        elif ev == "ft3_make":
-            pts += 3
-    return pts
+    outs = sorted(
+        (e["seq"] for e in events
+         if e["event"] == "player_out" and e.get("player_id") == player_id),
+    )
+    if not ins and not outs:
+        return None
+    intervals: list[tuple[int, int]] = []
+    for start in ins:
+        end = next((o for o in outs if o >= start), None)
+        if end is not None:
+            intervals.append((start, end))
+    return intervals or None
 
 
 # ============================================================================
@@ -263,6 +258,11 @@ def _handle_special(
     if handler == "team_o_poss_secs":
         return _calc_possession_secs(all_events, entity_id)
 
+    if handler == "opp_team_o_poss_secs":
+        if opp_entity_id:
+            return _calc_possession_secs(all_events, opp_entity_id)
+        return None
+
     if handler == "team_poss":
         return sum(1 for e in all_events
                    if e["event"] == "poss_start" and e["team_id"] == entity_id)
@@ -274,9 +274,14 @@ def _handle_special(
         return None
 
     if handler == "player_start":
+        # Started the game = a derived starter player_in in the first period.
         for e in all_events:
-            if (e["event"] == "player_in" and e["secs"] == 0
-                    and e["player_id"] == entity_id):
+            if (
+                e["event"] == "player_in"
+                and e.get("period") == 1
+                and e.get("source") == "derived:starter"
+                and e.get("player_id") == entity_id
+            ):
                 return True
         return False
 
@@ -290,8 +295,8 @@ def _handle_special(
 
     # -- Player handlers --
     if handler == "player_win":
-        # DNP (0 seconds) -> no win value
-        if not player_team_id or result.get("secs", 0) == 0:
+        # DNP (no on-court intervals) -> no win value
+        if not player_team_id or not on_court_intervals:
             return None
         team_events = [e for e in all_events if e["team_id"] == player_team_id]
         team_pts = _sum_points(team_events)
@@ -307,6 +312,12 @@ def _handle_special(
         if player_team_id:
             return _player_possession_secs(
                 all_events, player_team_id, entity_id, on_court_intervals)
+        return None
+
+    if handler == "opp_player_o_poss_secs":
+        if opp_entity_id:
+            return _player_possession_secs(
+                all_events, opp_entity_id, entity_id, on_court_intervals)
         return None
 
     if handler == "player_poss":
@@ -325,38 +336,44 @@ def _handle_special(
 
 
 # ============================================================================
-# POSSESSION CALCULATIONS
+# POSSESSION CALCULATIONS (seq-paired, clock-gated)
 # ============================================================================
+
+
+def _pair_windows(
+    events: list[PBPEvent],
+    team_id: str,
+) -> list[tuple[PBPEvent, PBPEvent]]:
+    """Pair ``poss_start``/``poss_end`` markers per team, in seq order."""
+    open_marker: PBPEvent | None = None
+    windows: list[tuple[PBPEvent, PBPEvent]] = []
+    for e in events:
+        if e["event"] == "poss_start" and e["team_id"] == team_id:
+            open_marker = e
+        elif e["event"] == "poss_end" and e["team_id"] == team_id:
+            if open_marker is not None:
+                windows.append((open_marker, e))
+                open_marker = None
+    return windows
 
 
 def _calc_possession_secs(
     events: list[PBPEvent],
     team_id: str,
 ) -> int | None:
-    """Sum seconds between poss_start/poss_end pairs for a team."""
-    starts = sorted(
-        [e for e in events
-         if e["event"] == "poss_start" and e["team_id"] == team_id],
-        key=lambda e: (e["secs"], e["event_id"]),
-    )
-    remaining = sorted(
-        [e for e in events
-         if e["event"] == "poss_end" and e["team_id"] == team_id],
-        key=lambda e: (e["secs"], e["event_id"]),
-    )
-    if not starts:
-        return None
+    """Sum seconds between poss_start/poss_end pairs for a team.
 
-    total = 0
-    for s in starts:
-        match_idx = None
-        for idx, e in enumerate(remaining):
-            if (e["secs"], e["event_id"]) > (s["secs"], s["event_id"]):
-                match_idx = idx
-                break
-        if match_idx is not None:
-            matched = remaining.pop(match_idx)
-            total += matched["secs"] - s["secs"]
+    Clock-gated: returns ``None`` when the game has no clock.
+    """
+    if any(e.get("secs") is None for e in events):
+        return None
+    windows = _pair_windows(events, team_id)
+    if not windows:
+        return None
+    total = sum(
+        max(0, (end["secs"] or 0) - (start["secs"] or 0))
+        for start, end in windows
+    )
     return total if total > 0 else None
 
 
@@ -368,43 +385,21 @@ def _player_possession_windows(
 ) -> tuple[int, int]:
     """Count possession windows and total secs where a player qualifies.
 
-    A player qualifies for a possession window if:
-    1. They were on court during any part of the window, AND
-    2. A POSSESSION_EVENT occurred during their court time within that
-       window (proving they were actively involved).
-
-    Returns (count, total_secs).
+    A player qualifies for a possession window if they were on court
+    during part of the window AND at least one of the window's
+    ``indicate_poss`` events falls inside their on-court span (seq-based).
     """
     if on_court_intervals is None:
         return 0, 0
 
-    starts = sorted(
-        [e for e in events
-         if e["event"] == "poss_start" and e["team_id"] == team_id],
-        key=lambda e: (e["secs"], e["event_id"]),
-    )
-    remaining = sorted(
-        [e for e in events
-         if e["event"] == "poss_end" and e["team_id"] == team_id],
-        key=lambda e: (e["secs"], e["event_id"]),
-    )
-    if not starts:
+    windows = _pair_windows(events, team_id)
+    if not windows:
         return 0, 0
 
     count = 0
     total_secs = 0
-    for s in starts:
-        match_idx = None
-        for idx, e in enumerate(remaining):
-            if (e["secs"], e["event_id"]) > (s["secs"], s["event_id"]):
-                match_idx = idx
-                break
-        if match_idx is None:
-            continue
-        matched = remaining.pop(match_idx)
-
-        w_start = s["secs"]
-        w_end = matched["secs"]
+    for start, end in windows:
+        w_start, w_end = start["seq"], end["seq"]
 
         # Check each court interval for overlap with this window.
         for oc_start, oc_end in on_court_intervals:
@@ -412,17 +407,19 @@ def _player_possession_windows(
             overlap_end = min(w_end, oc_end)
             if overlap_start >= overlap_end:
                 continue
-
-            # Any POSSESSION_EVENT by this team in the overlap?
+            # Any indicate_poss event by this team in the overlap?
             has_event = any(
-                e["event"] in POSSESSION_EVENTS
+                PBP_EVENTS.get(e["event"], {}).get("indicate_poss")
                 and e["team_id"] == team_id
-                and overlap_start <= e["secs"] < overlap_end
+                and overlap_start <= e["seq"] < overlap_end
                 for e in events
             )
             if has_event:
                 count += 1
-                total_secs += w_end - w_start
+                if any(e.get("secs") is None for e in events):
+                    total_secs += 0
+                else:
+                    total_secs += max(0, (end["secs"] or 0) - (start["secs"] or 0))
                 break  # count this window once
 
     return count, total_secs
@@ -447,6 +444,8 @@ def _player_possession_secs(
     on_court_intervals: list[tuple[int, int]] | None,
 ) -> int | None:
     """Sum full possession secs for qualified windows for a player."""
+    if any(e.get("secs") is None for e in events):
+        return None
     count, total = _player_possession_windows(
         events, team_id, player_id, on_court_intervals)
     return total if count > 0 else None
@@ -456,425 +455,18 @@ def _calc_player_secs(
     events: list[PBPEvent],
     player_id: str,
 ) -> int | None:
-    """Sum seconds between player_in and player_out events."""
-    ins = sorted(
-        [e for e in events
-         if e["event"] == "player_in" and e["player_id"] == player_id],
-        key=lambda e: (e["secs"], e["event_id"]),
-    )
-    outs = sorted(
-        [e for e in events
-         if e["event"] == "player_out" and e["player_id"] == player_id],
-        key=lambda e: (e["secs"], e["event_id"]),
-    )
-    if not ins and not outs:
+    """Sum seconds between player_in and player_out events (seq-paired).
+
+    Clock-gated: returns ``None`` when the game has no clock.
+    """
+    if any(e.get("secs") is None for e in events):
         return None
-    remaining = list(outs)
+    intervals = player_on_court_intervals(events, player_id)
+    if not intervals:
+        return None
     total = 0
-    for inp in ins:
-        match_idx = None
-        for idx, o in enumerate(remaining):
-            if (o["secs"], o["event_id"]) > (inp["secs"], inp["event_id"]):
-                match_idx = idx
-                break
-        if match_idx is not None:
-            matched = remaining.pop(match_idx)
-            total += matched["secs"] - inp["secs"]
+    for start_seq, end_seq in intervals:
+        start = next(e for e in events if e["seq"] == start_seq)
+        end = next(e for e in events if e["seq"] == end_seq)
+        total += max(0, (end["secs"] or 0) - (start["secs"] or 0))
     return total if total > 0 else None
-
-
-# ============================================================================
-# PBP EVENT DERIVATION (Phase 2 + 3)
-# ============================================================================
-
-
-def derive_game_context_events(
-    events: list[PBPEvent],
-    home_team_id: str,
-    away_team_id: str,
-    lineup_size: int = 5,
-) -> list[PBPEvent]:
-    """Derive possession, substitution, and lineup events from raw events.
-
-    This is the Phase 2/3 entry point that adds derived events to the
-    raw event list before accumulation.
-
-    Derives:
-        - player_in / player_out from substitution events
-        - player_in at period start / player_out at period end (inferred)
-        - poss_start / poss_end from scoring/turnover/rebound events
-        - pot_poss_ending_scoring_opp from live-shot events
-
-    Args:
-        events: Normalized PBPEvent rows (must be sorted by secs).
-        home_team_id: External ID of the home team.
-        away_team_id: External ID of the away team.
-        lineup_size: Number of players on court per team (from leagues.py).
-
-    Returns:
-        New list with derived events appended (original list is not mutated).
-    """
-    result = list(events)
-    _reset_derived_id(result)
-    result = _derive_substitution_events(result)
-    result = _derive_lineup_events(result, lineup_size, home_team_id, away_team_id)
-    result = _derive_possession_events(result, home_team_id, away_team_id)
-    result = _renumber_event_ids(result)
-    return result
-
-
-# ============================================================================
-# SHARED DERIVATION HELPER
-# ============================================================================
-
-_derived_id_counter = 0
-
-
-def _mk_derived(
-    events: list[PBPEvent],
-    event_type: str,
-    secs: int,
-    team_id: str,
-    player_id: str = "",
-) -> PBPEvent:
-    """Build a derived PBPEvent with a unique event_id.
-
-    Uses a module-level counter seeded from max(event_id) + 1 on first
-    call within a derivation pass.  Call ``_reset_derived_id`` between
-    games to avoid unbounded growth.
-    """
-    global _derived_id_counter
-    ev: PBPEvent = {
-        "identity": events[0]["identity"],
-        "game_id": events[0]["game_id"],
-        "secs": secs,
-        "event_id": _derived_id_counter,
-        "team_id": team_id,
-        "player_id": player_id,
-        "event": event_type,
-    }
-    _derived_id_counter += 1
-    return ev
-
-
-def _reset_derived_id(events: list[PBPEvent]) -> None:
-    """Seed the derived event_id counter from the given event list."""
-    global _derived_id_counter
-    _derived_id_counter = max(e["event_id"] for e in events) + 1 if events else 1
-
-
-# ============================================================================
-# PHASE 2: PLAYER IN/OUT INFERENCE
-# ============================================================================
-
-
-def _derive_substitution_events(
-    events: list[PBPEvent],
-) -> list[PBPEvent]:
-    """Convert raw substitution events into standard player_in/player_out.
-
-    Source normalizers may emit non-standard substitution event types
-    (e.g. "substitution_in").  This function renames those events to
-    the standard player_in / player_out format.
-    """
-    result = []
-    for event in events:
-        if event["event"] == "substitution_in":
-            result.append({**event, "event": "player_in"})
-        elif event["event"] == "substitution_out":
-            result.append({**event, "event": "player_out"})
-        else:
-            result.append(event)
-    return result
-
-
-def _derive_lineup_events(
-    events: list[PBPEvent],
-    lineup_size: int,
-    home_team_id: str = "",
-    away_team_id: str = "",
-) -> list[PBPEvent]:
-    """Derive player_in at period start and player_out at period end.
-
-    Tracks on-court players per team via explicit substitution events.
-    When a player appears in any non-substitution event for their team
-    without having been formally subbed in during the period, they are
-    inferred to have started the period -- a ``player_in`` is emitted
-    retroactively at the period_start secs.
-
-    At period_end, every player currently on court gets a ``player_out``.
-    Team entities (home/away team IDs) are never tracked as players.
-    """
-    if not events:
-        return events
-
-    result = list(events)
-    derived: list[PBPEvent] = []
-
-    on_court: dict[str, set[str]] = {}
-    period_start_secs: int | None = None
-    in_period = False
-    redundant_indices: set[int] = set()
-    prev_lineup: dict[str, set[str]] = {}
-
-    for idx, event in enumerate(result):
-        evt = event["event"]
-        team = event["team_id"]
-        player = event["player_id"]
-        secs = event["secs"]
-
-        if evt == "period_start":
-            period_start_secs = secs
-            in_period = True
-            # Carry forward the previous period's lineup (minus any
-            # players subbed out between periods).
-            on_court = {}
-            for t, pids in prev_lineup.items():
-                on_court[t] = set(pids)
-                for pid in pids:
-                    derived.append(
-                        _mk_derived(result, "player_in", secs, t, pid))
-            prev_lineup = {}
-
-        elif evt == "period_end":
-            if in_period:
-                # Save lineup to carry forward to the next period.
-                prev_lineup = {t: set(pids) for t, pids in on_court.items()}
-                for t, players in on_court.items():
-                    if len(players) != lineup_size:
-                        logger.debug(
-                            "Lineup size mismatch at period end secs=%d: "
-                            "team=%s expected=%d actual=%d players=%s",
-                            secs, t, lineup_size, len(players), sorted(players))
-                    for pid in players:
-                        derived.append(
-                            _mk_derived(result, "player_out", secs, t, pid))
-            in_period = False
-
-        elif evt == "player_in":
-            if team and player and in_period:
-                if player not in (home_team_id, away_team_id):
-                    on_court.setdefault(team, set()).add(player)
-
-        elif evt == "player_out":
-            if team and player and in_period:
-                if player in on_court.get(team, set()):
-                    on_court[team].discard(player)
-                else:
-                    # Player already off court (period_end beat the sub).
-                    redundant_indices.add(idx)
-
-        elif in_period and team and player:
-            # Skip team entities -- they are not players.
-            if player in (home_team_id, away_team_id):
-                continue
-            # Non-sub event with a player: if they aren't already on
-            # court, they must have started the period.
-            assert period_start_secs is not None
-            court = on_court.setdefault(team, set())
-            if player not in court:
-                court.add(player)
-                derived.append(
-                    _mk_derived(result, "player_in", period_start_secs, team, player))
-
-    result = [e for i, e in enumerate(result) if i not in redundant_indices]
-    result.extend(derived)
-    result.sort(key=lambda e: (e["secs"], e["event_id"]))
-    return result
-
-
-# ============================================================================
-# PHASE 3: POSSESSION EVENT DERIVATION
-# ============================================================================
-
-
-def _derive_possession_events(
-    events: list[PBPEvent],
-    home_team_id: str,
-    away_team_id: str,
-) -> list[PBPEvent]:
-    """Stateless possession derivation driven by PBP_EVENT_DEFINITIONS.
-
-    Iterates normalized events once.  For each event, reads its
-    PossessionTransition from config, evaluates the condition by
-    scanning surrounding context, and emits derived events.
-
-    No mutable ``current_poss`` -- each event is evaluated independently.
-    """
-    result = list(events)
-    derived: list[PBPEvent] = []
-
-    if not events:
-        return result
-
-    def _opp(team_id: str) -> str:
-        return away_team_id if team_id == home_team_id else home_team_id
-
-    def _resolve_team(spec, event_team, events_list, idx):
-        if spec == "self":
-            return event_team
-        if spec == "opponent":
-            return _opp(event_team)
-        if spec == "last_possessing":
-            return last_possessing if last_possessing else None
-        if spec == "next_poss_event":
-            return _find_next_poss_team(events_list, idx)
-        return None
-
-    last_possessing: str = ""
-
-    for i, event in enumerate(events):
-        evt = event["event"]
-        event_def = PBP_EVENT_DEFINITIONS.get(evt)
-        if not event_def:
-            continue
-
-        transition = event_def.get("transition")
-        if not transition:
-            continue
-
-        team = event["team_id"]
-        secs = event["secs"]
-        condition = transition.get("condition")
-
-        # --- Evaluate condition ---
-        should_emit = False
-        start_team_override: str | None = None
-
-        if condition == "always":
-            should_emit = True
-
-        elif condition == "live_shot":
-            if not _is_live_shot(event, i, events):
-                continue
-            next_evt, next_team = _next_poss_indication(event, i, events)
-            if next_evt is None:
-                continue  # No next event found -- cannot determine transition
-
-            # Emit pot_poss_ending_scoring_opp on any live shot followed by
-            # opponent action or an offensive rebound.
-            if next_team != team or next_evt == "o_reb":
-                derived.append(_mk_derived(
-                    result, "pot_poss_ending_scoring_opp", secs, team,
-                    event.get("player_id", ""),
-                ))
-
-            # Actual possession transition: only if next is by the opponent
-            # AND the next event is not a rebound (d_reb/o_reb handle their
-            # own transitions; shots transition on non-rebound events like
-            # made FGs, turnovers, or period boundaries).
-            if next_team != team and not _is_rebound_event(next_evt):
-                should_emit = True
-                start_team_override = next_team
-
-        elif condition == "jump_ball_changes_possession":
-            should_emit = _cond_jump_ball_changes_possession(event, i, events)
-
-        if should_emit:
-            end_spec = transition.get("end_team")
-            start_spec = transition.get("start_team")
-
-            if end_spec:
-                end_team = _resolve_team(end_spec, team, events, i)
-                if end_team:
-                    derived.append(_mk_derived(result, "poss_end", secs, end_team))
-
-            if start_spec:
-                start_team = (
-                    start_team_override
-                    if start_team_override is not None
-                    else _resolve_team(start_spec, team, events, i)
-                )
-                if start_team:
-                    derived.append(_mk_derived(result, "poss_start", secs, start_team))
-                    last_possessing = start_team
-
-    result.extend(derived)
-    return result
-
-
-# ============================================================================
-# POSSESSION CONDITION FUNCTIONS
-# ============================================================================
-
-
-def _is_live_shot(
-    event: PBPEvent,
-    idx: int,
-    events: list[PBPEvent],
-) -> bool:
-    """True if this shot is the last of its trip.
-
-    For FGs: always True (no trip concept).
-    For FTs: True if the next event at the same second is NOT a FT.
-    """
-    evt = event["event"]
-    if evt in ("fg2_make", "fg2_miss", "fg3_make", "fg3_miss"):
-        return True
-    # FT: check if next same-second event is also a FT
-    n = len(events)
-    if idx + 1 < n and events[idx + 1]["secs"] == event["secs"]:
-        next_evt = events[idx + 1]["event"]
-        if next_evt in ("ft1_make", "ft1_miss", "ft2_make", "ft3_make"):
-            return False
-    return True
-
-
-def _next_poss_indication(
-    event: PBPEvent,
-    idx: int,
-    events: list[PBPEvent],
-) -> tuple[str | None, str | None]:
-    """Find the next possession-indicating event after *event*.
-
-    Skips same-second FTs (part of the same trip).
-    Returns (event_type, team_id) or (None, None).
-    """
-    n = len(events)
-    for j in range(idx + 1, n):
-        nx = events[j]
-        # Skip same-second FTs (they're part of the current trip)
-        if nx["secs"] == event["secs"] and nx["event"] in (
-            "ft1_make", "ft1_miss", "ft2_make", "ft3_make",
-        ):
-            continue
-        if nx["event"] in POSS_INDICATION_EVENTS and nx["team_id"]:
-            return nx["event"], nx["team_id"]
-    return None, None
-
-
-def _is_rebound_event(event_type: str) -> bool:
-    """True if the event type is a rebound (o_reb or d_reb)."""
-    return event_type in ("o_reb", "d_reb")
-
-
-def _cond_jump_ball_changes_possession(
-    event: PBPEvent,
-    idx: int,
-    events: list[PBPEvent],
-) -> bool:
-    """True if the jump ball winner differs from the last possessing team.
-
-    Scans backward for the last poss_indication event.  If that team
-    is different from the jump ball winner, possession changes.
-    """
-    for j in range(idx - 1, -1, -1):
-        prev = events[j]
-        if prev["event"] in POSS_INDICATION_EVENTS and prev["team_id"]:
-            return prev["team_id"] != event["team_id"]
-    return False  # No prior possession found -> opening tip, no change
-
-
-def _find_next_poss_team(
-    events: list[PBPEvent],
-    idx: int,
-) -> str | None:
-    """Find the team of the first poss_indication event after *idx*.
-
-    Used by period_start to infer opening possession.
-    """
-    for j in range(idx + 1, len(events)):
-        nx = events[j]
-        if nx["event"] in POSS_INDICATION_EVENTS and nx["team_id"]:
-            return nx["team_id"]
-    return None

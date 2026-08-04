@@ -411,6 +411,13 @@ DB_COLUMNS: Mapping[str, Column] = {
             }
         },
     },
+    "pbp_status": {
+        "type": "TEXT",
+        "tables": ["staging.games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
     "player_id": {
         "type": "BIGINT",
         "tables": [
@@ -1144,6 +1151,11 @@ DB_COLUMNS: Mapping[str, Column] = {
                             },
                             "result_set": "LeagueGameLog",
                         },
+                        "pbp_stats": {
+                            "field": "fg2m",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
@@ -1161,6 +1173,11 @@ DB_COLUMNS: Mapping[str, Column] = {
                                 "fields": ["FGM", "FG3M"],
                             },
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "fg2m",
+                            "min_season": None,
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1192,6 +1209,11 @@ DB_COLUMNS: Mapping[str, Column] = {
                             },
                             "result_set": "LeagueGameLog",
                         },
+                        "pbp_stats": {
+                            "field": "fg2a",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
@@ -1209,6 +1231,11 @@ DB_COLUMNS: Mapping[str, Column] = {
                                 "fields": ["FGA", "FG3A"],
                             },
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "fg2a",
+                            "min_season": None,
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1236,6 +1263,11 @@ DB_COLUMNS: Mapping[str, Column] = {
                             "min_season": None,
                             "result_set": "LeagueGameLog",
                         },
+                        "pbp_stats": {
+                            "field": "fg3m",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
@@ -1249,6 +1281,11 @@ DB_COLUMNS: Mapping[str, Column] = {
                             "field": "FG3M",
                             "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "fg3m",
+                            "min_season": None,
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1276,6 +1313,11 @@ DB_COLUMNS: Mapping[str, Column] = {
                             "min_season": None,
                             "result_set": "LeagueGameLog",
                         },
+                        "pbp_stats": {
+                            "field": "fg3a",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
@@ -1289,6 +1331,11 @@ DB_COLUMNS: Mapping[str, Column] = {
                             "field": "FG3A",
                             "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "fg3a",
+                            "min_season": None,
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1316,6 +1363,11 @@ DB_COLUMNS: Mapping[str, Column] = {
                             "min_season": None,
                             "result_set": "LeagueGameLog",
                         },
+                        "pbp_stats": {
+                            "field": "ftm",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
@@ -1329,6 +1381,11 @@ DB_COLUMNS: Mapping[str, Column] = {
                             "field": "FTM",
                             "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "ftm",
+                            "min_season": None,
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1356,6 +1413,11 @@ DB_COLUMNS: Mapping[str, Column] = {
                             "min_season": None,
                             "result_set": "LeagueGameLog",
                         },
+                        "pbp_stats": {
+                            "field": "fta",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
@@ -1369,6 +1431,11 @@ DB_COLUMNS: Mapping[str, Column] = {
                             "field": "FTA",
                             "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "fta",
+                            "min_season": None,
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1399,6 +1466,11 @@ DB_COLUMNS: Mapping[str, Column] = {
                             "min_season": None,
                             "result_set": "LeagueGameLog",
                         },
+                        "pbp_stats": {
+                            "field": "o_rebs",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
@@ -1412,6 +1484,11 @@ DB_COLUMNS: Mapping[str, Column] = {
                             "field": "OREB",
                             "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "o_rebs",
+                            "min_season": None,
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1439,6 +1516,11 @@ DB_COLUMNS: Mapping[str, Column] = {
                             "min_season": None,
                             "result_set": "LeagueGameLog",
                         },
+                        "pbp_stats": {
+                            "field": "d_rebs",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
@@ -1452,6 +1534,11 @@ DB_COLUMNS: Mapping[str, Column] = {
                             "field": "DREB",
                             "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "d_rebs",
+                            "min_season": None,
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1548,6 +1635,11 @@ DB_COLUMNS: Mapping[str, Column] = {
                             "min_season": None,
                             "result_set": "LeagueGameLog",
                         },
+                        "pbp_stats": {
+                            "field": "turnovers",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
@@ -1561,6 +1653,11 @@ DB_COLUMNS: Mapping[str, Column] = {
                             "field": "TOV",
                             "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "turnovers",
+                            "min_season": None,
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1620,6 +1717,11 @@ DB_COLUMNS: Mapping[str, Column] = {
                             "min_season": None,
                             "result_set": "LeagueGameLog",
                         },
+                        "pbp_stats": {
+                            "field": "blocks",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
@@ -1633,6 +1735,11 @@ DB_COLUMNS: Mapping[str, Column] = {
                             "field": "BLK",
                             "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "blocks",
+                            "min_season": None,
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1660,6 +1767,11 @@ DB_COLUMNS: Mapping[str, Column] = {
                             "min_season": None,
                             "result_set": "LeagueGameLog",
                         },
+                        "pbp_stats": {
+                            "field": "steals",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
@@ -1673,6 +1785,11 @@ DB_COLUMNS: Mapping[str, Column] = {
                             "field": "STL",
                             "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "steals",
+                            "min_season": None,
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1700,6 +1817,11 @@ DB_COLUMNS: Mapping[str, Column] = {
                             "min_season": None,
                             "result_set": "LeagueGameLog",
                         },
+                        "pbp_stats": {
+                            "field": "standard_fouls",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
@@ -1713,6 +1835,11 @@ DB_COLUMNS: Mapping[str, Column] = {
                             "field": "FLS",
                             "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "standard_fouls",
+                            "min_season": None,
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1856,6 +1983,11 @@ DB_COLUMNS: Mapping[str, Column] = {
                             "min_season": None,
                             "result_set": "LeagueGameLog",
                         },
+                        "pbp_stats": {
+                            "field": "poss",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
                     },
                     "team_seasons": {
                         "team_advanced_stats": {
@@ -1869,6 +2001,11 @@ DB_COLUMNS: Mapping[str, Column] = {
                             "field": "POSS",
                             "min_season": None,
                             "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "poss",
+                            "min_season": None,
+                            "result_set": "team",
                         },
                     },
                 }
@@ -1911,14 +2048,14 @@ DB_COLUMNS: Mapping[str, Column] = {
                 "nba_id": {
                     "player_games": {
                         "pbp_stats": {
-                            "field": "o_poss_secs",
+                            "field": "opp_o_poss_secs",
                             "min_season": None,
                             "result_set": "opp_player",
                         },
                     },
                     "team_games": {
                         "pbp_stats": {
-                            "field": "o_poss_secs",
+                            "field": "opp_o_poss_secs",
                             "min_season": None,
                             "result_set": "opp_team",
                         },
@@ -1937,14 +2074,14 @@ DB_COLUMNS: Mapping[str, Column] = {
                 "nba_id": {
                     "player_games": {
                         "pbp_stats": {
-                            "field": "pot_poss_ending_scoring_opp",
+                            "field": "pot_poss_ending_scoring_opps",
                             "min_season": None,
                             "result_set": "player",
                         },
                     },
                     "team_games": {
                         "pbp_stats": {
-                            "field": "pot_poss_ending_scoring_opp",
+                            "field": "pot_poss_ending_scoring_opps",
                             "min_season": None,
                             "result_set": "team",
                         },
@@ -2033,14 +2170,14 @@ DB_COLUMNS: Mapping[str, Column] = {
                     },
                     "player_games": {
                         "pbp_stats": {
-                            "field": "fg2m",
+                            "field": "opp_fg2m",
                             "min_season": None,
                             "result_set": "opp_player",
                         },
                     },
                     "team_games": {
                         "pbp_stats": {
-                            "field": "fg2m",
+                            "field": "opp_fg2m",
                             "min_season": None,
                             "result_set": "opp_team",
                         },
@@ -2068,14 +2205,14 @@ DB_COLUMNS: Mapping[str, Column] = {
                     },
                     "player_games": {
                         "pbp_stats": {
-                            "field": "fg2a",
+                            "field": "opp_fg2a",
                             "min_season": None,
                             "result_set": "opp_player",
                         },
                     },
                     "team_games": {
                         "pbp_stats": {
-                            "field": "fg2a",
+                            "field": "opp_fg2a",
                             "min_season": None,
                             "result_set": "opp_team",
                         },
@@ -2101,14 +2238,14 @@ DB_COLUMNS: Mapping[str, Column] = {
                     },
                     "player_games": {
                         "pbp_stats": {
-                            "field": "fg3m",
+                            "field": "opp_fg3m",
                             "min_season": None,
                             "result_set": "opp_player",
                         },
                     },
                     "team_games": {
                         "pbp_stats": {
-                            "field": "fg3m",
+                            "field": "opp_fg3m",
                             "min_season": None,
                             "result_set": "opp_team",
                         },
@@ -2134,14 +2271,14 @@ DB_COLUMNS: Mapping[str, Column] = {
                     },
                     "player_games": {
                         "pbp_stats": {
-                            "field": "fg3a",
+                            "field": "opp_fg3a",
                             "min_season": None,
                             "result_set": "opp_player",
                         },
                     },
                     "team_games": {
                         "pbp_stats": {
-                            "field": "fg3a",
+                            "field": "opp_fg3a",
                             "min_season": None,
                             "result_set": "opp_team",
                         },
@@ -2167,14 +2304,14 @@ DB_COLUMNS: Mapping[str, Column] = {
                     },
                     "player_games": {
                         "pbp_stats": {
-                            "field": "ftm",
+                            "field": "opp_ftm",
                             "min_season": None,
                             "result_set": "opp_player",
                         },
                     },
                     "team_games": {
                         "pbp_stats": {
-                            "field": "ftm",
+                            "field": "opp_ftm",
                             "min_season": None,
                             "result_set": "opp_team",
                         },
@@ -2200,14 +2337,14 @@ DB_COLUMNS: Mapping[str, Column] = {
                     },
                     "player_games": {
                         "pbp_stats": {
-                            "field": "fta",
+                            "field": "opp_fta",
                             "min_season": None,
                             "result_set": "opp_player",
                         },
                     },
                     "team_games": {
                         "pbp_stats": {
-                            "field": "fta",
+                            "field": "opp_fta",
                             "min_season": None,
                             "result_set": "opp_team",
                         },
@@ -2233,14 +2370,14 @@ DB_COLUMNS: Mapping[str, Column] = {
                     },
                     "player_games": {
                         "pbp_stats": {
-                            "field": "o_rebs",
+                            "field": "opp_o_rebs",
                             "min_season": None,
                             "result_set": "opp_player",
                         },
                     },
                     "team_games": {
                         "pbp_stats": {
-                            "field": "o_rebs",
+                            "field": "opp_o_rebs",
                             "min_season": None,
                             "result_set": "opp_team",
                         },
@@ -2266,14 +2403,14 @@ DB_COLUMNS: Mapping[str, Column] = {
                     },
                     "player_games": {
                         "pbp_stats": {
-                            "field": "d_rebs",
+                            "field": "opp_d_rebs",
                             "min_season": None,
                             "result_set": "opp_player",
                         },
                     },
                     "team_games": {
                         "pbp_stats": {
-                            "field": "d_rebs",
+                            "field": "opp_d_rebs",
                             "min_season": None,
                             "result_set": "opp_team",
                         },
@@ -2299,14 +2436,14 @@ DB_COLUMNS: Mapping[str, Column] = {
                     },
                     "player_games": {
                         "pbp_stats": {
-                            "field": "turnovers",
+                            "field": "opp_turnovers",
                             "min_season": None,
                             "result_set": "opp_player",
                         },
                     },
                     "team_games": {
                         "pbp_stats": {
-                            "field": "turnovers",
+                            "field": "opp_turnovers",
                             "min_season": None,
                             "result_set": "opp_team",
                         },
@@ -2325,14 +2462,14 @@ DB_COLUMNS: Mapping[str, Column] = {
                 "nba_id": {
                     "player_games": {
                         "pbp_stats": {
-                            "field": "poss",
+                            "field": "opp_poss",
                             "min_season": None,
                             "result_set": "opp_player",
                         },
                     },
                     "team_games": {
                         "pbp_stats": {
-                            "field": "poss",
+                            "field": "opp_poss",
                             "min_season": None,
                             "result_set": "opp_team",
                         },
@@ -2341,7 +2478,7 @@ DB_COLUMNS: Mapping[str, Column] = {
             }
         },
     },
-    "opp_poss_ending_ft_trips": {
+    "opp_pot_poss_ending_scoring_opps": {
         "type": "SMALLINT",
         "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": True,
@@ -2351,14 +2488,14 @@ DB_COLUMNS: Mapping[str, Column] = {
                 "nba_id": {
                     "player_games": {
                         "pbp_stats": {
-                            "field": "poss_ending_ft_trips",
+                            "field": "opp_pot_poss_ending_scoring_opps",
                             "min_season": None,
                             "result_set": "opp_player",
                         },
                     },
                     "team_games": {
                         "pbp_stats": {
-                            "field": "poss_ending_ft_trips",
+                            "field": "opp_pot_poss_ending_scoring_opps",
                             "min_season": None,
                             "result_set": "opp_team",
                         },
@@ -2389,7 +2526,7 @@ DB_COLUMNS: Mapping[str, Column] = {
                     },
                     "player_games": {
                         "pbp_stats": {
-                            "field": "fg2m",
+                            "field": "on_fg2m",
                             "min_season": None,
                             "result_set": "on_player",
                         },
@@ -2417,7 +2554,7 @@ DB_COLUMNS: Mapping[str, Column] = {
                     },
                     "player_games": {
                         "pbp_stats": {
-                            "field": "fg2a",
+                            "field": "on_fg2a",
                             "min_season": None,
                             "result_set": "on_player",
                         },
@@ -2443,7 +2580,7 @@ DB_COLUMNS: Mapping[str, Column] = {
                     },
                     "player_games": {
                         "pbp_stats": {
-                            "field": "fg3m",
+                            "field": "on_fg3m",
                             "min_season": None,
                             "result_set": "on_player",
                         },
@@ -2469,7 +2606,7 @@ DB_COLUMNS: Mapping[str, Column] = {
                     },
                     "player_games": {
                         "pbp_stats": {
-                            "field": "fg3a",
+                            "field": "on_fg3a",
                             "min_season": None,
                             "result_set": "on_player",
                         },
@@ -2495,7 +2632,7 @@ DB_COLUMNS: Mapping[str, Column] = {
                     },
                     "player_games": {
                         "pbp_stats": {
-                            "field": "ftm",
+                            "field": "on_ftm",
                             "min_season": None,
                             "result_set": "on_player",
                         },
@@ -2521,7 +2658,7 @@ DB_COLUMNS: Mapping[str, Column] = {
                     },
                     "player_games": {
                         "pbp_stats": {
-                            "field": "fta",
+                            "field": "on_fta",
                             "min_season": None,
                             "result_set": "on_player",
                         },
@@ -2547,7 +2684,7 @@ DB_COLUMNS: Mapping[str, Column] = {
                     },
                     "player_games": {
                         "pbp_stats": {
-                            "field": "o_rebs",
+                            "field": "on_o_rebs",
                             "min_season": None,
                             "result_set": "on_player",
                         },
@@ -2573,7 +2710,7 @@ DB_COLUMNS: Mapping[str, Column] = {
                     },
                     "player_games": {
                         "pbp_stats": {
-                            "field": "d_rebs",
+                            "field": "on_d_rebs",
                             "min_season": None,
                             "result_set": "on_player",
                         },
@@ -2599,7 +2736,7 @@ DB_COLUMNS: Mapping[str, Column] = {
                     },
                     "player_games": {
                         "pbp_stats": {
-                            "field": "turnovers",
+                            "field": "on_turnovers",
                             "min_season": None,
                             "result_set": "on_player",
                         },
@@ -2608,7 +2745,7 @@ DB_COLUMNS: Mapping[str, Column] = {
             }
         },
     },
-    "on_poss_ending_ft_trips": {
+    "on_pot_poss_ending_scoring_opps": {
         "type": "SMALLINT",
         "tables": ["player_seasons", "player_games"],
         "nullable": True,
@@ -2618,7 +2755,7 @@ DB_COLUMNS: Mapping[str, Column] = {
                 "nba_id": {
                     "player_games": {
                         "pbp_stats": {
-                            "field": "poss_ending_ft_trips",
+                            "field": "on_pot_poss_ending_scoring_opps",
                             "min_season": None,
                             "result_set": "on_player",
                         },
@@ -2652,6 +2789,48 @@ DB_COLUMNS: Mapping[str, Column] = {
         "dataset_mapping": None,
     },
     "traceback": {
+        "type": "TEXT",
+        "tables": ["errors"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "identity": {
+        "type": "TEXT",
+        "tables": ["errors"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "dataset": {
+        "type": "TEXT",
+        "tables": ["errors"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "ext_game_id": {
+        "type": "TEXT",
+        "tables": ["errors"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "event_id": {
+        "type": "TEXT",
+        "tables": ["errors"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "seq": {
+        "type": "INTEGER",
+        "tables": ["errors"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "event": {
         "type": "TEXT",
         "tables": ["errors"],
         "nullable": True,

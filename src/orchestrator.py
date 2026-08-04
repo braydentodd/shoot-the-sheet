@@ -1535,6 +1535,7 @@ MERGE_TABLE_CONFIG = {
             ("LEFT JOIN core.identities_games ig"
              "  ON sg.identity = ig.identity AND sg.ext_game_id = ig.ext_id"),
         ],
+        "where_clause": "sg.pbp_status IS DISTINCT FROM 'error'",
     },
     "player_games": {
         "intermediate_table": "intermediate.player_games",
@@ -1554,6 +1555,7 @@ MERGE_TABLE_CONFIG = {
             ("LEFT JOIN core.identities_games ig"
              "  ON sg.identity = ig.identity AND sg.ext_game_id = ig.ext_id"),
         ],
+        "where_clause": "sg.pbp_status IS DISTINCT FROM 'error'",
     },
 }
 
@@ -1909,6 +1911,7 @@ def _clean_staging(
                    AND ht.reviewed = TRUE
                    AND at.reviewed = TRUE
                    AND g.identity = %s
+                   AND g.pbp_status IS DISTINCT FROM 'error'
                 """,
                 (identity,),
             )
@@ -2480,13 +2483,14 @@ def _maintain_pbp(
     from src.lib.load import write_staged_stats_rows
     from src.lib.pbp_accumulator import (
         accumulate_result_set,
-        derive_game_context_events,
+        player_on_court_intervals,
     )
     from src.lib.pbp_classifier import (
         EventClassifier,
         FieldLookupStrategy,
         UnclassifiedEventError,
     )
+    from src.lib.pbp_derive import derive_game_context_events
 
     # Get game IDs for this season from staging.games
     game_rows = _load_pbp_games(league_code, season, identity_code)
@@ -2586,6 +2590,7 @@ def _maintain_pbp(
                 "game_id": ext_game_id,
                 "error": str(exc),
             })
+            _set_pbp_status(identity_code, ext_game_id, "error")
             continue
 
         if not raw_rows:
@@ -2602,20 +2607,23 @@ def _maintain_pbp(
 
         if unclassified:
             for uc in unclassified:
-                log_error_simple(
-                    "maintain_pbp",
-                    f"Unclassified event in game {ext_game_id}: "
-                    f"signature={uc.signature}",
+                log_error(
+                    phase="maintain_pbp",
+                    message=f"Unclassified event in game {ext_game_id}: "
+                            f"signature={uc.signature}",
+                    identity=identity_code,
+                    dataset=dataset_name,
+                    ext_game_id=ext_game_id,
                 )
             logger.error(
-                "Game %s: %d unclassified event(s). "
-                "Skipping game and stopping PBP phase. "
+                "Game %s: %d unclassified event(s). Skipping game. "
                 "Run 'discover-pbp %s.%s' to find new event types, "
                 "then review core.pbp_events and set handling.",
                 ext_game_id, len(unclassified),
                 identity_code, dataset_name,
             )
-            break  # Stop processing further games
+            _set_pbp_status(identity_code, ext_game_id, "error")
+            continue
 
         # 2. Normalize (all events are classified)
         try:
@@ -2632,16 +2640,35 @@ def _maintain_pbp(
                 "game_id": ext_game_id,
                 "error": str(exc),
             })
+            _set_pbp_status(identity_code, ext_game_id, "error")
             continue
 
         if not events:
             logger.debug("No PBP events for game %s", ext_game_id)
             continue
 
-        # 3. Derive context events (possessions, substitutions)
-        events = derive_game_context_events(
+        # 3. Derive context events (possessions, substitutions, lineups)
+        derive_result = derive_game_context_events(
             events, home_team_id, away_team_id, lineup_size=lineup_size,
         )
+        events = derive_result.events
+        derive_errors = derive_result.errors
+        for derr in derive_errors:
+            log_error(
+                phase="maintain_pbp",
+                message=derr.message,
+                identity=identity_code,
+                dataset=dataset_name,
+                ext_game_id=ext_game_id,
+                event_id=derr.event_id,
+                seq=derr.seq,
+                event=derr.event,
+            )
+        if derive_errors:
+            logger.error(
+                "Game %s: %d derivation error(s) -- marked errored for review",
+                ext_game_id, len(derive_errors),
+            )
 
         # 4. Accumulate team result sets
         team_results = []
@@ -2654,7 +2681,6 @@ def _maintain_pbp(
         # 4. Accumulate player result sets
         player_results: dict[str, dict[str, Any]] = {}
         player_in_events = [e for e in events if e["event"] == "player_in"]
-        player_out_events = [e for e in events if e["event"] == "player_out"]
 
         if player_in_events:
             player_teams: dict[str, str] = {}
@@ -2664,26 +2690,14 @@ def _maintain_pbp(
                     player_teams[pid] = e["team_id"]
 
             for player_id, player_team in player_teams.items():
-                ins = sorted(
-                    [e["secs"] for e in player_in_events
-                     if e.get("player_id") == player_id],
-                )
-                outs = sorted(
-                    [e["secs"] for e in player_out_events
-                     if e.get("player_id") == player_id],
-                )
-                intervals: list[tuple[int, int]] = []
-                for start in ins:
-                    end = next((o for o in outs if o >= start), None)
-                    if end is not None:
-                        intervals.append((start, end))
+                intervals = player_on_court_intervals(events, player_id)
 
                 opp_team = away_team_id if player_team == home_team_id else home_team_id
                 result_set = accumulate_result_set(
                     events, "player", player_id,
                     opp_entity_id=opp_team,
                     player_team_id=player_team,
-                    on_court_intervals=intervals if intervals else None,
+                    on_court_intervals=intervals,
                 )
                 result_set["game_id"] = ext_game_id
                 player_results[player_id] = result_set
@@ -2698,6 +2712,8 @@ def _maintain_pbp(
                 row["ext_team_id"] = team_id
                 row["ext_game_id"] = ext_game_id
                 team_rows[team_id] = row
+
+        write_failed = False
 
         if team_rows:
             try:
@@ -2719,6 +2735,7 @@ def _maintain_pbp(
                     "game_id": ext_game_id,
                     "error": str(exc),
                 })
+                write_failed = True
 
         # 6. Write player results to staging
         if player_results:
@@ -2752,9 +2769,47 @@ def _maintain_pbp(
                         "game_id": ext_game_id,
                         "error": str(exc),
                     })
+                    write_failed = True
+
+        # 7. Record the per-game PBP status.  Errored games (derive
+        # errors, unclassified events, or write failures) stay in staging
+        # with all of their data; they never merge to intermediate and
+        # survive cleanup until reviewed and re-run.
+        if derive_errors or write_failed:
+            _set_pbp_status(identity_code, ext_game_id, "error")
+        else:
+            _set_pbp_status(identity_code, ext_game_id, "ready")
 
     logger.info("PBP complete: %d rows written for %s", total_rows, season)
     return total_rows
+
+
+def _set_pbp_status(identity_code: str, ext_game_id: str, status: str) -> None:
+    """Record the PBP processing status for a game on ``staging.games``.
+
+    The status drives merge/cleanup gating: ``error`` games are excluded
+    from ``_merge_staging`` and survive ``_clean_staging`` until reviewed.
+    """
+    from src.lib.postgres import db_connection
+
+    try:
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE staging.games
+                       SET pbp_status = %s
+                     WHERE identity = %s
+                       AND (ext_id = %s OR ext_game_id = %s)
+                    """,
+                    (status, identity_code, ext_game_id, ext_game_id),
+                )
+            conn.commit()
+    except (ConnectionError, OSError, RuntimeError) as exc:
+        logger.warning(
+            "Failed to set pbp_status=%s for game %s: %s",
+            status, ext_game_id, exc,
+        )
 
 
 def _load_pbp_games(
