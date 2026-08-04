@@ -29,16 +29,7 @@ def discover(
     from src.lib.pbp_classifier import (
         build_nba_event_key,
         build_nba_signature,
-        _to_int as _ctoi,
     )
-
-    def _desc(row: dict) -> str:
-        parts = [
-            str(row.get("HOMEDESCRIPTION", "")),
-            str(row.get("NEUTRALDESCRIPTION", "")),
-            str(row.get("VISITORDESCRIPTION", "")),
-        ]
-        return " ".join(p for p in parts if p)
 
     build_signature = build_nba_signature
     build_event_key = build_nba_event_key

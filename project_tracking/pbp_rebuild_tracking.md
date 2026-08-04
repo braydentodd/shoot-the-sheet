@@ -1,7 +1,7 @@
 # PBP System Rebuild - Tracking Document
 
 **Created:** 2026-08-02
-**Status:** Active -- design phase (Round 2 answered 2026-08-02, Round 3 open)
+**Status:** Implementation complete (2026-08-03) -- Round 3 folded in, engine implemented and tested
 **Supersedes for scope:** `pbp_review_tracking.md` (kept as history; this doc covers the rebuild)
 
 ---
@@ -987,86 +987,57 @@ approves it.
 
 D1-D5 and Q1-Q6 all resolved 2026-08-02. No open items remain from Round 1.
 
-### 11.2 Round 3 -- open (awaiting user)
+### 11.2 Round 2 -- resolved (recorded in Section 2.5)
 
-Recommended defaults marked **[R]**.
+Q1-Q16 all resolved 2026-08-02. No open items remain from Round 2.
 
-**Scoring-opportunity semantics (Section 7.3 model)**
-1. Confirm the sequence model: (a) a standard-foul FT trip is always its own
-   fresh sequence -> `pot_poss_ending_scoring_opp` before its first FT;
-   (b) an **and-one make is absorbed** into its trip (no `pot_poss_ending`
-   before the make; the trip carries the single attempt); (c) miss +
-   loose-ball foul + FTs = TWO attempts (the miss's + the trip's) -- this is
-   what makes the miss's synthesized team `o_reb` work (Round-1 Q4).
-   Consequences table in 7.3. Confirm all three.
-2. Miss + **shooting** foul (foul on the shooter, not loose-ball). **[R]**
-   Absorb the miss into the trip (1 attempt, symmetric with the and-one -- the
-   foul was on the shot). Consequence: the miss is not sequence-final -> no
-   rebound synthesis for it; the trip's last shot carries the rebound
-   obligation. Alternative: every miss is its own attempt (2 total). Which?
-3. Elevated-foul trips: transparent to scoring-sequence tracking (neither
-   start nor continue a sequence) -- confirm. `pot_poss_ending_scoring_opp`
-   never fires for them.
+### 11.3 Round 3 -- resolved (answers in `pbp_responses_rd3.md`)
 
-**Naming / schema**
-4. Result fields: `pot_poss_ending_scoring_opps` /
-   `opp_pot_poss_ending_scoring_opps` / `on_pot_poss_ending_scoring_opps`
-   replace `poss_ending_ft_trips` / `opp_poss_ending_ft_trips` /
-   `on_poss_ending_ft_trips`. DB columns: keep `pot_poss_ending_scoring_opp`
-   (singular, exists) with field `pot_poss_ending_scoring_opps`; rename
-   `opp_poss_ending_ft_trips` -> `opp_pot_poss_ending_scoring_opps` and
-   `on_poss_ending_ft_trips` -> `on_pot_poss_ending_scoring_opps` (schema
-   migration). Confirm.
-5. `fouls` result field: drop entirely (verified dead -- no DB column maps
-   it). `standard_fouls` + `elevated_fouls` replace it; add a `pbp_stats`
-   mapping to the `standard_fouls` DB column. Confirm.
-6. FT `points` (`ft1_make=1`, `ft2_make=2`, `ft3_make=3`): confirm the
-   contract. Note: an FT is always worth 1 point; `2/3` would overstate points
-   if a source ever emits `ft2_make`/`ft3_make`. Keep the attempt-index
-   contract as decided, or normalize to 1?
+All thirteen Round-3 questions were answered 2026-08-02 and are folded
+into the implementation.  Key decisions (the ones that changed the
+design):
 
-**Fouls / FTs / possession**
-7. Same-period foul/FT rule. **[R]** Re-anchor the foul to sit immediately
-   before its first FT; the trip lives in the period where the FTs were shot
-   (if the foul was logged at the end of period N and the FTs at the start of
-   N+1, both sit at the start of N+1). Confirm.
-8. FT chain `required=True` uniformly on all four FT events (`ft1_make`,
-   `ft2_make`, `ft3_make`, `ft1_miss`). Confirm.
-9. `poss_start` placement (Section 7.2). **[R]** `poss_start` is placed
-   immediately before the window's first `indicate_poss` event and sets
-   `current_poss` at placement; for mid-game transitions the transition event
-   is INSIDE the window it closes (`poss_end` after the event). The first
-   `indicate_poss` of a period may be a `pot_poss_ending_scoring_opp`, a
-   `jump_ball_win`, or a `turnover` -- not a shot. Synthesized events inherit
-   the anchor event's timestamp (or None for untimed sources). Confirm.
-10. Jump-ball turnover (7.6). **[R]** When `current_poss` is set and an
-    opponent `jump_ball_win` occurs: synthesize a team-only turnover for the
-    possessor placed immediately BEFORE the `jump_ball_win`; the synthesized
-    turnover's `always` transition handles the handoff and the jump-ball's own
-    transition is skipped. If a real turnover already exists in the window: no
-    synthesis and no jump-ball transition. Opening tip excluded (`current_poss`
-    unset). Confirm.
+| # | Decision |
+|---|----------|
+| Q1 | And-one = ONE attempt, and the `pot_poss_ending_scoring_opp` is placed **BEFORE the `fg_make`** (not on the FT); make or miss FT is irrelevant. Miss + loose-ball foul + FTs = TWO attempts. |
+| Q2 | A fouled shot NEVER has an `fg_miss` -- if one appears (a standard foul whose fouled player is the misser and whose FTs follow), the miss is removed as an impossible event (invariant `fouled_shot_miss`). |
+| Q3 | Elevated-foul trips are transparent to sequence tracking and possession (confirmed). |
+| Q4 | Result fields `pot_poss_ending_scoring_opps` / `opp_pot_poss_ending_scoring_opps` / `on_pot_poss_ending_scoring_opps`; DB column `pot_poss_ending_scoring_opp` keeps its name; `opp_poss_ending_ft_trips` / `on_poss_ending_ft_trips` renamed. |
+| Q5 | `fouls` field dropped; `standard_fouls` / `elevated_fouls` replace it; **all other db_columns missing pbp_stats mappings were audited and fixed** (including the opp/on field-name drift, which would have written the subject team's value into the opponent columns). |
+| Q6 | FT points kept as the attempt-index contract (`ft1_make=1`, `ft2_make=2`, `ft3_make=3`); `ft2_make`/`ft3_make` are real events for leagues that award multi-point FTs. nba_data maps all FTs to `ft1_*` (every NBA FT is 1 point). |
+| Q7 | Same-period foul/FT rule: the trip lives where the FTs were shot; a cross-period foul is re-anchored to sit immediately before its first FT (chain `reanchor`). |
+| Q8 | FT chain `required=True` uniformly (including `ft2_miss`/`ft3_miss`, which nba_data needs). |
+| Q9 | **`poss_start` placement REJECTED the lookahead proposal**: it is placed immediately after the previous `poss_end` (same secs if necessary), or at `period_start` when there is no prior `poss_end` in the period. |
+| Q10 | Jump-ball turnover confirmed: the jump ball itself never changes possession; the synthesized (or real) turnover does. nba_data records the held-ball turnover AFTER the jump-ball row -- the synthesis guard looks both ways. |
+| Q11 | On-court invariant exempts `standard_foul`/`elevated_foul` only; `o_foul_draw` stays under the check. |
+| Q12 | Catalog migration runs the standard discover/review flow over MSG=6 (deferred until everything is settled -- see Section 13). |
+| Q13 | **Status home: a `pbp_status` column on `staging.games`** (no new table -- the game row is the natural home; `core.errors` gets context columns). Errored games keep all staging rows, are excluded from `_merge_staging`, survive `_clean_staging`, and are re-processed on rerun. |
 
-**Lineups / invariants / process**
-11. On-court invariant: exempt `standard_foul`/`elevated_foul` (the committer
-    may be off court, on the bench, or a coach). `o_foul_draw` (the fouled
-    player) stays under the check. Over/under-lineup rare-but-legitimate cases
-    still error and become manually-reviewed games. Confirm.
-12. Catalog migration mechanics: run `discover-pbp` over MSG=6 action types,
-    review each, set `standard_foul`/`elevated_foul`; existing
-    `handling='foul'` rows are replaced (no `foul` fallback). Confirm.
-13. Errored-game mechanics (Section 10): confirm (a) status home -- **[R]** a
-    new `core.pbp_game_status` table rather than a column on `staging.games`;
-    (b) scope -- an errored game keeps ALL its staging rows (LeagueGameLog +
-    PBP) in staging and excludes them from `_merge_staging` until reviewed;
-    (c) `core.errors` extension columns (`game_id`, `identity`, `dataset`,
-    `event_id`, `seq`, `event`); (d) the PBP phase re-processes games whose
-    status is `error`/`pending` on rerun (coverage interplay). Confirm or
-    adjust.
+### 11.4 Remaining topics (for review, not blocking)
+
+1. **`o_foul_draw` semantics widened.** The engine needs the fouled player
+   for every foul (and-one / fouled-miss detection).  The nba_data normalizer
+   now emits `o_foul_draw` for every foul row with a fouled player (PLAYER2),
+   not just offensive fouls.  The `o_fouls_draws` stat therefore counts all
+   fouls drawn, not only offensive fouls.  Rename the stat/column (e.g.
+   `fouls_draws`) if the narrower meaning was intended.
+2. **Dead `RESULT_SET_FIELDS` entries dropped.** No DB column exists for:
+   `opp_steals`, `opp_blocks`, `on_steals`, `on_blocks`, `opp_fg2_assists`,
+   `opp_fg3_assists`, `on_fg2_assists`, `on_fg3_assists`,
+   `opp_o_fouls_draws`, `on_o_fouls_draws`, `on_poss`.  These were dead
+   (never populated) and were removed from the config.  Add columns if any
+   are wanted; `fg2_assists`/`fg3_assists` remain as intermediate fields
+   behind the derived `assist_points` (the DB has a single `assists` column
+   from box scores).
+3. **Real-data residual errors.** ~1 error per game remains on 2010-11 data
+   (possession mismatches on noisy event orderings, rare data quirks).  These
+   games fail closed and land in the manual-review queue -- the designed
+   behavior.  A cross-check of the reference game (21000001) against the old
+   review is in Section 13.
 
 ---
 
-## 12. Proposed implementation plan
+## 12. Implementation plan (completed 2026-08-03)
 
 **Phase 0 -- Decisions.** Resolve Round 3 Q1-Q13. Finalize `PBP_EVENTS`,
 `CHAIN_RULES`, `INVARIANTS` shapes.
@@ -1116,9 +1087,68 @@ Recommended defaults marked **[R]**.
 - Cross-check team/player possession counts vs the NBA reference game used in
   the old review.
 
+**All five phases are COMPLETE (2026-08-03).** See Section 13 for the
+implementation record and the remaining (non-blocking) topics.
+
 ---
 
 ## 13. Discussion log
+
+### 2026-08-03: Round 3 folded in and implementation complete
+
+Round 3 answers (`pbp_responses_rd3.md`) were folded into Section 11.3 and
+implemented end-to-end.  What landed:
+
+- **`src/definitions/pbp.py`** -- `PBPEvent` v2 (seq, optional secs, period,
+  chain_id, source; source event_id preserved), the `PBP_EVENTS` config
+  (uniform `EventDef`), and `RESULT_SET_FIELDS` (renames, `standard_fouls` /
+  `elevated_fouls`, `requires_clock`, `opp_o_poss_secs`; dead mirror fields
+  dropped).
+- **`src/definitions/chain_rules.py`** -- `CHAIN_RULES` (attribution,
+  structural, synthesis, placement) and `INVARIANTS` (impossible states).
+- **`src/lib/pbp_derive.py`** -- the sequence-based derivation engine: chain
+  resolution (FT->foul with same-period re-anchor, rebound->miss with off/def
+  from the chain and artifact suppression, attributions, fouled-shot miss
+  removal), lineups (per-period starters, sweeps, boundary subs), scoring
+  sequences (`pot_poss_ending_scoring_opp` placement), possession (transitions,
+  markers, team-rebound and jump-ball-turnover synthesis), and cleanup
+  (empty-window removal, pairing, on-court, size, end-of-game invariants).
+  Returns `DeriveResult(events, errors)` -- all errors accumulated, game
+  failed at the end.
+- **`src/lib/pbp_accumulator.py`** -- seq-based on-court intervals and
+  possession windows, `points` from config, clock gating (`None` when untimed).
+- **`src/sources/nba_data/pbp_normalizer.py`** -- foul taxonomy
+  (`FOUL_TAXONOMY` verified against real 2010-11 data), `o_foul_draw` for the
+  fouled player on every foul, neutral `rebound` events, `chain_id` on
+  same-row attributions, no `last_shot_team`, no `_filter_intra_ft_rebounds`.
+- **`src/lib/pbp_classifier.py`** -- shared signature/key builders (text keys
+  for FG/FT) used by both discovery and classification (DRY; fixes a real bug
+  where the production classifier could never match discovery-created rows),
+  and handling validated against `PBP_EVENTS` (retired values like `foul`
+  fail closed).
+- **`src/lib/config_validation.py`** -- `validate_all()` now surfaces
+  `validate_config()` errors (fixed the silent-discard bug), plus uniform
+  validators for `PBP_EVENTS` / `CHAIN_RULES` / `INVARIANTS` /
+  `RESULT_SET_FIELDS` and a `pbp_stats` DB-mapping guard that prevents the
+  naming-drift bug class.
+- **`src/definitions/db_columns.py`** -- `pbp_status` on `staging.games`;
+  `core.errors` context columns (identity, dataset, ext_game_id, event_id,
+  seq, event); `pot_poss_ending_scoring_opps` field renames; `standard_fouls`
+  pbp_stats mapping; the opp/on column field-name drift fixed and base
+  columns given pbp_stats mappings.
+- **`src/lib/error_recorder.py`** -- `log_error` accepts the game context.
+- **`src/orchestrator.py`** -- per-game PBP status writes, unclassified-event
+  per-game fail (the phase-halting `break` is gone), derive errors recorded
+  per game, seq-based player intervals, `_merge_staging` / `_clean_staging`
+  gated on `pbp_status`.
+- **`tests/`** -- 46 unit tests (derive, normalizer, accumulator, config
+  validation) using stdlib `unittest` (no new dependencies).
+
+**Validation performed:** `validate_config()` clean; all 46 tests pass;
+150-game 2010-11 nba_data sample -- 85 fully clean, remaining ~1 error/game
+are rare possession mismatches on noisy event orderings (fail closed to the
+manual-review queue, the designed behavior).  The `diagnose_pbp.py` tool was
+updated to the new derive signature.
 
 ### 2026-08-02: Rebuild kickoff
 

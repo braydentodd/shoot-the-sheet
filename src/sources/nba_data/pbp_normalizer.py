@@ -221,11 +221,10 @@ def normalize_game(
                 handling, game_id, eventnum,
             )
 
+    # Clock seconds order the feed (same-second events keep EVENTNUM
+    # arrival order); seconds are noisy metadata but the closest
+    # approximation of game order.
     if all(e.get("secs") is not None for e in events):
-        # Arrival order is authoritative within the same second (the
-        # user rule: "rebounds and shots at the same sec keep the order
-        # they came in").  sort_priority documents the intended
-        # same-second ordering but never overrides the feed order.
         events.sort(key=lambda e: (e["secs"], int(e["event_id"]) if e["event_id"].isdigit() else 0))
     for i, e in enumerate(events):
         e["seq"] = i

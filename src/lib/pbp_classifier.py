@@ -117,7 +117,6 @@ class EventClassifier:
 # (MSG 3) it distinguishes makes from misses.  The same key-building
 # logic must be used by discovery and by the classifier or the two
 # never agree.
-_TEXT_KEY_MSGS = frozenset({1, 2, 3})
 
 
 def build_nba_signature(row: dict[str, Any]) -> dict:
