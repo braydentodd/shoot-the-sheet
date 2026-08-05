@@ -22,6 +22,10 @@ COUNTRIES: dict[str, Country] = {
             "Afganistan",
         ],
     },
+    "AIA": {
+        "name": "Anguilla",
+        "aliases": ["AIA", "Anguilla"],
+    },
     "ALB": {
         "name": "Albania",
         "aliases": ["ALB", "Albania", "Republic of Albania", "Shqiperia", "Shqiperi"],
@@ -159,6 +163,10 @@ COUNTRIES: dict[str, Country] = {
         "name": "Bolivia",
         "aliases": ["BOL", "Bolivia", "Plurinational State of Bolivia"],
     },
+    "BON": {
+        "name": "Bonaire",
+        "aliases": ["BON", "BOE", "BES", "Bonaire", "Caribbean Netherlands", "Sint Eustatius", "Saba"],
+    },
     "BOT": {
         "name": "Botswana",
         "aliases": ["BOT", "BWA", "Botswana", "Republic of Botswana", "Bechuanaland"],
@@ -192,10 +200,6 @@ COUNTRIES: dict[str, Country] = {
     "CAF": {
         "name": "Central African Republic",
         "aliases": ["CAF", "CAR", "Central African Republic"],
-    },
-    "CAL": {
-        "name": "New Caledonia",
-        "aliases": ["CAL", "NCL", "New Caledonia", "Caledonia"],
     },
     "CAM": {
         "name": "Cambodia",
@@ -270,7 +274,7 @@ COUNTRIES: dict[str, Country] = {
     },
     "CPV": {
         "name": "Cape Verde",
-        "aliases": ["CPV", "Cape Verde", "Republic of Cabo Verde", "Cabo Verde", "CV"],
+        "aliases": ["CPV", "Cape Verde", "Republic of Cabo Verde", "Cabo Verde", "CV", "CVD"],
     },
     "CRC": {
         "name": "Costa Rica",
@@ -283,6 +287,10 @@ COUNTRIES: dict[str, Country] = {
     "CUB": {
         "name": "Cuba",
         "aliases": ["CUB", "Cuba", "Republic of Cuba"],
+    },
+    "CUW": {
+        "name": "Curaçao",
+        "aliases": ["CUW", "Curacao", "Curaçao", "Country of Curacao"],
     },
     "CYP": {
         "name": "Cyprus",
@@ -299,12 +307,6 @@ COUNTRIES: dict[str, Country] = {
             "DNK",
             "Denmark",
             "Kingdom of Denmark",
-            "GRL",
-            "Greenland",
-            "Kalaallit Nunaat",
-            "FRO",
-            "Faroe Islands",
-            "Foroyar",
             "Danmark"
         ],
     },
@@ -327,6 +329,10 @@ COUNTRIES: dict[str, Country] = {
     "EGY": {
         "name": "Egypt",
         "aliases": ["EGY", "Egypt", "Arab Republic of Egypt", "Republic of Egypt", "Misr"],
+    },
+    "ENG": {
+        "name": "England",
+        "aliases": ["ENG", "England"],
     },
     "ERI": {
         "name": "Eritrea",
@@ -372,25 +378,12 @@ COUNTRIES: dict[str, Country] = {
             "France",
             "French Republic",
             "FR",
-            "GUF",
-            "French Guiana",
-            "Guiana",
-            "GLP",
-            "Guadeloupe",
-            "MTQ",
-            "Martinique",
             "MYT",
             "Mayotte",
             "Department of Mayotte",
-            "REU",
-            "Reunion",
-            "Reunion Island",
             "BLM",
             "St. Barthelemy",
             "Collectivity of St. Barthelemy",
-            "MAF",
-            "St. Martin",
-            "Collectivity of St. Martin",
             "SPM",
             "St. Pierre & Miquelon",
             "Collectivite territoriale de St.-Pierre-et-Miquelon",
@@ -399,6 +392,10 @@ COUNTRIES: dict[str, Country] = {
             "Territory of the Wallis & Futuna Islands",
             "WF",
         ],
+    },
+    "FRO": {
+        "name": "Faroe Islands",
+        "aliases": ["FRO", "Faroe Islands", "Foroyar"],
     },
     "FSM": {
         "name": "Micronesia",
@@ -426,24 +423,6 @@ COUNTRIES: dict[str, Country] = {
             "GB",
             "UK",
             "Great Britain",
-            "JEY",
-            "Jersey",
-            "Bailiwick of Jersey",
-            "GGY",
-            "Guernsey",
-            "Bailiwick of Guernsey",
-            "IMN",
-            "Isle of Man",
-            "ENG",
-            "England",
-            "SCO",
-            "SCT",
-            "Scotland",
-            "Alba",
-            "WLS",
-            "WAL",
-            "Wales",
-            "Cymru",
             "PCN",
             "Pitcairn Islands",
             "Pitcairn Group of Islands",
@@ -452,8 +431,6 @@ COUNTRIES: dict[str, Country] = {
             "FLK",
             "Falkland Islands",
             "FK",
-            "AIA",
-            "Anguilla",
             "Britain",
         ],
     },
@@ -479,6 +456,10 @@ COUNTRIES: dict[str, Country] = {
         "name": "Germany",
         "aliases": ["GER", "DEU", "Germany", "Federal Republic of Germany", "Deutschland", "West Germany", "East Germany", "FRG", "GDR"],
     },
+    "GGY": {
+        "name": "Guernsey",
+        "aliases": ["GGY", "Guernsey", "Bailiwick of Guernsey"],
+    },
     "GHA": {
         "name": "Ghana",
         "aliases": ["GHA", "Ghana", "Republic of Ghana", "Gold Coast"],
@@ -487,9 +468,17 @@ COUNTRIES: dict[str, Country] = {
         "name": "Gibraltar",
         "aliases": ["GIB", "Gibraltar"],
     },
+    "GLP": {
+        "name": "Guadeloupe",
+        "aliases": ["GLP", "Guadeloupe"],
+    },
     "GRE": {
         "name": "Greece",
         "aliases": ["GRE", "GRC", "Greece", "Hellenic Republic", "Hellas"],
+    },
+    "GRL": {
+        "name": "Greenland",
+        "aliases": ["GRL", "Greenland", "Kalaallit Nunaat"],
     },
     "GRN": {
         "name": "Grenada",
@@ -498,6 +487,10 @@ COUNTRIES: dict[str, Country] = {
     "GUA": {
         "name": "Guatemala",
         "aliases": ["GUA", "GTM", "Guatemala", "Republic of Guatemala"],
+    },
+    "GUF": {
+        "name": "French Guiana",
+        "aliases": ["GUF", "French Guiana", "Guiana"],
     },
     "GUI": {
         "name": "Guinea",
@@ -538,6 +531,10 @@ COUNTRIES: dict[str, Country] = {
         "name": "Hungary",
         "aliases": ["HUN", "Hungary", "Magyarorszag"],
     },
+    "IMN": {
+        "name": "Isle of Man",
+        "aliases": ["IMN", "Isle of Man"],
+    },
     "INA": {
         "name": "Indonesia",
         "aliases": ["INA", "IDN", "Indonesia", "Republic of Indonesia"],
@@ -561,7 +558,7 @@ COUNTRIES: dict[str, Country] = {
     },
     "IRL": {
         "name": "Ireland",
-        "aliases": ["IRL", "Ireland", "Republic of Ireland", "NIR", "Northern Ireland", "Eire"],
+        "aliases": ["IRL", "Ireland", "Republic of Ireland", "Eire"],
     },
     "IRQ": {
         "name": "Iraq",
@@ -598,6 +595,10 @@ COUNTRIES: dict[str, Country] = {
     "JAM": {
         "name": "Jamaica",
         "aliases": ["JAM", "Jamaica", "JM"],
+    },
+    "JEY": {
+        "name": "Jersey",
+        "aliases": ["JEY", "Jersey", "Bailiwick of Jersey"],
     },
     "JOR": {
         "name": "Jordan",
@@ -723,6 +724,10 @@ COUNTRIES: dict[str, Country] = {
         "name": "Madagascar",
         "aliases": ["MAD", "MDG", "Madagascar", "Republic of Madagascar"],
     },
+    "MAF": {
+        "name": "Saint Martin",
+        "aliases": ["MAF", "St. Martin", "Saint Martin", "Collectivity of St. Martin"],
+    },
     "MAR": {
         "name": "Morocco",
         "aliases": [
@@ -808,6 +813,10 @@ COUNTRIES: dict[str, Country] = {
         "name": "Mauritania",
         "aliases": ["MTN", "MRT", "Mauritania", "Islamic Republic of Mauritania"],
     },
+    "MTQ": {
+        "name": "Martinique",
+        "aliases": ["MTQ", "Martinique"],
+    },
     "MYA": {
         "name": "Myanmar",
         "aliases": [
@@ -827,6 +836,10 @@ COUNTRIES: dict[str, Country] = {
         "name": "Nicaragua",
         "aliases": ["NCA", "NIC", "Nicaragua", "Republic of Nicaragua"],
     },
+    "NCL": {
+        "name": "New Caledonia",
+        "aliases": ["CAL", "NCL", "New Caledonia", "Caledonia"],
+    },
     "NED": {
         "name": "Netherlands",
         "aliases": [
@@ -836,20 +849,6 @@ COUNTRIES: dict[str, Country] = {
             "Kingdom of the Netherlands",
             "Holland",
             "The Netherlands",
-            "Caribbean Netherlands",
-            "BES",
-            "BES islands",
-            "Bonaire",
-            "Sint Eustatius",
-            "Saba",
-            "Bonaire Sint Eustatius and Saba",
-            "Eustatius",
-            "CUW",
-            "Curacao",
-            "Country of Curacao",
-            "SXM",
-            "Sint Maarten",
-            "Maarten",
             "Nederland"
         ],
     },
@@ -864,6 +863,14 @@ COUNTRIES: dict[str, Country] = {
     "NIG": {
         "name": "Niger",
         "aliases": ["NIG", "NER", "Niger", "Republic of Niger"],
+    },
+    "NIR": {
+        "name": "Northern Ireland",
+        "aliases": ["NIR", "Northern Ireland"],
+    },
+    "NIU": {
+        "name": "Niue",
+        "aliases": ["NIU", "Niue"],
     },
     "NMI": {
         "name": "Northern Mariana Islands",
@@ -884,7 +891,7 @@ COUNTRIES: dict[str, Country] = {
     },
     "NZL": {
         "name": "New Zealand",
-        "aliases": ["NZL", "New Zealand", "NZ", "TKL", "Tokelau", "NIU", "Niue", "Aotearoa"],
+        "aliases": ["NZL", "New Zealand", "NZ", "TKL", "Tokelau", "Aotearoa"],
     },
     "OMA": {
         "name": "Oman",
@@ -963,9 +970,13 @@ COUNTRIES: dict[str, Country] = {
         "name": "Qatar",
         "aliases": ["QAT", "Qatar", "State of Qatar", "QA"],
     },
+    "REU": {
+        "name": "Réunion",
+        "aliases": ["REU", "Reunion", "Reunion Island", "Réunion"],
+    },
     "ROU": {
         "name": "Romania",
-        "aliases": ["ROU", "Romania"],
+        "aliases": ["ROU", "Romania", "ROM", "RUM"],
     },
     "RSA": {
         "name": "South Africa",
@@ -989,6 +1000,10 @@ COUNTRIES: dict[str, Country] = {
             "State of Samoa",
             "Western Samoa"
         ],
+    },
+    "SCO": {
+        "name": "Scotland",
+        "aliases": ["SCO", "SCT", "Scotland", "Alba"],
     },
     "SEN": {
         "name": "Senegal",
@@ -1102,7 +1117,11 @@ COUNTRIES: dict[str, Country] = {
     },
     "SWZ": {
         "name": "Eswatini",
-        "aliases": ["SWZ", "Eswatini", "Kingdom of Eswatini", "SZ", "Swaziland"],
+        "aliases": ["SWZ", "Eswatini", "Kingdom of Eswatini", "SZ", "Swaziland", "SWT"],
+    },
+    "SXM": {
+        "name": "Sint Maarten",
+        "aliases": ["SXM", "Sint Maarten", "Maarten"],
     },
     "SYR": {
         "name": "Syria",
@@ -1169,7 +1188,7 @@ COUNTRIES: dict[str, Country] = {
         "aliases": ["TOG", "TGO", "Togo", "Togolese Republic", "TG", "Togolese"],
     },
     "TPE": {
-        "name": "Taiwan",
+        "name": "Chinese Taipei",
         "aliases": [
             "TPE",
             "TWN",
@@ -1290,6 +1309,10 @@ COUNTRIES: dict[str, Country] = {
             "St. Vincent",
             "The Grenadines",
         ],
+    },
+    "WAL": {
+        "name": "Wales",
+        "aliases": ["WAL", "WLS", "Wales", "Cymru"],
     },
     "YEM": {
         "name": "Yemen",
