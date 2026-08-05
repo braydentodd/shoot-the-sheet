@@ -9,6 +9,10 @@ trusted.  ``unreviewed`` rows and rows whose handling is no longer a
 canonical event (e.g. the retired ``foul``) raise
 :class:`UnclassifiedEventError` -- the game fails per-game until the
 catalog is reviewed.  There is no backwards compatibility.
+
+The key-building strategy is source-specific: each source implements
+:class:`MatchStrategy` in its own ``classifier`` module (see
+``src/sources``) and supplies it at construction.
 """
 
 import logging
@@ -107,85 +111,3 @@ class EventClassifier:
     @property
     def unreviewed_count(self) -> int:
         return len(self._unreviewed_keys)
-
-
-# ---------------------------------------------------------------------------
-# nba_data match strategy
-# ---------------------------------------------------------------------------
-
-# For FG (MSG 1/2) the description distinguishes 2pt from 3pt; for FT
-# (MSG 3) it distinguishes makes from misses.  The same key-building
-# logic must be used by discovery and by the classifier or the two
-# never agree.
-
-
-def build_nba_signature(row: dict[str, Any]) -> dict:
-    """Build the discovery/classification signature for an nba_data row.
-
-    FG rows (MSG 1/2) are keyed by the 2pt/3pt distinction; FT rows
-    (MSG 3) by the make/miss distinction.  This must match the discovery
-    key builder or catalog rows are never found at classify time.
-    """
-    msgtype = _to_int(row.get("EVENTMSGTYPE"))
-    actiontype = _to_int(row.get("EVENTMSGACTIONTYPE"))
-    sig: dict[str, Any] = {"EVENTMSGTYPE": msgtype, "EVENTMSGACTIONTYPE": actiontype}
-    desc = _description(row).upper()
-    if msgtype in (1, 2):
-        if "3PT" in desc:
-            sig["text_contains"] = "3PT"
-        else:
-            sig["text_not_contains"] = "3PT"
-    elif msgtype == 3:
-        if "MISS" in desc:
-            sig["text_contains"] = "MISS"
-        else:
-            sig["text_not_contains"] = "MISS"
-    return sig
-
-
-def build_nba_event_key(signature: dict) -> str:
-    """Build the catalog event key for an nba_data signature."""
-    key = f"MSG={signature['EVENTMSGTYPE']}_ACT={signature['EVENTMSGACTIONTYPE']}"
-    if "text_contains" in signature:
-        key += f"_HAS={signature['text_contains']}"
-    elif "text_not_contains" in signature:
-        key += f"_NO={signature['text_not_contains']}"
-    return key
-
-
-def _description(row: dict[str, Any]) -> str:
-    parts = [
-        str(row.get("HOMEDESCRIPTION", "")),
-        str(row.get("NEUTRALDESCRIPTION", "")),
-        str(row.get("VISITORDESCRIPTION", "")),
-    ]
-    return " ".join(p for p in parts if p)
-
-
-class FieldLookupStrategy:
-    """Build event keys from nba_data CSV rows.
-
-    Uses the same signature/key builders as discovery so catalog rows
-    discovered with text keys (``_HAS=3PT``, ``_NO=MISS``, ...) are
-    actually found at classify time.
-    """
-
-    def build_signature(self, row: dict[str, Any]) -> dict:
-        return build_nba_signature(row)
-
-    def build_event_key(self, signature: dict) -> str:
-        return build_nba_event_key(signature)
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _to_int(val: Any) -> int:
-    if val is None or val == "":
-        return 0
-    try:
-        return int(val)
-    except (ValueError, TypeError):
-        return 0

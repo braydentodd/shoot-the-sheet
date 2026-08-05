@@ -6,7 +6,7 @@ Run with ``python -m unittest discover tests``.
 
 import unittest
 
-from src.lib.pbp_derive import derive_game_context_events
+from src.lib.pbp_deriver import derive_game_context_events
 from tests.pbp_helpers import ev, events_of, untimed
 
 
@@ -34,8 +34,8 @@ class ScoringSequenceTests(unittest.TestCase):
         events = full_lineup()
         events += [
             ev("m1", "fg2_make", H, "h1", secs=10),
-            ev("f1", "standard_foul", A, "a1", secs=11, chain_id="f1"),
-            ev("fd1", "o_foul_draw", H, "h1", secs=11, chain_id="f1"),
+            ev("f1", "d_standard_foul", A, "a1", secs=11, chain_id="f1",
+               fouled_player_id="h1"),
             ev("t1", "ft1_make", H, "h1", secs=12),
             ev("pe", "period_end", "", period=1, secs=720),
         ]
@@ -53,8 +53,8 @@ class ScoringSequenceTests(unittest.TestCase):
         events = full_lineup()
         events += [
             ev("m1", "fg2_miss", H, "h1", secs=10),
-            ev("f1", "standard_foul", A, "a1", secs=11, chain_id="f1"),
-            ev("fd1", "o_foul_draw", H, "h4", secs=11, chain_id="f1"),
+            ev("f1", "d_standard_foul", A, "a1", secs=11, chain_id="f1",
+               fouled_player_id="h4"),
             ev("t1", "ft1_make", H, "h4", secs=12),
             ev("t2", "ft1_make", H, "h4", secs=13),
             ev("pe", "period_end", "", period=1, secs=720),
@@ -104,8 +104,8 @@ class ScoringSequenceTests(unittest.TestCase):
         events = full_lineup()
         events += [
             ev("m1", "fg2_make", H, "h1", secs=10),
-            ev("f1", "standard_foul", H, "h3", secs=11, chain_id="f1"),
-            ev("fd1", "o_foul_draw", A, "a4", secs=11, chain_id="f1"),
+            ev("f1", "d_standard_foul", H, "h3", secs=11, chain_id="f1",
+               fouled_player_id="a4"),
             ev("t1", "ft1_make", A, "a4", secs=12),
             ev("t2", "ft1_make", A, "a4", secs=13),
             ev("pe", "period_end", "", period=1, secs=720),
@@ -233,9 +233,9 @@ class ReboundTests(unittest.TestCase):
     def test_intra_trip_rebound_suppressed(self):
         events = full_lineup()
         events += [
-            ev("f1", "standard_foul", A, "a1", secs=10, chain_id="f1"),
-            ev("fd1", "o_foul_draw", H, "h4", secs=10, chain_id="f1"),
-            ev("t1", "ft1_miss", H, "h4", secs=11),
+            ev("f1", "d_standard_foul", A, "a1", secs=10, chain_id="f1",
+               fouled_player_id="h4"),
+            ev("t1", "ft_miss", H, "h4", secs=11),
             ev("r1", "o_reb", H, "", secs=12),
             ev("t2", "ft1_make", H, "h4", secs=13),
             ev("pe", "period_end", "", period=1, secs=720),
@@ -248,8 +248,8 @@ class ReboundTests(unittest.TestCase):
         events = full_lineup()
         events += [
             ev("m1", "fg2_miss", H, "h1", secs=10),
-            ev("f1", "standard_foul", A, "a1", secs=11, chain_id="f1"),
-            ev("fd1", "o_foul_draw", H, "h4", secs=11, chain_id="f1"),
+            ev("f1", "d_standard_foul", A, "a1", secs=11, chain_id="f1",
+               fouled_player_id="h4"),
             ev("t1", "ft1_make", H, "h4", secs=12),
             ev("pe", "period_end", "", period=1, secs=720),
         ]
@@ -291,6 +291,19 @@ class FoulFtTests(unittest.TestCase):
         rules = {er.rule for er in res.errors}
         self.assertIn("ft_without_foul", rules)
 
+    def test_standard_foul_requires_fouled_player(self):
+        # A standard foul without a fouled player is a data-integrity
+        # error (no attribution fallback exists).
+        events = full_lineup()
+        events += [
+            ev("f1", "d_standard_foul", A, "a1", secs=10, chain_id="f1"),
+            ev("t1", "ft1_make", H, "h4", secs=11),
+            ev("pe", "period_end", "", period=1, secs=720),
+        ]
+        res = derive_game_context_events(events, H, A, lineup_size=5)
+        rules = {er.rule for er in res.errors}
+        self.assertIn("foul_without_fouled_player", rules)
+
     def test_elevated_ft_trip_does_not_transition(self):
         events = full_lineup()
         events += [
@@ -310,8 +323,8 @@ class FoulFtTests(unittest.TestCase):
         events = full_lineup()
         events += [
             ev("m1", "fg2_miss", H, "h1", secs=10),
-            ev("f1", "standard_foul", A, "a1", secs=11, chain_id="f1"),
-            ev("fd1", "o_foul_draw", H, "h1", secs=11, chain_id="f1"),
+            ev("f1", "d_standard_foul", A, "a1", secs=11, chain_id="f1",
+               fouled_player_id="h1"),
             ev("t1", "ft1_make", H, "h1", secs=12),
             ev("pe", "period_end", "", period=1, secs=720),
         ]

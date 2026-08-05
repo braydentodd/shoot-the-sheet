@@ -15,14 +15,12 @@ Pipeline order (matches ``project_tracking/matching.md``):
     6. Trim / collapse whitespace
 """
 
-from typing import Dict, List
-
 # ---------------------------------------------------------------------------
 # Character-level diacritic → ASCII mappings (applied after NFC).
 # Both lowercase AND uppercase variants are included — names from
 # non-English sources may arrive in title-case or ALL-CAPS.
 # ---------------------------------------------------------------------------
-DIACRITICS: Dict[str, str] = {
+DIACRITICS: dict[str, str] = {
     # ---- ss / ae / oe ----
     "ß": "ss",
     "ẞ": "SS",
@@ -169,7 +167,7 @@ DIACRITICS: Dict[str, str] = {
 # ---------------------------------------------------------------------------
 # Unicode quote-like → ASCII apostrophe
 # ---------------------------------------------------------------------------
-UNICODE_QUOTES: Dict[str, str] = {
+UNICODE_QUOTES: dict[str, str] = {
     "\u2018": "'",  # left single quotation mark
     "\u2019": "'",  # right single quotation mark
     "\u201c": '"',  # left double quotation mark
@@ -183,7 +181,7 @@ UNICODE_QUOTES: Dict[str, str] = {
 # ---------------------------------------------------------------------------
 # Unicode dash-like → ASCII hyphen
 # ---------------------------------------------------------------------------
-UNICODE_DASHES: Dict[str, str] = {
+UNICODE_DASHES: dict[str, str] = {
     "\u2010": "-",  # hyphen
     "\u2011": "-",  # non-breaking hyphen
     "\u2012": "-",  # figure dash
@@ -195,7 +193,7 @@ UNICODE_DASHES: Dict[str, str] = {
 # ---------------------------------------------------------------------------
 # Standalone word replacements  (matched on word boundaries)
 # ---------------------------------------------------------------------------
-WORD_REPLACEMENTS: Dict[str, str] = {
+WORD_REPLACEMENTS: dict[str, str] = {
     "Saint": "St",
     "Sainte": "Ste",
     "Mount": "Mt",
@@ -206,4 +204,4 @@ WORD_REPLACEMENTS: Dict[str, str] = {
 # ---------------------------------------------------------------------------
 # Characters to strip entirely from the normalized string
 # ---------------------------------------------------------------------------
-STRIP_CHARACTERS: List[str] = [".", ","]
+STRIP_CHARACTERS: list[str] = [".", ","]

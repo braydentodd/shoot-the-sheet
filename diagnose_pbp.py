@@ -24,6 +24,35 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "nba
 ARCHIVE_DIR = os.path.join(DATA_DIR, "archives")
 EXTRACTED_DIR = os.path.join(DATA_DIR, "extracted")
 
+# Diagnostics-only foul taxonomy: MSG=6 action type -> canonical foul
+# event.  Mirrors the reviewed ``core.pbp_events`` catalog rows so this
+# DB-less harness can classify without a database; it is NOT a
+# production authority (the catalog is).  Keep in sync when re-reviewing
+# the catalog during the MSG=6 migration.
+FOUL_ACTIONTYPE_MAP: dict[int, str] = {
+    1: "d_standard_foul",  # personal
+    2: "d_standard_foul",  # shooting
+    3: "d_standard_foul",  # loose ball
+    4: "o_standard_foul",  # offensive
+    5: "d_standard_foul",  # inbound
+    6: "elevated_foul",    # away from play
+    9: "elevated_foul",    # clear path
+    10: "d_standard_foul", # double personal
+    11: "elevated_foul",   # technical
+    12: "elevated_foul",   # non-unsportsmanlike (bench technical)
+    13: "elevated_foul",   # hanging tech
+    14: "elevated_foul",   # flagrant 1
+    15: "elevated_foul",   # flagrant 2
+    16: "elevated_foul",   # double technical
+    17: "elevated_foul",   # defensive 3 seconds
+    18: "elevated_foul",   # team foul
+    19: "elevated_foul",   # taunting
+    26: "o_standard_foul", # offensive charge
+    27: "d_standard_foul", # personal block
+    28: "d_standard_foul", # personal take
+    29: "d_standard_foul", # shooting block
+}
+
 
 # ---------------------------------------------------------------------------
 # Download + extract
@@ -143,6 +172,7 @@ class MockClassifier:
 
     def classify(self, row: dict):
         msgtype = int(row.get("EVENTMSGTYPE", 0))
+        actiontype = int(row.get("EVENTMSGACTIONTYPE", 0))
         desc = " ".join(
             str(row.get(k, ""))
             for k in ("HOMEDESCRIPTION", "NEUTRALDESCRIPTION", "VISITORDESCRIPTION")
@@ -155,11 +185,13 @@ class MockClassifier:
         elif msgtype == 2:  # Missed FG
             handling = "fg3_miss" if "3PT" in desc_upper else "fg2_miss"
         elif msgtype == 3:  # Free throw
-            # Default to ft1_make; misses are rare in accumulation
-            handling = "ft1_miss" if "MISS" in desc_upper else "ft1_make"
+            # FT misses are consolidated into a single ft_miss event; a
+            # make defaults to ft1_make (multi-point FT leagues emit the
+            # matching indexed make event).
+            handling = "ft_miss" if "MISS" in desc_upper else "ft1_make"
         elif msgtype == 4:  handling = "rebound"
         elif msgtype == 5:  handling = "turnover"
-        elif msgtype == 6:  handling = "foul"
+        elif msgtype == 6:  handling = FOUL_ACTIONTYPE_MAP.get(actiontype, "d_standard_foul")
         elif msgtype == 8:  handling = "substitution"
         elif msgtype == 10: handling = "jump_ball_win"
         elif msgtype == 12: handling = "period_start"
@@ -182,7 +214,7 @@ def diagnose(game_id: str, season: str, home_team_id: str, away_team_id: str):
 
     from src.sources.nba_data.pbp_normalizer import normalize_game
     from src.lib.pbp_accumulator import accumulate_result_set
-    from src.lib.pbp_derive import derive_game_context_events
+    from src.lib.pbp_deriver import derive_game_context_events
 
     # 1. Load raw data
     csv_path = ensure_csv(season)
@@ -226,11 +258,9 @@ def diagnose(game_id: str, season: str, home_team_id: str, away_team_id: str):
 
     poss_starts = [e for e in events if e["event"] == "poss_start"]
     poss_ends = [e for e in events if e["event"] == "poss_end"]
-    ft_trips = [e for e in events if e["event"] == "poss_ending_ft_trip"]
 
     print(f"  poss_start:       {len(poss_starts)}")
     print(f"  poss_end:         {len(poss_ends)}")
-    print(f"  poss_ending_ft:   {len(ft_trips)}")
 
     for team_id in sorted(set(
         e["team_id"] for e in poss_starts + poss_ends if e["team_id"]
@@ -243,17 +273,17 @@ def diagnose(game_id: str, season: str, home_team_id: str, away_team_id: str):
 
     # Show ALL poss_start/poss_end in chronological order with team
     all_poss_events = sorted(
-        [e for e in events if e["event"] in ("poss_start", "poss_end", "poss_ending_ft_trip")],
+        [e for e in events if e["event"] in ("poss_start", "poss_end")],
         key=lambda e: (e["secs"], e["event_id"]),
     )
     if len(all_poss_events) <= 60:
         print(f"\n  All {len(all_poss_events)} possession events:")
         for e in all_poss_events:
-            print(f"    secs={e['secs']:5d}  id={e['event_id']:4d}  {e['event']:22s}  team={e['team_id'][:25]}")
+            print(f"    secs={e['secs']:5d}  id={e['event_id']!s:>4}  {e['event']:22s}  team={e['team_id'][:25]}")
     else:
         print(f"\n  First 30 possession events (of {len(all_poss_events)}):")
         for e in all_poss_events[:30]:
-            print(f"    secs={e['secs']:5d}  id={e['event_id']:4d}  {e['event']:22s}  team={e['team_id'][:25]}")
+            print(f"    secs={e['secs']:5d}  id={e['event_id']!s:>4}  {e['event']:22s}  team={e['team_id'][:25]}")
         print(f"  ... and {len(all_poss_events) - 30} more")
 
     # ==================================================================
@@ -318,9 +348,12 @@ def diagnose(game_id: str, season: str, home_team_id: str, away_team_id: str):
     for team_id in (home_team_id, away_team_id):
         opp_id = away_team_id if team_id == home_team_id else home_team_id
         result = accumulate_result_set(events, "team", team_id, opp_entity_id=opp_id)
+        opp_result = accumulate_result_set(events, "opp_team", team_id, opp_entity_id=opp_id)
         print(f"  {team_id[:30]}:")
-        for k in ("secs", "poss", "opp_poss", "o_poss_secs", "points", "win"):
+        for k in ("secs", "poss", "o_poss_secs", "points", "win"):
             print(f"    {k:20s} = {result.get(k)}")
+        for k in ("poss", "o_poss_secs", "points"):
+            print(f"    {'opp_' + k:20s} = {opp_result.get(k)}")
 
     # ==================================================================
     # POINT 1: Player minutes and coverage
@@ -382,7 +415,7 @@ def diagnose(game_id: str, season: str, home_team_id: str, away_team_id: str):
     print("=" * 65)
     for e in events:
         if e["event"] in ("period_start", "period_end"):
-            print(f"  secs={e['secs']:5d}  id={e['event_id']:4d}  {e['event']}")
+            print(f"  secs={e['secs']:5d}  id={e['event_id']!s:>4}  {e['event']}")
 
     return events
 

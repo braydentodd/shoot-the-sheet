@@ -22,8 +22,8 @@ from typing import Any, Dict, List, Set, Union
 from psycopg2.extras import execute_values
 
 from src.definitions.execution import DEFAULT_BATCH_SIZE
-from src.definitions.schema import get_table
 from src.lib.postgres import db_connection, quote_col
+from src.lib.schema_resolver import get_table
 from src.lib.source_resolver import get_default_external_source
 
 logger = logging.getLogger(__name__)

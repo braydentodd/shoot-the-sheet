@@ -37,6 +37,33 @@ yet) have ``dataset_mapping: None``.
 from collections.abc import Mapping
 from typing import Any, Literal, TypedDict, get_args
 
+from src.definitions.datasets import DATASETS, VALID_IDENTITIES
+from src.definitions.leagues import LEAGUES
+from src.definitions.pbp import PBP_EVENTS, PBP_HANDLING_VALUES
+from src.definitions.pipeline import VALID_PHASES
+from src.definitions.schema import SCHEMAS
+
+# Canonical picklists for the columns whose values derive from other
+# definitions (the single place those values are edited).  ``gender`` /
+# ``season_type`` aggregate across every league so a new league extends
+# the domain automatically.  Used by ``DB_COLUMNS`` entries below and
+# re-validated by ``config_validation._validate_column_checks``.
+GENDER_VALUES: frozenset[str] = frozenset(l["gender"] for l in LEAGUES.values())
+SEASON_TYPE_VALUES: frozenset[str] = frozenset(
+    st for l in LEAGUES.values() for st in l["season_types"]
+)
+DATASET_VALUES: frozenset[str] = frozenset(
+    ds for identity in DATASETS.values() for ds in identity
+)
+
+# Bare table names across every schema -- the value domain for the
+# ``target`` coverage columns (coverage rows store the covered table's
+# name).  Derived from ``SCHEMAS`` so adding a table extends the
+# picklist automatically.
+TABLE_NAME_VALUES: frozenset[str] = frozenset(
+    table for tables in SCHEMAS.values() for table in tables
+)
+
 # ============================================================================
 # TYPE ALIASES
 # ============================================================================
@@ -66,6 +93,12 @@ Transform = Literal[
 
 # Derived from the Transform Literal so it never drifts.
 VALID_TRANSFORMS: frozenset[str] = frozenset(get_args(Transform))
+
+# Lifecycle values for the unified ``status`` column on every staging
+# table.  ``pending`` is the default; ``ready`` means the row has passed
+# its gating phase (entity match, PBP derivation) and may merge/cleanup;
+# ``error`` retains the row in staging for manual review.
+STAGING_STATUS_VALUES: tuple[str, ...] = ("pending", "ready", "error")
 
 
 class DatasetMapping(TypedDict, total=False):
@@ -118,6 +151,12 @@ class Column(TypedDict, total=True):
             schema (reserved for ``created_at`` / ``updated_at``).
         nullable: Whether NULL values are allowed.
         default: Default value expression.
+        check: Picklist of allowed values for the column, or ``None`` when
+            the column has no value restriction.  When present, the schema
+            builder emits a CHECK constraint from it -- this list is the
+            single source of truth for the constraint (values may be
+            derived from other definitions, e.g. ``handling`` from
+            ``PBP_HANDLING_VALUES``).
         dataset_mapping: Nested mapping: league -> identity -> table -> dataset -> field mapping.
     """
 
@@ -125,6 +164,7 @@ class Column(TypedDict, total=True):
     tables: str | list[str]
     nullable: bool
     default: str | int | None
+    check: list[str] | None
     dataset_mapping: (
         dict[str, dict[str, dict[str, dict[str, DatasetMapping]]]]
         | None
@@ -132,141 +172,245 @@ class Column(TypedDict, total=True):
 
 
 DB_COLUMNS: Mapping[str, Column] = {
-    # ==================================================================
-    # SYSTEM / IDENTITY
-    # ==================================================================
-    #
-    # Tables involved: core.teams, core.players, intermediate.teams, intermediate.players,
-    # staging.teams, staging.players.
-    #
-    # sts_id:        core + intermediate only (staging uses ext_id PKs)
-    # identity:      staging profiles/stats + core identities/ops;
-    #                NOT in core/intermediate profile tables
-    # ext_id:        staging profiles + core identity mappings
-    # matched_sts_id, reviewed: staging profiles only
-    # ==================================================================
-    "sts_id": {
-        "type": "BIGINT",
-        "tables": [
-            "core.teams",
-            "core.players",
-            "intermediate.teams",
-            "intermediate.players",
-        ],
-        "nullable": False,
-        "default": "nextval('core.sts_id_seq')",
-        "dataset_mapping": None,
-    },
-    "identity": {
-        "type": "TEXT",
-        "tables": [
-            "identities_players",
-            "identities_teams",
-            "identities_games",
-            "season_coverages",
-            "game_coverages",
-            "staging.teams",
-            "staging.players",
-            "staging.games",
-            "staging.player_seasons",
-            "staging.team_seasons",
-            "staging.leagues_teams",
-            "staging.teams_players",
-            "staging.countries_players",
-            "staging.player_games",
-            "staging.team_games",
-            "pbp_events",
-        ],
-        "nullable": False,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "ext_id": {
-        "type": "TEXT",
-        "tables": [
-            "identities_players",
-            "identities_teams",
-            "identities_games",
-            "staging.teams",
-            "staging.players",
-            "staging.games",
-        ],
-        "nullable": False,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "matched_sts_id": {
-        "type": "BIGINT",
-        "tables": [
-            "staging.teams",
-            "staging.players",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "reviewed": {
+    "active": {
+        "check": None,
         "type": "BOOLEAN",
         "tables": [
-            "staging.teams",
-            "staging.players",
+            "leagues",
+            "teams",
+            "players",
         ],
         "nullable": False,
-        "default": False,
+        "default": True,
         "dataset_mapping": None,
     },
-    "league_code": {
-        "type": "TEXT",
-        "tables": [
-            "leagues_teams",
-            "teams_players",
-            "team_seasons",
-            "player_seasons",
-            "team_games",
-            "player_games",
-            "season_coverages",
-            "game_coverages",
-            "staging.teams",
-            "staging.players",
-        ],
+    "assist_points": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "assist_points",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_stats": {
+                            "field": "assist_points",
+                            "min_season": None,
+                            "result_set": "team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "assists": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_basic_stats": {
+                            "field": "AST",
+                            "min_season": None,
+                            "result_set": "LeagueDashPlayerStats",
+                        }
+                    },
+                    "player_games": {
+                        "player_game_stats": {
+                            "field": "AST",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "assists",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
+                    },
+                    "team_seasons": {
+                        "team_basic_stats": {
+                            "field": "AST",
+                            "min_season": None,
+                            "result_set": "LeagueDashTeamStats",
+                        }
+                    },
+                    "team_games": {
+                        "team_game_stats": {
+                            "field": "AST",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "assists",
+                            "min_season": None,
+                            "result_set": "team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "away_team_id": {
+        "check": None,
+        "type": "BIGINT",
+        "tables": ["core.games", "intermediate.games"],
         "nullable": False,
         "default": None,
         "dataset_mapping": None,
     },
-    "season": {
-        "type": "TEXT",
+    "birthdate": {
+        "check": None,
+        "type": "DATE",
         "tables": [
-            "games",
-            "team_seasons",
-            "player_seasons",
-            "season_coverages",
-            "game_coverages",
+            "players",
         ],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "games": {
-                        "league_schedule": {
-                            "field": "seasonYear",
-                            "transform": "safe_str",
+                    "players": {
+                        "teams_players_rosters": {
+                            "field": "BIRTH_DATE",
+                            "transform": "parse_birthdate",
                             "min_season": None,
-                            "result_set": "SeasonGames",
+                            "result_set": "CommonTeamRoster",
+                        },
+                        "draft_years": {
+                            "field": "BIRTHDATE",
+                            "transform": "parse_birthdate",
+                            "min_season": None,
+                            "result_set": "DraftBoard",
+                        },
+                    }
+                }
+            }
+        },
+    },
+    "blocks": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_basic_stats": {
+                            "field": "BLK",
+                            "min_season": None,
+                            "result_set": "LeagueDashPlayerStats",
+                        }
+                    },
+                    "player_games": {
+                        "player_game_stats": {
+                            "field": "BLK",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "blocks",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
+                    },
+                    "team_seasons": {
+                        "team_basic_stats": {
+                            "field": "BLK",
+                            "min_season": None,
+                            "result_set": "LeagueDashTeamStats",
+                        }
+                    },
+                    "team_games": {
+                        "team_game_stats": {
+                            "field": "BLK",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "blocks",
+                            "min_season": None,
+                            "result_set": "team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "city": {
+        "check": None,
+        "type": "TEXT",
+        "tables": [
+            "teams",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "teams": {
+                        "team_profiles": {
+                            "field": "TEAM_CITY",
+                            "transform": "normalize_name",
+                            "min_season": None,
+                            "result_set": "TeamInfoCommon",
                         }
                     }
                 }
             }
         },
     },
-    "season_type": {
+    "code": {
+        "check": None,
         "type": "TEXT",
         "tables": [
+            "leagues",
+            "countries",
+            "teams",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "teams": {
+                        "team_profiles": {
+                            "field": "TEAM_ABBREVIATION",
+                            "transform": "safe_str",
+                            "min_season": None,
+                            "result_set": "TeamInfoCommon",
+                        }
+                    }
+                }
+            }
+        },
+    },
+    "col_name": {
+        "check": None,
+        "type": "TEXT",
+        "tables": ["season_coverages", "game_coverages"],
+        "nullable": False,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "completed": {
+        "check": None,
+        "type": "BOOLEAN",
+        "tables": [
             "games",
-            "team_seasons",
-            "player_seasons",
-            "season_coverages",
-            "game_coverages",
         ],
         "nullable": True,
         "default": None,
@@ -276,18 +420,8 @@ DB_COLUMNS: Mapping[str, Column] = {
                     "games": {
                         "league_schedule": {
                             "derived": {
-                                "field": "gameLabel",
-                                "map": {
-                                    "East First Round": "playoffs",
-                                    "West First Round": "playoffs",
-                                    "East Conf. Semifinals": "playoffs",
-                                    "West Conf. Semifinals": "playoffs",
-                                    "East Conf. Finals": "playoffs",
-                                    "West Conf. Finals": "playoffs",
-                                    "NBA Finals": "playoffs",
-                                    "SoFi Play-In Tournament": "play_in",
-                                },
-                                "default": "regular_season",
+                                "field": "gameStatus",
+                                "equals": 3,
                             },
                             "result_set": "SeasonGames",
                         }
@@ -296,7 +430,203 @@ DB_COLUMNS: Mapping[str, Column] = {
             }
         },
     },
+    "conf": {
+        "check": None,
+        "type": "TEXT",
+        "tables": [
+            "leagues_teams",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "leagues_teams": {
+                        "team_profiles": {
+                            "field": "TEAM_CONFERENCE",
+                            "transform": "safe_str",
+                            "min_season": None,
+                            "result_set": "TeamInfoCommon",
+                        }
+                    }
+                }
+            }
+        },
+    },
+    "cont_d_fga": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": [
+            "player_seasons",
+            "team_seasons",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_hustle_stats": {
+                            "field": "CONTESTED_SHOTS",
+                            "min_season": None,
+                            "result_set": "HustleStatsPlayer",
+                        }
+                    },
+                    "team_seasons": {
+                        "team_hustle_stats": {
+                            "field": "CONTESTED_SHOTS",
+                            "min_season": None,
+                            "result_set": "HustleStatsTeam",
+                        }
+                    },
+                }
+            }
+        },
+    },
+    "country_code": {
+        "check": None,
+        "type": "TEXT",
+        "tables": [
+            "teams",
+            "countries_players",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "countries_players": {
+                        "player_profiles": {
+                            "field": "COUNTRY",
+                            "transform": "match_country",
+                            "min_season": None,
+                            "result_set": "PlayerIndex",
+                        }
+                    },
+                    "teams": {
+                        "team_profiles": {
+                            "field": "TEAM_COUNTRY",
+                            "transform": "match_country",
+                            "min_season": None,
+                            "result_set": "TeamInfoCommon",
+                        }
+                    },
+                }
+            }
+        },
+    },
+    "covered": {
+        "check": None,
+        "type": "BOOLEAN",
+        "tables": ["season_coverages", "game_coverages"],
+        "nullable": False,
+        "default": False,
+        "dataset_mapping": None,
+    },
+    "created_at": {
+        "check": None,
+        "type": "TIMESTAMP",
+        "tables": ["all"],
+        "nullable": False,
+        "default": "NOW()",
+        "dataset_mapping": None,
+    },
+    "d_poss_secs": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        # Defensive possession seconds are the opponent's offensive
+        # possession seconds: the ``o_poss_secs`` field in the opp scopes
+        # (no ``d_poss_secs`` PBP field exists).
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "o_poss_secs",
+                            "min_season": None,
+                            "result_set": "opp_player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_stats": {
+                            "field": "o_poss_secs",
+                            "min_season": None,
+                            "result_set": "opp_team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "d_rebs": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_basic_stats": {
+                            "field": "DREB",
+                            "min_season": None,
+                            "result_set": "LeagueDashPlayerStats",
+                        }
+                    },
+                    "player_games": {
+                        "player_game_stats": {
+                            "field": "DREB",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "d_rebs",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
+                    },
+                    "team_seasons": {
+                        "team_basic_stats": {
+                            "field": "DREB",
+                            "min_season": None,
+                            "result_set": "LeagueDashTeamStats",
+                        }
+                    },
+                    "team_games": {
+                        "team_game_stats": {
+                            "field": "DREB",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "d_rebs",
+                            "min_season": None,
+                            "result_set": "team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "dataset": {
+        "check": sorted(DATASET_VALUES),
+        "type": "TEXT",
+        "tables": [
+            "season_coverages",
+            "game_coverages",
+            "pbp_events",
+            "errors",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
     "date": {
+        "check": None,
         "type": "DATE",
         "tables": [
             "games",
@@ -323,76 +653,135 @@ DB_COLUMNS: Mapping[str, Column] = {
             }
         },
     },
-    "game_id": {
-        "type": "BIGINT",
+    "deflections": {
+        "check": None,
+        "type": "SMALLINT",
         "tables": [
-            "core.games",
-            "intermediate.games",
-            "identities_games",
-            "game_coverages",
+            "player_seasons",
+            "team_seasons",
         ],
-        "nullable": False,
-        "default": "nextval('core.game_id_seq')",
-        "dataset_mapping": None,
-    },
-    "ext_game_id": {
-        "type": "TEXT",
-        "tables": [
-            "staging.games",
-            "staging.player_games",
-            "staging.team_games",
-        ],
-        "nullable": False,
+        "nullable": True,
         "default": None,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "games": {
-                        "league_schedule": {
-                            "field": "gameId",
-                            "transform": "safe_str",
+                    "player_seasons": {
+                        "player_hustle_stats": {
+                            "field": "DEFLECTIONS",
                             "min_season": None,
-                            "result_set": "SeasonGames",
+                            "result_set": "HustleStatsPlayer",
                         }
+                    },
+                    "team_seasons": {
+                        "team_hustle_stats": {
+                            "field": "DEFLECTIONS",
+                            "min_season": None,
+                            "result_set": "HustleStatsTeam",
+                        }
+                    },
+                }
+            }
+        },
+    },
+    "draft_year": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": [
+            "players",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "players": {
+                        "player_profiles": {
+                            "field": "DRAFT_YEAR",
+                            "min_season": None,
+                            "result_set": "PlayerIndex",
+                        },
+                        "draft_years": {
+                            "field": "SEASON",
+                            "min_season": None,
+                            "result_set": "DraftBoard"
+                        },
                     }
                 }
             }
         },
     },
-    "home_team_id": {
-        "type": "BIGINT",
-        "tables": ["core.games", "intermediate.games"],
-        "nullable": False,
+    "draft_year_auto": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": [
+            "players",
+        ],
+        "nullable": True,
         "default": None,
         "dataset_mapping": None,
     },
-    "away_team_id": {
-        "type": "BIGINT",
-        "tables": ["core.games", "intermediate.games"],
-        "nullable": False,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "ext_home_team_id": {
-        "type": "TEXT",
-        "tables": ["staging.games"],
-        "nullable": False,
+    "elevated_fouls": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
         "default": None,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "games": {
-                        "league_schedule": {
-                            "field": "homeTeam_teamId",
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "elevated_fouls",
                             "min_season": None,
-                            "result_set": "SeasonGames",
-                        }
-                    }
+                            "result_set": "player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_stats": {
+                            "field": "elevated_fouls",
+                            "min_season": None,
+                            "result_set": "team",
+                        },
+                    },
                 }
             }
         },
+    },
+    "error_id": {
+        "check": None,
+        "type": "BIGINT",
+        "tables": ["errors"],
+        "nullable": False,
+        "default": "nextval('core.error_id_seq')",
+        "dataset_mapping": None,
+    },
+    "event": {
+        "check": sorted(PBP_EVENTS),
+        "type": "TEXT",
+        "tables": ["errors"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
+
+    "event_id": {
+        "check": None,
+        "type": "TEXT",
+        "tables": ["errors"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "event_key": {
+        "check": None,
+        "type": "TEXT",
+        "tables": ["pbp_events"],
+        "nullable": False,
+        "default": None,
+        "dataset_mapping": None,
     },
     "ext_away_team_id": {
+        "check": None,
         "type": "TEXT",
         "tables": ["staging.games"],
         "nullable": False,
@@ -411,51 +800,69 @@ DB_COLUMNS: Mapping[str, Column] = {
             }
         },
     },
-    "pbp_status": {
+    "ext_game_id": {
+        "check": None,
         "type": "TEXT",
-        "tables": ["staging.games"],
+        "tables": [
+            "staging.games",
+            "staging.player_games",
+            "staging.team_games",
+            "errors",
+        ],
         "nullable": True,
         "default": None,
-        "dataset_mapping": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "games": {
+                        "league_schedule": {
+                            "field": "gameId",
+                            "transform": "safe_str",
+                            "min_season": None,
+                            "result_set": "SeasonGames",
+                        }
+                    }
+                }
+            }
+        },
     },
-    "player_id": {
-        "type": "BIGINT",
-        "tables": [
-            "core.player_seasons",
-            "intermediate.player_seasons",
-            "core.player_games",
-            "intermediate.player_games",
-            "core.teams_players",
-            "intermediate.teams_players",
-            "core.countries_players",
-            "identities_players",
-        ],
+    "ext_home_team_id": {
+        "check": None,
+        "type": "TEXT",
+        "tables": ["staging.games"],
         "nullable": False,
         "default": None,
-        "dataset_mapping": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "games": {
+                        "league_schedule": {
+                            "field": "homeTeam_teamId",
+                            "min_season": None,
+                            "result_set": "SeasonGames",
+                        }
+                    }
+                }
+            }
+        },
     },
-    "team_id": {
-        "type": "BIGINT",
+    "ext_id": {
+        "check": None,
+        "type": "TEXT",
         "tables": [
-            "core.team_seasons",
-            "intermediate.team_seasons",
-            "core.player_seasons",
-            "intermediate.player_seasons",
-            "core.team_games",
-            "intermediate.team_games",
-            "core.player_games",
-            "intermediate.player_games",
-            "core.teams_players",
-            "intermediate.teams_players",
-            "core.leagues_teams",
-            "intermediate.leagues_teams",
+            "identities_players",
             "identities_teams",
+            "identities_games",
+            "staging.teams",
+            "staging.players",
+            "staging.games",
         ],
         "nullable": False,
         "default": None,
         "dataset_mapping": None,
     },
     "ext_player_id": {
+        "check": None,
         "type": "TEXT",
         "tables": [
             "staging.player_seasons",
@@ -468,6 +875,7 @@ DB_COLUMNS: Mapping[str, Column] = {
         "dataset_mapping": None,
     },
     "ext_team_id": {
+        "check": None,
         "type": "TEXT",
         "tables": [
             "staging.team_seasons",
@@ -481,66 +889,557 @@ DB_COLUMNS: Mapping[str, Column] = {
         "default": None,
         "dataset_mapping": None,
     },
-    # ==================================================================
-    # GAME METADATA
-    # ==================================================================
-    "ot": {
-        "type": "BOOLEAN",
+    "fg2a": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_basic_stats": {
+                            "derived": {
+                                "math": "FGA - FG3A",
+                                "fields": ["FGA", "FG3A"],
+                            },
+                            "result_set": "LeagueDashPlayerStats",
+                        }
+                    },
+                    "player_games": {
+                        "player_game_stats": {
+                            "derived": {
+                                "math": "FGA - FG3A",
+                                "fields": ["FGA", "FG3A"],
+                            },
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "fg2a",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
+                    },
+                    "team_seasons": {
+                        "team_basic_stats": {
+                            "derived": {
+                                "math": "FGA - FG3A",
+                                "fields": ["FGA", "FG3A"],
+                            },
+                            "result_set": "LeagueDashTeamStats",
+                        }
+                    },
+                    "team_games": {
+                        "team_game_stats": {
+                            "derived": {
+                                "math": "FGA - FG3A",
+                                "fields": ["FGA", "FG3A"],
+                            },
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "fg2a",
+                            "min_season": None,
+                            "result_set": "team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "fg2m": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_basic_stats": {
+                            "derived": {
+                                "math": "FGM - FG3M",
+                                "fields": ["FGM", "FG3M"],
+                            },
+                            "result_set": "LeagueDashPlayerStats",
+                        }
+                    },
+                    "player_games": {
+                        "player_game_stats": {
+                            "derived": {
+                                "math": "FGM - FG3M",
+                                "fields": ["FGM", "FG3M"],
+                            },
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "fg2m",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
+                    },
+                    "team_seasons": {
+                        "team_basic_stats": {
+                            "derived": {
+                                "math": "FGM - FG3M",
+                                "fields": ["FGM", "FG3M"],
+                            },
+                            "result_set": "LeagueDashTeamStats",
+                        }
+                    },
+                    "team_games": {
+                        "team_game_stats": {
+                            "derived": {
+                                "math": "FGM - FG3M",
+                                "fields": ["FGM", "FG3M"],
+                            },
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "fg2m",
+                            "min_season": None,
+                            "result_set": "team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "fg3a": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_basic_stats": {
+                            "field": "FG3A",
+                            "min_season": None,
+                            "result_set": "LeagueDashPlayerStats",
+                        }
+                    },
+                    "player_games": {
+                        "player_game_stats": {
+                            "field": "FG3A",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "fg3a",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
+                    },
+                    "team_seasons": {
+                        "team_basic_stats": {
+                            "field": "FG3A",
+                            "min_season": None,
+                            "result_set": "LeagueDashTeamStats",
+                        }
+                    },
+                    "team_games": {
+                        "team_game_stats": {
+                            "field": "FG3A",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "fg3a",
+                            "min_season": None,
+                            "result_set": "team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "fg3m": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_basic_stats": {
+                            "field": "FG3M",
+                            "min_season": None,
+                            "result_set": "LeagueDashPlayerStats",
+                        }
+                    },
+                    "player_games": {
+                        "player_game_stats": {
+                            "field": "FG3M",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "fg3m",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
+                    },
+                    "team_seasons": {
+                        "team_basic_stats": {
+                            "field": "FG3M",
+                            "min_season": None,
+                            "result_set": "LeagueDashTeamStats",
+                        }
+                    },
+                    "team_games": {
+                        "team_game_stats": {
+                            "field": "FG3M",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "fg3m",
+                            "min_season": None,
+                            "result_set": "team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "fta": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_basic_stats": {
+                            "field": "FTA",
+                            "min_season": None,
+                            "result_set": "LeagueDashPlayerStats",
+                        }
+                    },
+                    "player_games": {
+                        "player_game_stats": {
+                            "field": "FTA",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "fta",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
+                    },
+                    "team_seasons": {
+                        "team_basic_stats": {
+                            "field": "FTA",
+                            "min_season": None,
+                            "result_set": "LeagueDashTeamStats",
+                        }
+                    },
+                    "team_games": {
+                        "team_game_stats": {
+                            "field": "FTA",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "fta",
+                            "min_season": None,
+                            "result_set": "team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "ftm": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_basic_stats": {
+                            "field": "FTM",
+                            "min_season": None,
+                            "result_set": "LeagueDashPlayerStats",
+                        }
+                    },
+                    "player_games": {
+                        "player_game_stats": {
+                            "field": "FTM",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "ftm",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
+                    },
+                    "team_seasons": {
+                        "team_basic_stats": {
+                            "field": "FTM",
+                            "min_season": None,
+                            "result_set": "LeagueDashTeamStats",
+                        }
+                    },
+                    "team_games": {
+                        "team_game_stats": {
+                            "field": "FTM",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "ftm",
+                            "min_season": None,
+                            "result_set": "team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "game_id": {
+        "check": None,
+        "type": "BIGINT",
         "tables": [
-            "games",
+            "core.games",
+            "intermediate.games",
+            "identities_games",
+            "game_coverages",
+        ],
+        "nullable": False,
+        "default": "nextval('core.game_id_seq')",
+        "dataset_mapping": None,
+    },
+    "games": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": False,
+        "default": 0,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_basic_stats": {
+                            "field": "GP",
+                            "min_season": None,
+                            "result_set": "LeagueDashPlayerStats",
+                        }
+                    },
+                    "team_seasons": {
+                        "team_basic_stats": {
+                            "field": "GP",
+                            "min_season": None,
+                            "result_set": "LeagueDashTeamStats",
+                        }
+                    },
+                }
+            }
+        },
+    },
+    "gender": {
+        "check": sorted(GENDER_VALUES),
+        "type": "CHAR",
+        "tables": [
+            "leagues",
+            "teams",
+            "players",
         ],
         "nullable": True,
         "default": None,
         "dataset_mapping": None,
     },
-    "neutral_site": {
-        "type": "BOOLEAN",
+    "handling": {
+        "check": sorted(PBP_HANDLING_VALUES),
+        "type": "TEXT",
+        "tables": ["pbp_events"],
+        "nullable": False,
+        "default": "'unreviewed'",
+        "dataset_mapping": None,
+    },
+    "height_ins_no_shoes": {
+        "check": None,
+        "type": "SMALLINT",
         "tables": [
-            "games",
+            "players",
         ],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "games": {
-                        "league_schedule": {
-                            "field": "isNeutral",
+                    "players": {
+                        "teams_players_rosters": {
+                            "field": "HEIGHT",
+                            "transform": "parse_inches",
                             "min_season": None,
-                            "result_set": "SeasonGames",
-                        }
+                            "result_set": "CommonTeamRoster",
+                        },
+                        "player_profiles": {
+                            "field": "HEIGHT",
+                            "transform": "parse_inches",
+                            "min_season": None,
+                            "result_set": "PlayerIndex",
+                        },
+                        "combine_anthros": {
+                            "field": "HEIGHT_WO_SHOES",
+                            "transform": "parse_inches",
+                            "min_season": None,
+                            "result_set": "DraftCombineStats",
+                        },
                     }
                 }
             }
         },
     },
-    "completed": {
-        "type": "BOOLEAN",
+    "height_ins_with_shoes": {
+        "check": None,
+        "type": "SMALLINT",
         "tables": [
-            "games",
+            "players",
         ],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
-                    "games": {
-                        "league_schedule": {
-                            "derived": {
-                                "field": "gameStatus",
-                                "equals": 3,
-                            },
-                            "result_set": "SeasonGames",
+                    "players": {
+                        "combine_anthros": {
+                            "field": "HEIGHT_W_SHOES",
+                            "transform": "parse_inches",
+                            "min_season": None,
+                            "result_set": "DraftCombineStats",
                         }
                     }
                 }
             }
         },
     },
-    # ==================================================================
-    # PROFILES
-    # ==================================================================
+    "home_team_id": {
+        "check": None,
+        "type": "BIGINT",
+        "tables": ["core.games", "intermediate.games"],
+        "nullable": False,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "identity": {
+        "check": sorted(VALID_IDENTITIES),
+        "type": "TEXT",
+        "tables": [
+            "identities_players",
+            "identities_teams",
+            "identities_games",
+            "season_coverages",
+            "game_coverages",
+            "staging.teams",
+            "staging.players",
+            "staging.games",
+            "staging.player_seasons",
+            "staging.team_seasons",
+            "staging.leagues_teams",
+            "staging.teams_players",
+            "staging.countries_players",
+            "staging.player_games",
+            "staging.team_games",
+            "pbp_events",
+            "errors",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "jersey_num": {
+        "check": None,
+        "type": "TEXT",
+        "tables": [
+            "teams_players",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "teams_players": {
+                        "teams_players_rosters": {
+                            "field": "NUM",
+                            "min_season": None,
+                            "result_set": "CommonTeamRoster",
+                        },
+                        "player_profiles": {
+                            "field": "JERSEY_NUMBER",
+                            "min_season": None,
+                            "result_set": "PlayerIndex",
+                        },
+                    }
+                }
+            }
+        },
+    },
+    "laterality": {
+        "check": ["L", "R"],
+        "type": "CHAR",
+        "tables": [
+            "players",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "league_code": {
+        "check": sorted(LEAGUES),
+        "type": "TEXT",
+        "tables": [
+            "leagues_teams",
+            "teams_players",
+            "team_seasons",
+            "player_seasons",
+            "team_games",
+            "player_games",
+            "season_coverages",
+            "game_coverages",
+            "staging.teams",
+            "staging.players",
+        ],
+        "nullable": False,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "matched_sts_id": {
+        "check": None,
+        "type": "BIGINT",
+        "tables": [
+            "staging.teams",
+            "staging.players",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "message": {
+        "check": None,
+        "type": "TEXT",
+        "tables": ["errors"],
+        "nullable": False,
+        "default": None,
+        "dataset_mapping": None,
+    },
     "name": {
+        "check": None,
         "type": "TEXT",
         "tables": [
             "leagues",
@@ -587,440 +1486,1082 @@ DB_COLUMNS: Mapping[str, Column] = {
             }
         },
     },
-    "code": {
-        "type": "TEXT",
-        "tables": [
-            "leagues",
-            "countries",
-            "teams",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "teams": {
-                        "team_profiles": {
-                            "field": "TEAM_ABBREVIATION",
-                            "transform": "safe_str",
-                            "min_season": None,
-                            "result_set": "TeamInfoCommon",
-                        }
-                    }
-                }
-            }
-        },
-    },
-    "city": {
-        "type": "TEXT",
-        "tables": [
-            "teams",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "teams": {
-                        "team_profiles": {
-                            "field": "TEAM_CITY",
-                            "transform": "normalize_name",
-                            "min_season": None,
-                            "result_set": "TeamInfoCommon",
-                        }
-                    }
-                }
-            }
-        },
-    },
-    "region": {
-        "type": "TEXT",
-        "tables": [
-            "teams",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "conf": {
-        "type": "TEXT",
-        "tables": [
-            "leagues_teams",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "leagues_teams": {
-                        "team_profiles": {
-                            "field": "TEAM_CONFERENCE",
-                            "transform": "safe_str",
-                            "min_season": None,
-                            "result_set": "TeamInfoCommon",
-                        }
-                    }
-                }
-            }
-        },
-    },
-    "country_code": {
-        "type": "TEXT",
-        "tables": [
-            "teams",
-            "countries_players",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "countries_players": {
-                        "player_profiles": {
-                            "field": "COUNTRY",
-                            "transform": "match_country",
-                            "min_season": None,
-                            "result_set": "PlayerIndex",
-                        }
-                    },
-                    "teams": {
-                        "team_profiles": {
-                            "field": "TEAM_COUNTRY",
-                            "transform": "match_country",
-                            "min_season": None,
-                            "result_set": "TeamInfoCommon",
-                        }
-                    },
-                }
-            }
-        },
-    },
-    "sovereign_country": {
-        "type": "TEXT",
-        "tables": ["countries"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "birthdate": {
-        "type": "DATE",
-        "tables": [
-            "players",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "players": {
-                        "teams_players_rosters": {
-                            "field": "BIRTH_DATE",
-                            "transform": "parse_birthdate",
-                            "min_season": None,
-                            "result_set": "CommonTeamRoster",
-                        },
-                        "draft_years": {
-                            "field": "BIRTHDATE",
-                            "transform": "parse_birthdate",
-                            "min_season": None,
-                            "result_set": "DraftBoard",
-                        },
-                    }
-                }
-            }
-        },
-    },
-    "draft_year": {
-        "type": "SMALLINT",
-        "tables": [
-            "players",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "players": {
-                        "player_profiles": {
-                            "field": "DRAFT_YEAR",
-                            "min_season": None,
-                            "result_set": "PlayerIndex",
-                        },
-                        "draft_years": {
-                            "field": "SEASON",
-                            "min_season": None,
-                            "result_set": "DraftBoard"
-                        },
-                    }
-                }
-            }
-        },
-    },
-    "draft_year_auto": {
-        "type": "SMALLINT",
-        "tables": [
-            "players",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "jersey_num": {
-        "type": "TEXT",
-        "tables": [
-            "teams_players",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "teams_players": {
-                        "teams_players_rosters": {
-                            "field": "NUM",
-                            "min_season": None,
-                            "result_set": "CommonTeamRoster",
-                        },
-                        "player_profiles": {
-                            "field": "JERSEY_NUMBER",
-                            "min_season": None,
-                            "result_set": "PlayerIndex",
-                        },
-                    }
-                }
-            }
-        },
-    },
-    "hand": {
-        "type": "CHAR",
-        "tables": [
-            "players",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "gender": {
-        "type": "CHAR",
-        "tables": [
-            "leagues",
-            "teams",
-            "players",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "height_ins_no_shoes": {
-        "type": "SMALLINT",
-        "tables": [
-            "players",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "players": {
-                        "teams_players_rosters": {
-                            "field": "HEIGHT",
-                            "transform": "parse_inches",
-                            "min_season": None,
-                            "result_set": "CommonTeamRoster",
-                        },
-                        "player_profiles": {
-                            "field": "HEIGHT",
-                            "transform": "parse_inches",
-                            "min_season": None,
-                            "result_set": "PlayerIndex",
-                        },
-                        "combine_anthros": {
-                            "field": "HEIGHT_WO_SHOES",
-                            "transform": "parse_inches",
-                            "min_season": None,
-                            "result_set": "DraftCombineStats",
-                        },
-                    }
-                }
-            }
-        },
-    },
-    "height_ins_with_shoes": {
-        "type": "SMALLINT",
-        "tables": [
-            "players",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "players": {
-                        "combine_anthros": {
-                            "field": "HEIGHT_W_SHOES",
-                            "transform": "parse_inches",
-                            "min_season": None,
-                            "result_set": "DraftCombineStats",
-                        }
-                    }
-                }
-            }
-        },
-    },
-    "wingspan_ins": {
-        "type": "SMALLINT",
-        "tables": [
-            "players",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "players": {
-                        "combine_anthros": {
-                            "field": "WINGSPAN",
-                            "transform": "parse_inches",
-                            "min_season": None,
-                            "result_set": "DraftCombineStats",
-                        }
-                    }
-                }
-            }
-        },
-    },
-    # ==================================================================
-    # METADATA / STATUS
-    # ==================================================================
-    "active": {
+    "neutral_site": {
+        "check": None,
         "type": "BOOLEAN",
         "tables": [
-            "leagues",
-            "teams",
-            "players",
-        ],
-        "nullable": False,
-        "default": True,
-        "dataset_mapping": None,
-    },
-    "created_at": {
-        "type": "TIMESTAMP",
-        "tables": ["all"],
-        "nullable": False,
-        "default": "NOW()",
-        "dataset_mapping": None,
-    },
-    "updated_at": {
-        "type": "TIMESTAMP",
-        "tables": ["all"],
-        "nullable": False,
-        "default": "NOW()",
-        "dataset_mapping": None,
-    },
-    # ==================================================================
-    # COVERAGE TRACKING
-    # ==================================================================
-    # (coverage_level removed -- split into season + game coverage)
-    "target": {
-        "type": "TEXT",
-        "tables": ["season_coverages", "game_coverages"],
-        "nullable": False,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "col_name": {
-        "type": "TEXT",
-        "tables": ["season_coverages", "game_coverages"],
-        "nullable": False,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "covered": {
-        "type": "BOOLEAN",
-        "tables": ["season_coverages", "game_coverages"],
-        "nullable": False,
-        "default": False,
-        "dataset_mapping": None,
-    },
-    "dataset": {
-        "type": "TEXT",
-        "tables": [
-            "season_coverages",
-            "game_coverages",
-            "pbp_events",
+            "games",
         ],
         "nullable": True,
         "default": None,
-        "dataset_mapping": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "games": {
+                        "league_schedule": {
+                            "field": "isNeutral",
+                            "min_season": None,
+                            "result_set": "SeasonGames",
+                        }
+                    }
+                }
+            }
+        },
     },
-    # ==================================================================
-    # STATS — BASIC
-    # ==================================================================
-    "games": {
+    "o_fouls_drawn": {
+        "check": None,
         "type": "SMALLINT",
         "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": False,
-        "default": 0,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_basic_stats": {
-                            "field": "GP",
-                            "min_season": None,
-                            "result_set": "LeagueDashPlayerStats",
-                        }
-                    },
-                    "team_seasons": {
-                        "team_basic_stats": {
-                            "field": "GP",
-                            "min_season": None,
-                            "result_set": "LeagueDashTeamStats",
-                        }
-                    },
-                }
-            }
-        },
-    },
-    "start": {
-        "type": "BOOLEAN",
-        "tables": ["player_games"],
         "nullable": True,
         "default": None,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "player_games": {
-                        "player_game_stats": {
-                            "field": "GS",
-                            "min_season": None,
-                            "result_set": "LeagueGameLog",
+                        "pbp_stats": {
+                            "field": "o_fouls_drawn",
+                            "result_set": "player",
+                            "min_season": "2005-06",
                         },
                     },
-                },
-            },
+                    "team_games": {
+                        "pbp_stats": {
+                            "field": "o_fouls_drawn",
+                            "min_season": None,
+                            "result_set": "team",
+                        },
+                    },
+                }
+            }
         },
     },
-    "starts": {
+    "o_poss_secs": {
+        "check": None,
         "type": "SMALLINT",
-        "tables": ["player_seasons"],
-        "nullable": False,
-        "default": 0,
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "o_poss_secs",
+                            "min_season": None,
+                            "result_set": "on_player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_stats": {
+                            "field": "o_poss_secs",
+                            "min_season": None,
+                            "result_set": "team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "o_rebs": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
         "dataset_mapping": {
             "NBA": {
                 "nba_id": {
                     "player_seasons": {
                         "player_basic_stats": {
-                            "field": "GS",
+                            "field": "OREB",
+                            "min_season": None,
+                            "result_set": "LeagueDashPlayerStats",
+                        }
+                    },
+                    "player_games": {
+                        "player_game_stats": {
+                            "field": "OREB",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "o_rebs",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
+                    },
+                    "team_seasons": {
+                        "team_basic_stats": {
+                            "field": "OREB",
+                            "min_season": None,
+                            "result_set": "LeagueDashTeamStats",
+                        }
+                    },
+                    "team_games": {
+                        "team_game_stats": {
+                            "field": "OREB",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "o_rebs",
+                            "min_season": None,
+                            "result_set": "team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "on_d_rebs": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["player_seasons", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_on_stats": {
+                            "field": "DREB",
+                            "min_season": None,
+                            "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
+                        }
+                    },
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "d_rebs",
+                            "min_season": None,
+                            "result_set": "on_player",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "on_fg2a": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["player_seasons", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_on_stats": {
+                            "derived": {
+                                "math": "FGA - FG3A",
+                                "fields": ["FGA", "FG3A"],
+                            },
+                            "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
+                        }
+                    },
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "fg2a",
+                            "min_season": None,
+                            "result_set": "on_player",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "on_fg2m": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["player_seasons", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_on_stats": {
+                            "derived": {
+                                "math": "FGM - FG3M",
+                                "fields": ["FGM", "FG3M"],
+                            },
+                            "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
+                        }
+                    },
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "fg2m",
+                            "min_season": None,
+                            "result_set": "on_player",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "on_fg3a": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["player_seasons", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_on_stats": {
+                            "field": "FG3A",
+                            "min_season": None,
+                            "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
+                        }
+                    },
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "fg3a",
+                            "min_season": None,
+                            "result_set": "on_player",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "on_fg3m": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["player_seasons", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_on_stats": {
+                            "field": "FG3M",
+                            "min_season": None,
+                            "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
+                        }
+                    },
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "fg3m",
+                            "min_season": None,
+                            "result_set": "on_player",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "on_fta": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["player_seasons", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_on_stats": {
+                            "field": "FTA",
+                            "min_season": None,
+                            "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
+                        }
+                    },
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "fta",
+                            "min_season": None,
+                            "result_set": "on_player",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "on_ftm": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["player_seasons", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_on_stats": {
+                            "field": "FTM",
+                            "min_season": None,
+                            "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
+                        }
+                    },
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "ftm",
+                            "min_season": None,
+                            "result_set": "on_player",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "on_o_rebs": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["player_seasons", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_on_stats": {
+                            "field": "OREB",
+                            "min_season": None,
+                            "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
+                        }
+                    },
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "o_rebs",
+                            "min_season": None,
+                            "result_set": "on_player",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "on_points": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["player_seasons", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "points",
+                            "min_season": None,
+                            "result_set": "on_player",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "on_pot_poss_ending_scoring_opps": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["player_seasons", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "pot_poss_ending_scoring_opps",
+                            "min_season": None,
+                            "result_set": "on_player",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "on_turnovers": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["player_seasons", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_on_stats": {
+                            "field": "TOV",
+                            "min_season": None,
+                            "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
+                        }
+                    },
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "turnovers",
+                            "min_season": None,
+                            "result_set": "on_player",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "opp_d_rebs": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "team_seasons": {
+                        "team_opp_stats": {
+                            "field": "OPP_DREB",
+                            "min_season": None,
+                            "result_set": "LeagueDashTeamStats",
+                        }
+                    },
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "d_rebs",
+                            "min_season": None,
+                            "result_set": "opp_player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_stats": {
+                            "field": "d_rebs",
+                            "min_season": None,
+                            "result_set": "opp_team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "opp_fg2a": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "team_seasons": {
+                        "team_opp_stats": {
+                            "derived": {
+                                "math": "FGA - FG3A",
+                                "fields": ["OPP_FGA", "OPP_FG3A"],
+                            },
+                            "result_set": "LeagueDashTeamStats",
+                        }
+                    },
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "fg2a",
+                            "min_season": None,
+                            "result_set": "opp_player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_stats": {
+                            "field": "fg2a",
+                            "min_season": None,
+                            "result_set": "opp_team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "opp_fg2m": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "team_seasons": {
+                        "team_opp_stats": {
+                            "derived": {
+                                "math": "FGM - FG3M",
+                                "fields": ["OPP_FGM", "OPP_FG3M"],
+                            },
+                            "result_set": "LeagueDashTeamStats",
+                        }
+                    },
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "fg2m",
+                            "min_season": None,
+                            "result_set": "opp_player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_stats": {
+                            "field": "fg2m",
+                            "min_season": None,
+                            "result_set": "opp_team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "opp_fg3a": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "team_seasons": {
+                        "team_opp_stats": {
+                            "field": "OPP_FG3A",
+                            "min_season": None,
+                            "result_set": "LeagueDashTeamStats",
+                        }
+                    },
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "fg3a",
+                            "min_season": None,
+                            "result_set": "opp_player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_stats": {
+                            "field": "fg3a",
+                            "min_season": None,
+                            "result_set": "opp_team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "opp_fg3m": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "team_seasons": {
+                        "team_opp_stats": {
+                            "field": "OPP_FG3M",
+                            "min_season": None,
+                            "result_set": "LeagueDashTeamStats",
+                        }
+                    },
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "fg3m",
+                            "min_season": None,
+                            "result_set": "opp_player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_stats": {
+                            "field": "fg3m",
+                            "min_season": None,
+                            "result_set": "opp_team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "opp_fta": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "team_seasons": {
+                        "team_opp_stats": {
+                            "field": "OPP_FTA",
+                            "min_season": None,
+                            "result_set": "LeagueDashTeamStats",
+                        }
+                    },
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "fta",
+                            "min_season": None,
+                            "result_set": "opp_player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_stats": {
+                            "field": "fta",
+                            "min_season": None,
+                            "result_set": "opp_team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "opp_ftm": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "team_seasons": {
+                        "team_opp_stats": {
+                            "field": "OPP_FTM",
+                            "min_season": None,
+                            "result_set": "LeagueDashTeamStats",
+                        }
+                    },
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "ftm",
+                            "min_season": None,
+                            "result_set": "opp_player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_stats": {
+                            "field": "ftm",
+                            "min_season": None,
+                            "result_set": "opp_team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "opp_o_rebs": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "team_seasons": {
+                        "team_opp_stats": {
+                            "field": "OPP_OREB",
+                            "min_season": None,
+                            "result_set": "LeagueDashTeamStats",
+                        }
+                    },
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "o_rebs",
+                            "min_season": None,
+                            "result_set": "opp_player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_stats": {
+                            "field": "o_rebs",
+                            "min_season": None,
+                            "result_set": "opp_team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "opp_points": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "points",
+                            "min_season": None,
+                            "result_set": "opp_player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_stats": {
+                            "field": "points",
+                            "min_season": None,
+                            "result_set": "opp_team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "opp_poss": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "poss",
+                            "min_season": None,
+                            "result_set": "opp_player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_stats": {
+                            "field": "poss",
+                            "min_season": None,
+                            "result_set": "opp_team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "opp_pot_poss_ending_scoring_opps": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "pot_poss_ending_scoring_opps",
+                            "min_season": None,
+                            "result_set": "opp_player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_stats": {
+                            "field": "pot_poss_ending_scoring_opps",
+                            "min_season": None,
+                            "result_set": "opp_team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "opp_turnovers": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "team_seasons": {
+                        "team_opp_stats": {
+                            "field": "OPP_TOV",
+                            "min_season": None,
+                            "result_set": "LeagueDashTeamStats",
+                        }
+                    },
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "turnovers",
+                            "min_season": None,
+                            "result_set": "opp_player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_stats": {
+                            "field": "turnovers",
+                            "min_season": None,
+                            "result_set": "opp_team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "ot": {
+        "check": None,
+        "type": "BOOLEAN",
+        "tables": [
+            "games",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "phase": {
+        "check": sorted(VALID_PHASES),
+        "type": "VARCHAR(100)",
+        "tables": ["errors"],
+        "nullable": False,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "player_id": {
+        "check": None,
+        "type": "BIGINT",
+        "tables": [
+            "core.player_seasons",
+            "intermediate.player_seasons",
+            "core.player_games",
+            "intermediate.player_games",
+            "core.teams_players",
+            "intermediate.teams_players",
+            "core.countries_players",
+            "identities_players",
+        ],
+        "nullable": False,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "points": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_basic_stats": {
+                            "field": "PTS",
                             "min_season": None,
                             "result_set": "LeagueDashPlayerStats",
                         },
                     },
-                },
-            },
+                    "player_games": {
+                        "player_game_stats": {
+                            "field": "PTS",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "points",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
+                    },
+                    "team_seasons": {
+                        "team_basic_stats": {
+                            "field": "PTS",
+                            "min_season": None,
+                            "result_set": "LeagueDashTeamStats",
+                        },
+                    },
+                    "team_games": {
+                        "team_game_stats": {
+                            "field": "PTS",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "points",
+                            "min_season": None,
+                            "result_set": "team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "poss": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_advanced_stats": {
+                            "field": "POSS",
+                            "min_season": None,
+                            "result_set": "LeagueDashPlayerStats",
+                        }
+                    },
+                    "player_games": {
+                        "player_game_stats": {
+                            "field": "POSS",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "poss",
+                            "min_season": None,
+                            "result_set": "on_player",
+                        },
+                    },
+                    "team_seasons": {
+                        "team_advanced_stats": {
+                            "field": "POSS",
+                            "min_season": None,
+                            "result_set": "LeagueDashTeamStats",
+                        }
+                    },
+                    "team_games": {
+                        "team_game_stats": {
+                            "field": "POSS",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "poss",
+                            "min_season": None,
+                            "result_set": "team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "pot_assists": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": [
+            "player_seasons",
+            "team_seasons",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_passing_stats": {
+                            "field": "POTENTIAL_AST",
+                            "min_season": None,
+                            "result_set": "LeagueDashPtStats",
+                        }
+                    },
+                    "team_seasons": {
+                        "team_passing_stats": {
+                            "field": "POTENTIAL_AST",
+                            "min_season": None,
+                            "result_set": "LeagueDashPtStats",
+                        }
+                    },
+                }
+            }
+        },
+    },
+    "pot_poss_ending_scoring_opp": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_games": {
+                        "pbp_stats": {
+                            "field": "pot_poss_ending_scoring_opps",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
+                    },
+                    "team_games": {
+                        "pbp_stats": {
+                            "field": "pot_poss_ending_scoring_opps",
+                            "min_season": None,
+                            "result_set": "team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "region": {
+        "check": None,
+        "type": "TEXT",
+        "tables": [
+            "teams",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "season": {
+        "check": None,
+        "type": "TEXT",
+        "tables": [
+            "games",
+            "team_seasons",
+            "player_seasons",
+            "season_coverages",
+            "game_coverages",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "games": {
+                        "league_schedule": {
+                            "field": "seasonYear",
+                            "transform": "safe_str",
+                            "min_season": None,
+                            "result_set": "SeasonGames",
+                        }
+                    }
+                }
+            }
+        },
+    },
+    "season_type": {
+        "check": sorted(SEASON_TYPE_VALUES),
+        "type": "TEXT",
+        "tables": [
+            "games",
+            "team_seasons",
+            "player_seasons",
+            "season_coverages",
+            "game_coverages",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "games": {
+                        "league_schedule": {
+                            "derived": {
+                                "field": "gameLabel",
+                                "map": {
+                                    "East First Round": "playoffs",
+                                    "West First Round": "playoffs",
+                                    "East Conf. Semifinals": "playoffs",
+                                    "West Conf. Semifinals": "playoffs",
+                                    "East Conf. Finals": "playoffs",
+                                    "West Conf. Finals": "playoffs",
+                                    "NBA Finals": "playoffs",
+                                    "SoFi Play-In Tournament": "play_in",
+                                },
+                                "default": "regular_season",
+                            },
+                            "result_set": "SeasonGames",
+                        }
+                    }
+                }
+            }
         },
     },
     "secs": {
+        "check": None,
         "type": "INTEGER",
         "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
         "nullable": False,
@@ -1043,6 +2584,11 @@ DB_COLUMNS: Mapping[str, Column] = {
                             "min_season": None,
                             "result_set": "LeagueGameLog",
                         },
+                        "pbp_stats": {
+                            "field": "secs",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
                     },
                     "team_seasons": {
                         "team_basic_stats": {
@@ -1059,12 +2605,357 @@ DB_COLUMNS: Mapping[str, Column] = {
                             "min_season": None,
                             "result_set": "LeagueGameLog",
                         },
+                        "pbp_stats": {
+                            "field": "secs",
+                            "min_season": None,
+                            "result_set": "team",
+                        },
                     },
                 }
             }
         },
     },
+    "secs_on_ball": {
+        "check": None,
+        "type": "INTEGER",
+        "tables": [
+            "player_seasons",
+            "team_seasons",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_possession_stats": {
+                            "field": "TIME_OF_POSS",
+                            "min_season": None,
+                            "result_set": "LeagueDashPtStats",
+                        }
+                    },
+                    "team_seasons": {
+                        "team_possession_stats": {
+                            "field": "TIME_OF_POSS",
+                            "min_season": None,
+                            "result_set": "LeagueDashPtStats",
+                        }
+                    },
+                }
+            }
+        },
+    },
+    "seq": {
+        "check": None,
+        "type": "INTEGER",
+        "tables": ["errors"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "standard_fouls": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_basic_stats": {
+                            "field": "FLS",
+                            "min_season": None,
+                            "result_set": "LeagueDashPlayerStats",
+                        }
+                    },
+                    "player_games": {
+                        "player_game_stats": {
+                            "field": "FLS",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "standard_fouls",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
+                    },
+                    "team_seasons": {
+                        "team_basic_stats": {
+                            "field": "FLS",
+                            "min_season": None,
+                            "result_set": "LeagueDashTeamStats",
+                        }
+                    },
+                    "team_games": {
+                        "team_game_stats": {
+                            "field": "FLS",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "standard_fouls",
+                            "min_season": None,
+                            "result_set": "team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "start": {
+        "check": None,
+        "type": "BOOLEAN",
+        "tables": ["player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_games": {
+                        "player_game_stats": {
+                            "field": "GS",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                    },
+                },
+            },
+        },
+    },
+    "starts": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["player_seasons"],
+        "nullable": False,
+        "default": 0,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_basic_stats": {
+                            "field": "GS",
+                            "min_season": None,
+                            "result_set": "LeagueDashPlayerStats",
+                        },
+                    },
+                },
+            },
+        },
+    },
+    "status": {
+        "check": list(STAGING_STATUS_VALUES),
+        "type": "TEXT",
+        "tables": [
+            "staging.games",
+            "staging.teams",
+            "staging.players",
+            "staging.leagues_teams",
+            "staging.teams_players",
+            "staging.countries_players",
+            "staging.player_seasons",
+            "staging.team_seasons",
+            "staging.player_games",
+            "staging.team_games",
+        ],
+        "nullable": False,
+        "default": "'pending'",
+        "dataset_mapping": None,
+    },
+    "steals": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_basic_stats": {
+                            "field": "STL",
+                            "min_season": None,
+                            "result_set": "LeagueDashPlayerStats",
+                        }
+                    },
+                    "player_games": {
+                        "player_game_stats": {
+                            "field": "STL",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "steals",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
+                    },
+                    "team_seasons": {
+                        "team_basic_stats": {
+                            "field": "STL",
+                            "min_season": None,
+                            "result_set": "LeagueDashTeamStats",
+                        }
+                    },
+                    "team_games": {
+                        "team_game_stats": {
+                            "field": "STL",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "steals",
+                            "min_season": None,
+                            "result_set": "team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "sts_id": {
+        "check": None,
+        "type": "BIGINT",
+        "tables": [
+            "core.teams",
+            "core.players",
+            "intermediate.teams",
+            "intermediate.players",
+        ],
+        "nullable": False,
+        "default": "nextval('core.sts_id_seq')",
+        "dataset_mapping": None,
+    },
+    "target": {
+        "check": sorted(TABLE_NAME_VALUES),
+        "type": "TEXT",
+        "tables": ["season_coverages", "game_coverages"],
+        "nullable": False,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "team_id": {
+        "check": None,
+        "type": "BIGINT",
+        "tables": [
+            "core.team_seasons",
+            "intermediate.team_seasons",
+            "core.player_seasons",
+            "intermediate.player_seasons",
+            "core.team_games",
+            "intermediate.team_games",
+            "core.player_games",
+            "intermediate.player_games",
+            "core.teams_players",
+            "intermediate.teams_players",
+            "core.leagues_teams",
+            "intermediate.leagues_teams",
+            "identities_teams",
+        ],
+        "nullable": False,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "touches": {
+        "check": None,
+        "type": "INTEGER",
+        "tables": [
+            "player_seasons",
+            "team_seasons",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_possession_stats": {
+                            "field": "TOUCHES",
+                            "min_season": None,
+                            "result_set": "LeagueDashPtStats",
+                        }
+                    },
+                    "team_seasons": {
+                        "team_possession_stats": {
+                            "field": "TOUCHES",
+                            "min_season": None,
+                            "result_set": "LeagueDashPtStats",
+                        }
+                    },
+                }
+            }
+        },
+    },
+    "traceback": {
+        "check": None,
+        "type": "TEXT",
+        "tables": ["errors"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": None,
+    },
+    "turnovers": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "player_seasons": {
+                        "player_basic_stats": {
+                            "field": "TOV",
+                            "min_season": None,
+                            "result_set": "LeagueDashPlayerStats",
+                        }
+                    },
+                    "player_games": {
+                        "player_game_stats": {
+                            "field": "TOV",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "turnovers",
+                            "min_season": None,
+                            "result_set": "player",
+                        },
+                    },
+                    "team_seasons": {
+                        "team_basic_stats": {
+                            "field": "TOV",
+                            "min_season": None,
+                            "result_set": "LeagueDashTeamStats",
+                        }
+                    },
+                    "team_games": {
+                        "team_game_stats": {
+                            "field": "TOV",
+                            "min_season": None,
+                            "result_set": "LeagueGameLog",
+                        },
+                        "pbp_stats": {
+                            "field": "turnovers",
+                            "min_season": None,
+                            "result_set": "team",
+                        },
+                    },
+                }
+            }
+        },
+    },
+    "updated_at": {
+        "check": None,
+        "type": "TIMESTAMP",
+        "tables": ["all"],
+        "nullable": False,
+        "default": "NOW()",
+        "dataset_mapping": None,
+    },
     "win": {
+        "check": None,
         "type": "BOOLEAN",
         "tables": ["team_games", "player_games"],
         "nullable": True,
@@ -1094,7 +2985,31 @@ DB_COLUMNS: Mapping[str, Column] = {
             }
         },
     },
+    "wingspan_ins": {
+        "check": None,
+        "type": "SMALLINT",
+        "tables": [
+            "players",
+        ],
+        "nullable": True,
+        "default": None,
+        "dataset_mapping": {
+            "NBA": {
+                "nba_id": {
+                    "players": {
+                        "combine_anthros": {
+                            "field": "WINGSPAN",
+                            "transform": "parse_inches",
+                            "min_season": None,
+                            "result_set": "DraftCombineStats",
+                        }
+                    }
+                }
+            }
+        },
+    },
     "wins": {
+        "check": None,
         "type": "SMALLINT",
         "tables": [
             "player_seasons",
@@ -1122,1737 +3037,5 @@ DB_COLUMNS: Mapping[str, Column] = {
                 }
             }
         },
-    },
-    # ==================================================================
-    # STATS — SHOOTING
-    # ==================================================================
-    "fg2m": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_basic_stats": {
-                            "derived": {
-                                "math": "FGM - FG3M",
-                                "fields": ["FGM", "FG3M"],
-                            },
-                            "result_set": "LeagueDashPlayerStats",
-                        }
-                    },
-                    "player_games": {
-                        "player_game_stats": {
-                            "derived": {
-                                "math": "FGM - FG3M",
-                                "fields": ["FGM", "FG3M"],
-                            },
-                            "result_set": "LeagueGameLog",
-                        },
-                        "pbp_stats": {
-                            "field": "fg2m",
-                            "min_season": None,
-                            "result_set": "player",
-                        },
-                    },
-                    "team_seasons": {
-                        "team_basic_stats": {
-                            "derived": {
-                                "math": "FGM - FG3M",
-                                "fields": ["FGM", "FG3M"],
-                            },
-                            "result_set": "LeagueDashTeamStats",
-                        }
-                    },
-                    "team_games": {
-                        "team_game_stats": {
-                            "derived": {
-                                "math": "FGM - FG3M",
-                                "fields": ["FGM", "FG3M"],
-                            },
-                            "result_set": "LeagueGameLog",
-                        },
-                        "pbp_stats": {
-                            "field": "fg2m",
-                            "min_season": None,
-                            "result_set": "team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "fg2a": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_basic_stats": {
-                            "derived": {
-                                "math": "FGA - FG3A",
-                                "fields": ["FGA", "FG3A"],
-                            },
-                            "result_set": "LeagueDashPlayerStats",
-                        }
-                    },
-                    "player_games": {
-                        "player_game_stats": {
-                            "derived": {
-                                "math": "FGA - FG3A",
-                                "fields": ["FGA", "FG3A"],
-                            },
-                            "result_set": "LeagueGameLog",
-                        },
-                        "pbp_stats": {
-                            "field": "fg2a",
-                            "min_season": None,
-                            "result_set": "player",
-                        },
-                    },
-                    "team_seasons": {
-                        "team_basic_stats": {
-                            "derived": {
-                                "math": "FGA - FG3A",
-                                "fields": ["FGA", "FG3A"],
-                            },
-                            "result_set": "LeagueDashTeamStats",
-                        }
-                    },
-                    "team_games": {
-                        "team_game_stats": {
-                            "derived": {
-                                "math": "FGA - FG3A",
-                                "fields": ["FGA", "FG3A"],
-                            },
-                            "result_set": "LeagueGameLog",
-                        },
-                        "pbp_stats": {
-                            "field": "fg2a",
-                            "min_season": None,
-                            "result_set": "team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "fg3m": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_basic_stats": {
-                            "field": "FG3M",
-                            "min_season": None,
-                            "result_set": "LeagueDashPlayerStats",
-                        }
-                    },
-                    "player_games": {
-                        "player_game_stats": {
-                            "field": "FG3M",
-                            "min_season": None,
-                            "result_set": "LeagueGameLog",
-                        },
-                        "pbp_stats": {
-                            "field": "fg3m",
-                            "min_season": None,
-                            "result_set": "player",
-                        },
-                    },
-                    "team_seasons": {
-                        "team_basic_stats": {
-                            "field": "FG3M",
-                            "min_season": None,
-                            "result_set": "LeagueDashTeamStats",
-                        }
-                    },
-                    "team_games": {
-                        "team_game_stats": {
-                            "field": "FG3M",
-                            "min_season": None,
-                            "result_set": "LeagueGameLog",
-                        },
-                        "pbp_stats": {
-                            "field": "fg3m",
-                            "min_season": None,
-                            "result_set": "team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "fg3a": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_basic_stats": {
-                            "field": "FG3A",
-                            "min_season": None,
-                            "result_set": "LeagueDashPlayerStats",
-                        }
-                    },
-                    "player_games": {
-                        "player_game_stats": {
-                            "field": "FG3A",
-                            "min_season": None,
-                            "result_set": "LeagueGameLog",
-                        },
-                        "pbp_stats": {
-                            "field": "fg3a",
-                            "min_season": None,
-                            "result_set": "player",
-                        },
-                    },
-                    "team_seasons": {
-                        "team_basic_stats": {
-                            "field": "FG3A",
-                            "min_season": None,
-                            "result_set": "LeagueDashTeamStats",
-                        }
-                    },
-                    "team_games": {
-                        "team_game_stats": {
-                            "field": "FG3A",
-                            "min_season": None,
-                            "result_set": "LeagueGameLog",
-                        },
-                        "pbp_stats": {
-                            "field": "fg3a",
-                            "min_season": None,
-                            "result_set": "team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "ftm": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_basic_stats": {
-                            "field": "FTM",
-                            "min_season": None,
-                            "result_set": "LeagueDashPlayerStats",
-                        }
-                    },
-                    "player_games": {
-                        "player_game_stats": {
-                            "field": "FTM",
-                            "min_season": None,
-                            "result_set": "LeagueGameLog",
-                        },
-                        "pbp_stats": {
-                            "field": "ftm",
-                            "min_season": None,
-                            "result_set": "player",
-                        },
-                    },
-                    "team_seasons": {
-                        "team_basic_stats": {
-                            "field": "FTM",
-                            "min_season": None,
-                            "result_set": "LeagueDashTeamStats",
-                        }
-                    },
-                    "team_games": {
-                        "team_game_stats": {
-                            "field": "FTM",
-                            "min_season": None,
-                            "result_set": "LeagueGameLog",
-                        },
-                        "pbp_stats": {
-                            "field": "ftm",
-                            "min_season": None,
-                            "result_set": "team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "fta": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_basic_stats": {
-                            "field": "FTA",
-                            "min_season": None,
-                            "result_set": "LeagueDashPlayerStats",
-                        }
-                    },
-                    "player_games": {
-                        "player_game_stats": {
-                            "field": "FTA",
-                            "min_season": None,
-                            "result_set": "LeagueGameLog",
-                        },
-                        "pbp_stats": {
-                            "field": "fta",
-                            "min_season": None,
-                            "result_set": "player",
-                        },
-                    },
-                    "team_seasons": {
-                        "team_basic_stats": {
-                            "field": "FTA",
-                            "min_season": None,
-                            "result_set": "LeagueDashTeamStats",
-                        }
-                    },
-                    "team_games": {
-                        "team_game_stats": {
-                            "field": "FTA",
-                            "min_season": None,
-                            "result_set": "LeagueGameLog",
-                        },
-                        "pbp_stats": {
-                            "field": "fta",
-                            "min_season": None,
-                            "result_set": "team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    # ==================================================================
-    # STATS — REBOUNDING
-    # ==================================================================
-    "o_rebs": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_basic_stats": {
-                            "field": "OREB",
-                            "min_season": None,
-                            "result_set": "LeagueDashPlayerStats",
-                        }
-                    },
-                    "player_games": {
-                        "player_game_stats": {
-                            "field": "OREB",
-                            "min_season": None,
-                            "result_set": "LeagueGameLog",
-                        },
-                        "pbp_stats": {
-                            "field": "o_rebs",
-                            "min_season": None,
-                            "result_set": "player",
-                        },
-                    },
-                    "team_seasons": {
-                        "team_basic_stats": {
-                            "field": "OREB",
-                            "min_season": None,
-                            "result_set": "LeagueDashTeamStats",
-                        }
-                    },
-                    "team_games": {
-                        "team_game_stats": {
-                            "field": "OREB",
-                            "min_season": None,
-                            "result_set": "LeagueGameLog",
-                        },
-                        "pbp_stats": {
-                            "field": "o_rebs",
-                            "min_season": None,
-                            "result_set": "team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "d_rebs": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_basic_stats": {
-                            "field": "DREB",
-                            "min_season": None,
-                            "result_set": "LeagueDashPlayerStats",
-                        }
-                    },
-                    "player_games": {
-                        "player_game_stats": {
-                            "field": "DREB",
-                            "min_season": None,
-                            "result_set": "LeagueGameLog",
-                        },
-                        "pbp_stats": {
-                            "field": "d_rebs",
-                            "min_season": None,
-                            "result_set": "player",
-                        },
-                    },
-                    "team_seasons": {
-                        "team_basic_stats": {
-                            "field": "DREB",
-                            "min_season": None,
-                            "result_set": "LeagueDashTeamStats",
-                        }
-                    },
-                    "team_games": {
-                        "team_game_stats": {
-                            "field": "DREB",
-                            "min_season": None,
-                            "result_set": "LeagueGameLog",
-                        },
-                        "pbp_stats": {
-                            "field": "d_rebs",
-                            "min_season": None,
-                            "result_set": "team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    # ==================================================================
-    # STATS — PLAYMAKING
-    # ==================================================================
-    "assists": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_basic_stats": {
-                            "field": "AST",
-                            "min_season": None,
-                            "result_set": "LeagueDashPlayerStats",
-                        }
-                    },
-                    "player_games": {
-                        "player_game_stats": {
-                            "field": "AST",
-                            "min_season": None,
-                            "result_set": "LeagueGameLog",
-                        },
-                    },
-                    "team_seasons": {
-                        "team_basic_stats": {
-                            "field": "AST",
-                            "min_season": None,
-                            "result_set": "LeagueDashTeamStats",
-                        }
-                    },
-                    "team_games": {
-                        "team_game_stats": {
-                            "field": "AST",
-                            "min_season": None,
-                            "result_set": "LeagueGameLog",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "assist_points": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_games": {
-                        "pbp_stats": {
-                            "field": "assist_points",
-                            "min_season": None,
-                            "result_set": "player",
-                        },
-                    },
-                    "team_games": {
-                        "pbp_stats": {
-                            "field": "assist_points",
-                            "min_season": None,
-                            "result_set": "team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "turnovers": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_basic_stats": {
-                            "field": "TOV",
-                            "min_season": None,
-                            "result_set": "LeagueDashPlayerStats",
-                        }
-                    },
-                    "player_games": {
-                        "player_game_stats": {
-                            "field": "TOV",
-                            "min_season": None,
-                            "result_set": "LeagueGameLog",
-                        },
-                        "pbp_stats": {
-                            "field": "turnovers",
-                            "min_season": None,
-                            "result_set": "player",
-                        },
-                    },
-                    "team_seasons": {
-                        "team_basic_stats": {
-                            "field": "TOV",
-                            "min_season": None,
-                            "result_set": "LeagueDashTeamStats",
-                        }
-                    },
-                    "team_games": {
-                        "team_game_stats": {
-                            "field": "TOV",
-                            "min_season": None,
-                            "result_set": "LeagueGameLog",
-                        },
-                        "pbp_stats": {
-                            "field": "turnovers",
-                            "min_season": None,
-                            "result_set": "team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "pot_assists": {
-        "type": "SMALLINT",
-        "tables": [
-            "player_seasons",
-            "team_seasons",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_passing_stats": {
-                            "field": "POTENTIAL_AST",
-                            "min_season": None,
-                            "result_set": "LeagueDashPtStats",
-                        }
-                    },
-                    "team_seasons": {
-                        "team_passing_stats": {
-                            "field": "POTENTIAL_AST",
-                            "min_season": None,
-                            "result_set": "LeagueDashPtStats",
-                        }
-                    },
-                }
-            }
-        },
-    },
-    # ==================================================================
-    # STATS — DEFENSE
-    # ==================================================================
-    "blocks": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_basic_stats": {
-                            "field": "BLK",
-                            "min_season": None,
-                            "result_set": "LeagueDashPlayerStats",
-                        }
-                    },
-                    "player_games": {
-                        "player_game_stats": {
-                            "field": "BLK",
-                            "min_season": None,
-                            "result_set": "LeagueGameLog",
-                        },
-                        "pbp_stats": {
-                            "field": "blocks",
-                            "min_season": None,
-                            "result_set": "player",
-                        },
-                    },
-                    "team_seasons": {
-                        "team_basic_stats": {
-                            "field": "BLK",
-                            "min_season": None,
-                            "result_set": "LeagueDashTeamStats",
-                        }
-                    },
-                    "team_games": {
-                        "team_game_stats": {
-                            "field": "BLK",
-                            "min_season": None,
-                            "result_set": "LeagueGameLog",
-                        },
-                        "pbp_stats": {
-                            "field": "blocks",
-                            "min_season": None,
-                            "result_set": "team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "steals": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_basic_stats": {
-                            "field": "STL",
-                            "min_season": None,
-                            "result_set": "LeagueDashPlayerStats",
-                        }
-                    },
-                    "player_games": {
-                        "player_game_stats": {
-                            "field": "STL",
-                            "min_season": None,
-                            "result_set": "LeagueGameLog",
-                        },
-                        "pbp_stats": {
-                            "field": "steals",
-                            "min_season": None,
-                            "result_set": "player",
-                        },
-                    },
-                    "team_seasons": {
-                        "team_basic_stats": {
-                            "field": "STL",
-                            "min_season": None,
-                            "result_set": "LeagueDashTeamStats",
-                        }
-                    },
-                    "team_games": {
-                        "team_game_stats": {
-                            "field": "STL",
-                            "min_season": None,
-                            "result_set": "LeagueGameLog",
-                        },
-                        "pbp_stats": {
-                            "field": "steals",
-                            "min_season": None,
-                            "result_set": "team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "standard_fouls": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_basic_stats": {
-                            "field": "FLS",
-                            "min_season": None,
-                            "result_set": "LeagueDashPlayerStats",
-                        }
-                    },
-                    "player_games": {
-                        "player_game_stats": {
-                            "field": "FLS",
-                            "min_season": None,
-                            "result_set": "LeagueGameLog",
-                        },
-                        "pbp_stats": {
-                            "field": "standard_fouls",
-                            "min_season": None,
-                            "result_set": "player",
-                        },
-                    },
-                    "team_seasons": {
-                        "team_basic_stats": {
-                            "field": "FLS",
-                            "min_season": None,
-                            "result_set": "LeagueDashTeamStats",
-                        }
-                    },
-                    "team_games": {
-                        "team_game_stats": {
-                            "field": "FLS",
-                            "min_season": None,
-                            "result_set": "LeagueGameLog",
-                        },
-                        "pbp_stats": {
-                            "field": "standard_fouls",
-                            "min_season": None,
-                            "result_set": "team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "elevated_fouls": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_games": {
-                        "pbp_stats": {
-                            "field": "elevated_fouls",
-                            "min_season": None,
-                            "result_set": "player",
-                        },
-                    },
-                    "team_games": {
-                        "pbp_stats": {
-                            "field": "elevated_fouls",
-                            "min_season": None,
-                            "result_set": "team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "o_fouls_draws": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_games": {
-                        "pbp_stats": {
-                            "field": "o_fouls_draws",
-                            "result_set": "player",
-                            "min_season": "2005-06",
-                        },
-                    },
-                    "team_games": {
-                        "pbp_stats": {
-                            "field": "o_fouls_draws",
-                            "min_season": None,
-                            "result_set": "team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    # ==================================================================
-    # STATS — HUSTLE
-    # ==================================================================
-    "deflections": {
-        "type": "SMALLINT",
-        "tables": [
-            "player_seasons",
-            "team_seasons",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_hustle_stats": {
-                            "field": "DEFLECTIONS",
-                            "min_season": None,
-                            "result_set": "HustleStatsPlayer",
-                        }
-                    },
-                    "team_seasons": {
-                        "team_hustle_stats": {
-                            "field": "DEFLECTIONS",
-                            "min_season": None,
-                            "result_set": "HustleStatsTeam",
-                        }
-                    },
-                }
-            }
-        },
-    },
-    "cont_d_fga": {
-        "type": "SMALLINT",
-        "tables": [
-            "player_seasons",
-            "team_seasons",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_hustle_stats": {
-                            "field": "CONTESTED_SHOTS",
-                            "min_season": None,
-                            "result_set": "HustleStatsPlayer",
-                        }
-                    },
-                    "team_seasons": {
-                        "team_hustle_stats": {
-                            "field": "CONTESTED_SHOTS",
-                            "min_season": None,
-                            "result_set": "HustleStatsTeam",
-                        }
-                    },
-                }
-            }
-        },
-    },
-    # ==================================================================
-    # STATS — POSSESSION
-    # ==================================================================
-    "poss": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_advanced_stats": {
-                            "field": "POSS",
-                            "min_season": None,
-                            "result_set": "LeagueDashPlayerStats",
-                        }
-                    },
-                    "player_games": {
-                        "player_game_stats": {
-                            "field": "POSS",
-                            "min_season": None,
-                            "result_set": "LeagueGameLog",
-                        },
-                        "pbp_stats": {
-                            "field": "poss",
-                            "min_season": None,
-                            "result_set": "player",
-                        },
-                    },
-                    "team_seasons": {
-                        "team_advanced_stats": {
-                            "field": "POSS",
-                            "min_season": None,
-                            "result_set": "LeagueDashTeamStats",
-                        }
-                    },
-                    "team_games": {
-                        "team_game_stats": {
-                            "field": "POSS",
-                            "min_season": None,
-                            "result_set": "LeagueGameLog",
-                        },
-                        "pbp_stats": {
-                            "field": "poss",
-                            "min_season": None,
-                            "result_set": "team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "o_poss_secs": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_games": {
-                        "pbp_stats": {
-                            "field": "o_poss_secs",
-                            "min_season": None,
-                            "result_set": "player",
-                        },
-                    },
-                    "team_games": {
-                        "pbp_stats": {
-                            "field": "o_poss_secs",
-                            "min_season": None,
-                            "result_set": "team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "d_poss_secs": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_games": {
-                        "pbp_stats": {
-                            "field": "opp_o_poss_secs",
-                            "min_season": None,
-                            "result_set": "opp_player",
-                        },
-                    },
-                    "team_games": {
-                        "pbp_stats": {
-                            "field": "opp_o_poss_secs",
-                            "min_season": None,
-                            "result_set": "opp_team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "pot_poss_ending_scoring_opp": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_games": {
-                        "pbp_stats": {
-                            "field": "pot_poss_ending_scoring_opps",
-                            "min_season": None,
-                            "result_set": "player",
-                        },
-                    },
-                    "team_games": {
-                        "pbp_stats": {
-                            "field": "pot_poss_ending_scoring_opps",
-                            "min_season": None,
-                            "result_set": "team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "secs_on_ball": {
-        "type": "INTEGER",
-        "tables": [
-            "player_seasons",
-            "team_seasons",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_possession_stats": {
-                            "field": "TIME_OF_POSS",
-                            "min_season": None,
-                            "result_set": "LeagueDashPtStats",
-                        }
-                    },
-                    "team_seasons": {
-                        "team_possession_stats": {
-                            "field": "TIME_OF_POSS",
-                            "min_season": None,
-                            "result_set": "LeagueDashPtStats",
-                        }
-                    },
-                }
-            }
-        },
-    },
-    "touches": {
-        "type": "INTEGER",
-        "tables": [
-            "player_seasons",
-            "team_seasons",
-        ],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_possession_stats": {
-                            "field": "TOUCHES",
-                            "min_season": None,
-                            "result_set": "LeagueDashPtStats",
-                        }
-                    },
-                    "team_seasons": {
-                        "team_possession_stats": {
-                            "field": "TOUCHES",
-                            "min_season": None,
-                            "result_set": "LeagueDashPtStats",
-                        }
-                    },
-                }
-            }
-        },
-    },
-    # ==================================================================
-    # STATS — OPPONENT
-    # ==================================================================
-    "opp_fg2m": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "team_seasons": {
-                        "team_opp_stats": {
-                            "derived": {
-                                "math": "FGM - FG3M",
-                                "fields": ["OPP_FGM", "OPP_FG3M"],
-                            },
-                            "result_set": "LeagueDashTeamStats",
-                        }
-                    },
-                    "player_games": {
-                        "pbp_stats": {
-                            "field": "opp_fg2m",
-                            "min_season": None,
-                            "result_set": "opp_player",
-                        },
-                    },
-                    "team_games": {
-                        "pbp_stats": {
-                            "field": "opp_fg2m",
-                            "min_season": None,
-                            "result_set": "opp_team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "opp_fg2a": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "team_seasons": {
-                        "team_opp_stats": {
-                            "derived": {
-                                "math": "FGA - FG3A",
-                                "fields": ["OPP_FGA", "OPP_FG3A"],
-                            },
-                            "result_set": "LeagueDashTeamStats",
-                        }
-                    },
-                    "player_games": {
-                        "pbp_stats": {
-                            "field": "opp_fg2a",
-                            "min_season": None,
-                            "result_set": "opp_player",
-                        },
-                    },
-                    "team_games": {
-                        "pbp_stats": {
-                            "field": "opp_fg2a",
-                            "min_season": None,
-                            "result_set": "opp_team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "opp_fg3m": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "team_seasons": {
-                        "team_opp_stats": {
-                            "field": "OPP_FG3M",
-                            "min_season": None,
-                            "result_set": "LeagueDashTeamStats",
-                        }
-                    },
-                    "player_games": {
-                        "pbp_stats": {
-                            "field": "opp_fg3m",
-                            "min_season": None,
-                            "result_set": "opp_player",
-                        },
-                    },
-                    "team_games": {
-                        "pbp_stats": {
-                            "field": "opp_fg3m",
-                            "min_season": None,
-                            "result_set": "opp_team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "opp_fg3a": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "team_seasons": {
-                        "team_opp_stats": {
-                            "field": "OPP_FG3A",
-                            "min_season": None,
-                            "result_set": "LeagueDashTeamStats",
-                        }
-                    },
-                    "player_games": {
-                        "pbp_stats": {
-                            "field": "opp_fg3a",
-                            "min_season": None,
-                            "result_set": "opp_player",
-                        },
-                    },
-                    "team_games": {
-                        "pbp_stats": {
-                            "field": "opp_fg3a",
-                            "min_season": None,
-                            "result_set": "opp_team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "opp_ftm": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "team_seasons": {
-                        "team_opp_stats": {
-                            "field": "OPP_FTM",
-                            "min_season": None,
-                            "result_set": "LeagueDashTeamStats",
-                        }
-                    },
-                    "player_games": {
-                        "pbp_stats": {
-                            "field": "opp_ftm",
-                            "min_season": None,
-                            "result_set": "opp_player",
-                        },
-                    },
-                    "team_games": {
-                        "pbp_stats": {
-                            "field": "opp_ftm",
-                            "min_season": None,
-                            "result_set": "opp_team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "opp_fta": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "team_seasons": {
-                        "team_opp_stats": {
-                            "field": "OPP_FTA",
-                            "min_season": None,
-                            "result_set": "LeagueDashTeamStats",
-                        }
-                    },
-                    "player_games": {
-                        "pbp_stats": {
-                            "field": "opp_fta",
-                            "min_season": None,
-                            "result_set": "opp_player",
-                        },
-                    },
-                    "team_games": {
-                        "pbp_stats": {
-                            "field": "opp_fta",
-                            "min_season": None,
-                            "result_set": "opp_team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "opp_o_rebs": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "team_seasons": {
-                        "team_opp_stats": {
-                            "field": "OPP_OREB",
-                            "min_season": None,
-                            "result_set": "LeagueDashTeamStats",
-                        }
-                    },
-                    "player_games": {
-                        "pbp_stats": {
-                            "field": "opp_o_rebs",
-                            "min_season": None,
-                            "result_set": "opp_player",
-                        },
-                    },
-                    "team_games": {
-                        "pbp_stats": {
-                            "field": "opp_o_rebs",
-                            "min_season": None,
-                            "result_set": "opp_team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "opp_d_rebs": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "team_seasons": {
-                        "team_opp_stats": {
-                            "field": "OPP_DREB",
-                            "min_season": None,
-                            "result_set": "LeagueDashTeamStats",
-                        }
-                    },
-                    "player_games": {
-                        "pbp_stats": {
-                            "field": "opp_d_rebs",
-                            "min_season": None,
-                            "result_set": "opp_player",
-                        },
-                    },
-                    "team_games": {
-                        "pbp_stats": {
-                            "field": "opp_d_rebs",
-                            "min_season": None,
-                            "result_set": "opp_team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "opp_turnovers": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "team_seasons": {
-                        "team_opp_stats": {
-                            "field": "OPP_TOV",
-                            "min_season": None,
-                            "result_set": "LeagueDashTeamStats",
-                        }
-                    },
-                    "player_games": {
-                        "pbp_stats": {
-                            "field": "opp_turnovers",
-                            "min_season": None,
-                            "result_set": "opp_player",
-                        },
-                    },
-                    "team_games": {
-                        "pbp_stats": {
-                            "field": "opp_turnovers",
-                            "min_season": None,
-                            "result_set": "opp_team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "opp_poss": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_games": {
-                        "pbp_stats": {
-                            "field": "opp_poss",
-                            "min_season": None,
-                            "result_set": "opp_player",
-                        },
-                    },
-                    "team_games": {
-                        "pbp_stats": {
-                            "field": "opp_poss",
-                            "min_season": None,
-                            "result_set": "opp_team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "opp_pot_poss_ending_scoring_opps": {
-        "type": "SMALLINT",
-        "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_games": {
-                        "pbp_stats": {
-                            "field": "opp_pot_poss_ending_scoring_opps",
-                            "min_season": None,
-                            "result_set": "opp_player",
-                        },
-                    },
-                    "team_games": {
-                        "pbp_stats": {
-                            "field": "opp_pot_poss_ending_scoring_opps",
-                            "min_season": None,
-                            "result_set": "opp_team",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    # ==================================================================
-    # STATS — ON-COURT (player tables only)
-    # ==================================================================
-    "on_fg2m": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_on_stats": {
-                            "derived": {
-                                "math": "FGM - FG3M",
-                                "fields": ["FGM", "FG3M"],
-                            },
-                            "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
-                        }
-                    },
-                    "player_games": {
-                        "pbp_stats": {
-                            "field": "on_fg2m",
-                            "min_season": None,
-                            "result_set": "on_player",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "on_fg2a": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_on_stats": {
-                            "derived": {
-                                "math": "FGA - FG3A",
-                                "fields": ["FGA", "FG3A"],
-                            },
-                            "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
-                        }
-                    },
-                    "player_games": {
-                        "pbp_stats": {
-                            "field": "on_fg2a",
-                            "min_season": None,
-                            "result_set": "on_player",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "on_fg3m": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_on_stats": {
-                            "field": "FG3M",
-                            "min_season": None,
-                            "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
-                        }
-                    },
-                    "player_games": {
-                        "pbp_stats": {
-                            "field": "on_fg3m",
-                            "min_season": None,
-                            "result_set": "on_player",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "on_fg3a": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_on_stats": {
-                            "field": "FG3A",
-                            "min_season": None,
-                            "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
-                        }
-                    },
-                    "player_games": {
-                        "pbp_stats": {
-                            "field": "on_fg3a",
-                            "min_season": None,
-                            "result_set": "on_player",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "on_ftm": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_on_stats": {
-                            "field": "FTM",
-                            "min_season": None,
-                            "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
-                        }
-                    },
-                    "player_games": {
-                        "pbp_stats": {
-                            "field": "on_ftm",
-                            "min_season": None,
-                            "result_set": "on_player",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "on_fta": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_on_stats": {
-                            "field": "FTA",
-                            "min_season": None,
-                            "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
-                        }
-                    },
-                    "player_games": {
-                        "pbp_stats": {
-                            "field": "on_fta",
-                            "min_season": None,
-                            "result_set": "on_player",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "on_o_rebs": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_on_stats": {
-                            "field": "OREB",
-                            "min_season": None,
-                            "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
-                        }
-                    },
-                    "player_games": {
-                        "pbp_stats": {
-                            "field": "on_o_rebs",
-                            "min_season": None,
-                            "result_set": "on_player",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "on_d_rebs": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_on_stats": {
-                            "field": "DREB",
-                            "min_season": None,
-                            "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
-                        }
-                    },
-                    "player_games": {
-                        "pbp_stats": {
-                            "field": "on_d_rebs",
-                            "min_season": None,
-                            "result_set": "on_player",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "on_turnovers": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_seasons": {
-                        "player_on_stats": {
-                            "field": "TOV",
-                            "min_season": None,
-                            "result_set": "PlayersOnCourtTeamPlayerOnOffDetails",
-                        }
-                    },
-                    "player_games": {
-                        "pbp_stats": {
-                            "field": "on_turnovers",
-                            "min_season": None,
-                            "result_set": "on_player",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    "on_pot_poss_ending_scoring_opps": {
-        "type": "SMALLINT",
-        "tables": ["player_seasons", "player_games"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": {
-            "NBA": {
-                "nba_id": {
-                    "player_games": {
-                        "pbp_stats": {
-                            "field": "on_pot_poss_ending_scoring_opps",
-                            "min_season": None,
-                            "result_set": "on_player",
-                        },
-                    },
-                }
-            }
-        },
-    },
-    # ==================================================================
-    # ERRORS TABLE
-    # ==================================================================
-    "error_id": {
-        "type": "BIGINT",
-        "tables": ["errors"],
-        "nullable": False,
-        "default": "nextval('core.error_id_seq')",
-        "dataset_mapping": None,
-    },
-    "phase": {
-        "type": "VARCHAR(100)",
-        "tables": ["errors"],
-        "nullable": False,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "message": {
-        "type": "TEXT",
-        "tables": ["errors"],
-        "nullable": False,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "traceback": {
-        "type": "TEXT",
-        "tables": ["errors"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "identity": {
-        "type": "TEXT",
-        "tables": ["errors"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "dataset": {
-        "type": "TEXT",
-        "tables": ["errors"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "ext_game_id": {
-        "type": "TEXT",
-        "tables": ["errors"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "event_id": {
-        "type": "TEXT",
-        "tables": ["errors"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "seq": {
-        "type": "INTEGER",
-        "tables": ["errors"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "event": {
-        "type": "TEXT",
-        "tables": ["errors"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
-    },
-
-    # ==================================================================
-    # PBP EVENTS
-    # ==================================================================
-    "event_key": {
-        "type": "TEXT",
-        "tables": ["pbp_events"],
-        "nullable": False,
-        "default": None,
-        "dataset_mapping": None,
-    },
-    "handling": {
-        "type": "TEXT",
-        "tables": ["pbp_events"],
-        "nullable": False,
-        "default": "'unreviewed'",
-        "dataset_mapping": None,
     },
 }

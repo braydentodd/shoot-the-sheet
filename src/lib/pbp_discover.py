@@ -25,14 +25,8 @@ def discover(
 ) -> dict[str, Any]:
     """Discover event shapes and populate ``core.pbp_events``."""
     client_module = _resolve_source(identity_code, dataset_name)
-
-    from src.lib.pbp_classifier import (
-        build_nba_event_key,
-        build_nba_signature,
-    )
-
-    build_signature = build_nba_signature
-    build_event_key = build_nba_event_key
+    build_signature = client_module.build_signature
+    build_event_key = client_module.build_event_key
 
     games = _load_games(conn, identity_code, dataset_name, season, game_id)
     if not games:
@@ -82,10 +76,10 @@ def _resolve_source(identity_code: str, dataset_name: str):
     _config_mod, client_mod = get_source_modules(source_name)
     if not hasattr(client_mod, "fetch_raw_rows"):
         raise RuntimeError(f"Source {source_name!r} missing fetch_raw_rows()")
+    for attr in ("build_signature", "build_event_key"):
+        if not hasattr(client_mod, attr):
+            raise RuntimeError(f"Source {source_name!r} missing {attr}()")
     return client_mod
-
-
-
 
 def _load_games(conn, identity_code, dataset_name, season, game_id):
     from src.definitions.datasets import DATASETS
@@ -139,12 +133,3 @@ def _count_unreviewed(conn, identity_code, dataset_name):
                      "WHERE identity = %s AND dataset = %s AND handling = 'unreviewed'",
                      (identity_code, dataset_name))
         return cur.fetchone()[0]
-
-
-def _to_int(val: Any) -> int:
-    if val is None or val == "":
-        return 0
-    try:
-        return int(val)
-    except (ValueError, TypeError):
-        return 0

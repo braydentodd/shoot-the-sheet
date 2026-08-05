@@ -24,9 +24,9 @@ import logging
 from typing import Dict, List, Union
 
 from src.definitions.leagues import LEAGUES
-from src.definitions.schema import iter_tables
 from src.lib.leagues_resolver import get_oldest_retained_season
 from src.lib.postgres import db_connection, get_db_connection, quote_col
+from src.lib.schema_resolver import iter_tables
 
 logger = logging.getLogger(__name__)
 

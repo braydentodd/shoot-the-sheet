@@ -7,7 +7,7 @@ table registry metadata.
 
 from typing import Any, Dict, Iterable, Optional, Tuple
 
-from src.definitions.schema import get_table
+from src.lib.schema_resolver import get_table
 
 
 def load_fk_mapping(

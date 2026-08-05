@@ -12,6 +12,7 @@ def ev(
     secs: int | None = 0,
     period: int = 1,
     chain_id: str | None = None,
+    fouled_player_id: str | None = None,
     source: str | None = None,
 ) -> PBPEvent:
     """Build a minimal PBPEvent row for tests."""
@@ -26,6 +27,7 @@ def ev(
         "player_id": player,
         "event": event,
         "chain_id": chain_id,
+        "fouled_player_id": fouled_player_id,
         "source": source or str(event_id),
     }
 

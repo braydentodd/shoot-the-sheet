@@ -23,6 +23,10 @@ from src.lib.entity_resolver import EntityResolver
 from src.lib.error_recorder import log_error_simple
 from src.lib.pbp_classifier import EventClassifier
 from src.lib.rate_limiter import get_rate_limiter
+from src.sources.nba_data.classifier import (
+    build_nba_event_key as build_event_key,
+    build_nba_signature as build_signature,
+)
 from src.sources.nba_data.config import (
     ARCHIVE_DIR,
     ARCHIVE_URL_TEMPLATE,

@@ -17,9 +17,9 @@ from typing import Any, Dict, List, Union
 
 from src.definitions.datasets import DATASETS
 from src.definitions.db_columns import DB_COLUMNS
-from src.definitions.schema import get_table
 from src.lib.call_grouper import is_dataset_available
 from src.lib.postgres import db_connection, quote_col
+from src.lib.schema_resolver import get_table
 
 logger = logging.getLogger(__name__)
 

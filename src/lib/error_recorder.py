@@ -1,41 +1,76 @@
 """
 Shoot the Sheet - Error Recorder
 
-Provides a single write path for recording ETL errors to ``core.errors``.
+Single home for the ETL error model and the one write path for
+recording errors to ``core.errors``.
 
 The schema for the ``errors`` table is defined in
-:data:`src.definitions.db_columns.DB_COLUMNS` -- this module is the consumer
-that writes to it. All ETL phases should call :func:`log_error` instead of
-writing to ``core.errors`` directly.
+:data:`src.definitions.db_columns.DB_COLUMNS` -- this module derives its
+column list from that registry (the single source of truth) and is the
+only consumer that writes to the table.  All ETL phases should call
+:func:`log_error` instead of writing to ``core.errors`` directly.
 
-PBP derivation errors carry game context (``identity``, ``dataset``,
-``ext_game_id``, ``event_id``, ``seq``, ``event``) so each error is
-traceable to the exact event.
+PBP derivation errors (:class:`PbpError`) carry game context
+(``identity``, ``dataset``, ``ext_game_id``, ``event_id``, ``seq``,
+``event``) plus a ``severity`` taken from the ``INVARIANTS`` config, so
+each error is traceable to the exact event and its severity is
+config-driven.
 """
 
 import logging
+from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
+from src.definitions.db_columns import DB_COLUMNS
 from src.lib.postgres import db_connection, quote_col
 
 logger = logging.getLogger(__name__)
 
 # ============================================================================
-# STANDARD COLUMN ORDER (matches core.errors table in schema.py + db_columns.py)
+# ERROR MODEL
 # ============================================================================
 
-_ERROR_COLUMNS = [
-    "error_id",
-    "phase",
-    "message",
-    "traceback",
-    "identity",
-    "dataset",
-    "ext_game_id",
-    "event_id",
-    "seq",
-    "event",
-]
+
+@dataclass(frozen=True)
+class PbpError:
+    """A single PBP derivation error or invariant violation.
+
+    Attributes:
+        rule: The ``INVARIANTS`` key or chain rule that fired.
+        message: Human-readable description.
+        severity: ``"error"`` fails the game; ``"warn"`` logs loudly.
+            Taken from the fired invariant's config.
+        game_id: External game id.
+        event_id: Id of the offending event (source id or derived id).
+        seq: Sequence position of the offending event.
+        event: Canonical event name of the offending event.
+        team_id: Team id of the offending event.
+        player_id: Player id of the offending event.
+    """
+
+    rule: str
+    message: str
+    severity: str = "error"
+    game_id: str = ""
+    event_id: str | None = None
+    seq: int | None = None
+    event: str | None = None
+    team_id: str | None = None
+    player_id: str | None = None
+    detail: dict[str, Any] = field(default_factory=dict)
+
+
+# ============================================================================
+# WRITE PATH
+# ============================================================================
+
+# Column order for core.errors, derived from DB_COLUMNS so the insert
+# statement can never drift from the registry.
+_ERROR_COLUMNS: tuple[str, ...] = tuple(
+    name
+    for name, meta in DB_COLUMNS.items()
+    if "errors" in (meta.get("tables") if isinstance(meta.get("tables"), list) else [meta.get("tables")])
+)
 
 
 def log_error(

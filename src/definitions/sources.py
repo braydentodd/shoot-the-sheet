@@ -40,7 +40,7 @@ Required:
 Optional:
     detect_recent_games(dataset_name, league_code, season,
                         season_type_name, lookback_days, identity_code)
-        -> Union[Dict, None]
+        -> dict | None
 
         Only needed if this source participates in season activity
         detection.  Register in ``season_detector._SEASON_DETECTORS``.
@@ -51,7 +51,7 @@ Dispatched via ``_maintain_pbp`` -> ``fetch_game_pbp``.
 
 Required:
     fetch_game_pbp(game_id, season, home_team_id, away_team_id,
-                   identity) -> List[PBPEvent]
+                   identity) -> list[PBPEvent]
 
         Returns normalized PBP events for a single game.
 

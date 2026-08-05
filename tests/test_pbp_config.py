@@ -30,28 +30,62 @@ class PbpConfigValidationTests(unittest.TestCase):
         for name, ev_def in PBP_EVENTS.items():
             self.assertEqual(
                 set(ev_def.keys()),
-                {"sort_priority", "indicate_poss", "indicate_on_court",
-                 "shot", "points", "poss_transition"},
+                {"indicate_poss", "indicate_on_court", "shot", "points",
+                 "shot_family", "shot_result", "foul_family",
+                 "poss_transition"},
                 name,
             )
 
     def test_chain_rules_uniform(self):
-        from src.definitions.chain_rules import CHAIN_RULES
+        from src.definitions.pbp import CHAIN_RULES
 
         self.assertGreaterEqual(len(CHAIN_RULES), 15)
-        required = {"anchor", "scope", "position", "skip", "max_gap",
+        required = {"anchor", "scope", "skip", "max_gap",
                     "cross_period", "reanchor", "required", "synthesize",
-                    "suppress"}
+                    "suppress", "superseded_by"}
         for name, rule in CHAIN_RULES.items():
             self.assertEqual(set(rule.keys()), required, name)
+            self.assertIsInstance(rule["anchor"], tuple)
 
     def test_invariants_uniform(self):
-        from src.definitions.chain_rules import INVARIANTS
+        from src.definitions.pbp import INVARIANTS
 
         self.assertGreaterEqual(len(INVARIANTS), 12)
-        required = {"events", "except_events", "state", "severity", "message"}
+        required = {"except_events", "severity"}
         for name, inv in INVARIANTS.items():
             self.assertEqual(set(inv.keys()), required, name)
+
+    def test_ft_misses_consolidated(self):
+        # FT misses are one canonical event (ft_miss, 0 points); the
+        # per-index miss events no longer exist anywhere in the config.
+        from src.definitions.pbp import CHAIN_RULES, PBP_EVENTS
+
+        self.assertIn("ft_miss", PBP_EVENTS)
+        self.assertEqual(PBP_EVENTS["ft_miss"]["points"], 0)
+        self.assertEqual(PBP_EVENTS["ft_miss"]["shot_family"], "ft")
+        self.assertEqual(PBP_EVENTS["ft_miss"]["shot_result"], "miss")
+        for name in ("ft1_miss", "ft2_miss", "ft3_miss"):
+            self.assertNotIn(name, PBP_EVENTS)
+            self.assertNotIn(name, CHAIN_RULES)
+        self.assertIn("ft_miss", CHAIN_RULES)
+        # The FT chain skip lists reference the consolidated miss (and no
+        # stale per-index miss names).
+        for name in ("ft1_make", "ft2_make", "ft3_make", "ft_miss"):
+            self.assertIn("ft_miss", CHAIN_RULES[name]["skip"])
+
+    def test_column_checks_complete(self):
+        # Directive-6 picklists: laterality is inline, target derives
+        # from the schema registry, col_name is unconstrained (None).
+        from src.definitions.db_columns import (
+            DB_COLUMNS,
+            TABLE_NAME_VALUES,
+        )
+
+        self.assertEqual(DB_COLUMNS["laterality"]["check"], ["L", "R"])
+        self.assertEqual(DB_COLUMNS["target"]["check"],
+                         sorted(TABLE_NAME_VALUES))
+        self.assertIsNone(DB_COLUMNS["col_name"]["check"])
+        self.assertNotIn("hand", DB_COLUMNS)
 
     def test_db_mapping_guard_passes(self):
         # Every count result field maps to a pbp_stats DB column.
@@ -59,22 +93,58 @@ class PbpConfigValidationTests(unittest.TestCase):
 
     def test_db_mapping_guard_catches_drift(self):
         # Simulate the historical drift: a result field with no DB column
-        # for one of its scopes.  o_rebs is not an intermediate field.
+        # for one of its scopes.  steals has no opp_steals column, so
+        # adding the opp_team scope must trip the guard.
         from src.definitions.pbp import RESULT_SET_FIELDS
 
-        original = RESULT_SET_FIELDS["o_rebs"]
-        RESULT_SET_FIELDS["o_rebs"] = dict(original)
-        RESULT_SET_FIELDS["o_rebs"]["result_sets"] = {
-            "team": "team", "player": "player", "on_player": "on_player",
-        }
+        original = RESULT_SET_FIELDS["steals"]
+        RESULT_SET_FIELDS["steals"] = dict(original)
+        RESULT_SET_FIELDS["steals"]["result_sets"] = (
+            "team", "player", "opp_team",
+        )
         try:
             errors = _validate_pbp_db_mappings()
             self.assertTrue(
-                any("o_rebs" in e and "on_player" in e for e in errors),
+                any("steals" in e and "opp_team" in e for e in errors),
                 errors,
             )
         finally:
-            RESULT_SET_FIELDS["o_rebs"] = original
+            RESULT_SET_FIELDS["steals"] = original
+
+    def test_db_mapping_guard_catches_reverse_drift(self):
+        # A DB column whose pbp_stats field has no RESULT_SET_FIELDS
+        # entry would silently never populate -- the guard must flag it.
+        from src.definitions.db_columns import DB_COLUMNS
+
+        original = dict(DB_COLUMNS["fg2m"])
+        fake = {
+            "type": "SMALLINT",
+            "tables": ["team_games"],
+            "nullable": True,
+            "default": None,
+            "dataset_mapping": {
+                "NBA": {
+                    "nba_id": {
+                        "team_games": {
+                            "pbp_stats": {
+                                "field": "no_such_field",
+                                "min_season": None,
+                                "result_set": "team",
+                            },
+                        },
+                    },
+                }
+            },
+        }
+        DB_COLUMNS["fg2m"] = fake
+        try:
+            errors = _validate_pbp_db_mappings()
+            self.assertTrue(
+                any("no_such_field" in e and "fg2m" in e for e in errors),
+                errors,
+            )
+        finally:
+            DB_COLUMNS["fg2m"] = original
 
 
 if __name__ == "__main__":

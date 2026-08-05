@@ -17,7 +17,7 @@ Minimal set of knobs:
 - auto_restart: Whether to trigger auto-restart on consecutive failures
 """
 
-from typing import Dict, TypedDict
+from typing import TypedDict
 
 
 class RateLimitConfig(TypedDict):
@@ -44,7 +44,7 @@ DEFAULT_RATE_LIMITS: RateLimitConfig = {
     "auto_restart": True,
 }
 
-SOURCE_RATE_LIMITS: Dict[str, RateLimitConfig] = {
+SOURCE_RATE_LIMITS: dict[str, RateLimitConfig] = {
     "nba_api": {
         "requests_per_second": 0.25,
         "max_retries": 3,

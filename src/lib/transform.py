@@ -12,6 +12,8 @@ import unicodedata
 from datetime import date, datetime
 from typing import Any, Callable, Dict, Union
 
+from src.lib.math_evaluator import evaluate
+
 from src.definitions.normalization import (
     DIACRITICS,
     STRIP_CHARACTERS,
@@ -19,7 +21,6 @@ from src.definitions.normalization import (
     UNICODE_QUOTES,
     WORD_REPLACEMENTS,
 )
-from src.lib.math_evaluator import evaluate
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,28 @@ def safe_int(value: Any, scale: int = 1) -> Union[int, None]:
         return round(float(value) * scale)
     except (ValueError, TypeError):
         return None
+
+
+def to_int(value: Any) -> int:
+    """Coerce a value to int, returning 0 for empty/missing/unparseable.
+
+    Lenient variant of :func:`safe_int` used by PBP normalizers and event
+    key builders: raw source cells are never expected to be well-formed, and
+    a missing cell means "no value" (``0``), not an error.
+    """
+    if value is None or value == "":
+        return 0
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return 0
+
+
+def to_str(value: Any) -> str:
+    """Coerce a value to str, returning '' for None."""
+    if value is None:
+        return ""
+    return str(value)
 
 
 def safe_str(value: Any) -> Union[str, None]:

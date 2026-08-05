@@ -12,8 +12,9 @@ import logging
 from typing import Any, Dict, List, Tuple
 
 from src.definitions.db_columns import DB_COLUMNS
-from src.definitions.schema import SCHEMAS, SEQUENCES, get_table, iter_tables
+from src.definitions.schema import SCHEMAS, SEQUENCES
 from src.lib.postgres import get_db_connection, quote_col
+from src.lib.schema_resolver import get_table, iter_tables
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +97,7 @@ def _format_default(default: Any, pg_type: str) -> str:
     return f"DEFAULT {default}"
 
 
-def _column_ddl(name: str, col_meta: Any) -> str:
+def _column_ddl(name: str, col_meta: Any, table_name: str | None = None) -> str:
     """Render a single ``CREATE TABLE`` column fragment."""
     parts = [quote_col(name), col_meta["type"]]
     if not col_meta.get("nullable", True):
@@ -104,7 +105,29 @@ def _column_ddl(name: str, col_meta: Any) -> str:
     default = _format_default(col_meta.get("default"), col_meta["type"])
     if default:
         parts.append(default)
+    check = _column_check(name, col_meta, table_name)
+    if check:
+        parts.append(check)
     return " ".join(parts)
+
+
+def _column_check(
+    name: str, col_meta: Any, table_name: str | None = None,
+) -> str:
+    """Render a named ``CHECK`` clause from the column's ``check`` picklist.
+
+    The column's own ``check`` field is the single source of truth for
+    the constraint; ``table_name`` (when given) produces a deterministic
+    constraint name so schema sync can refresh it additively.
+    """
+    values = col_meta.get("check")
+    if not values:
+        return ""
+    allowed = ", ".join(f"'{v}'" for v in values)
+    expr = f"{quote_col(name)} IN ({allowed})"
+    if table_name:
+        return f"CONSTRAINT {table_name}_{name}_check CHECK ({expr})"
+    return f"CHECK ({expr})"
 
 
 def _foreign_key_ddl(fk: Dict[str, Any]) -> str:
@@ -235,7 +258,7 @@ def _create_table(
     pk_cols = set(meta.get("primary_key") or [])
 
     for col_name, col_meta in _get_expected_columns(table_name, meta):
-        fragments.append(_column_ddl(col_name, col_meta))
+        fragments.append(_column_ddl(col_name, col_meta, table_name))
 
     # Column-level UNIQUE constraints (from DB_COLUMNS 'unique' flag)
     for name, m in _data_columns_for_table(table_name):
@@ -324,9 +347,27 @@ def _sync_table(
         if col_name not in existing:
             cur.execute(
                 f"ALTER TABLE {schema_name}.{unqualified} "
-                f"ADD COLUMN IF NOT EXISTS {quote_col(col_name)} {col_meta['type']}"
+                f"ADD COLUMN IF NOT EXISTS {_column_ddl(col_name, col_meta, unqualified)}"
             )
             actions.append(f"added {col_name}")
+
+    # Additive CHECK refresh: every column with a ``check`` picklist gets
+    # a deterministic named constraint (``{table}_{col}_check``) that is
+    # dropped and re-added on each sync so the DB always converges to the
+    # config -- adding/removing picklist values later is safe.
+    for col_name, col_meta in expected:
+        if not col_meta.get("check"):
+            continue
+        constraint = f"{unqualified}_{col_name}_check"
+        cur.execute(
+            f"ALTER TABLE {schema_name}.{unqualified} "
+            f"DROP CONSTRAINT IF EXISTS {constraint}"
+        )
+        cur.execute(
+            f"ALTER TABLE {schema_name}.{unqualified} "
+            f"ADD {_column_check(col_name, col_meta, unqualified)}"
+        )
+        actions.append(f"refreshed check {col_name}")
 
     _ensure_updated_at_trigger(cur, schema_name, unqualified)
     return actions
@@ -531,9 +572,7 @@ def ensure_countries(conn=None) -> Dict[str, int]:
                     sorted(to_delete),
                 )
 
-            # Upsert current country definitions in two passes to handle
-            # self-referencing FK (sovereign_country references countries.code).
-            # Pass 1: insert all countries without sovereign codes.
+            # Upsert current country definitions.
             for code, cfg in COUNTRIES.items():
                 cur.execute(
                     f"""
@@ -547,20 +586,6 @@ def ensure_countries(conn=None) -> Dict[str, int]:
                 )
                 if cur.rowcount:
                     result["inserted" if code not in existing else "updated"] += 1
-
-            # Pass 2: set sovereign_country references now that all rows exist.
-            for code, cfg in COUNTRIES.items():
-                sovereign = cfg.get("sovereign")
-                if sovereign:
-                    cur.execute(
-                        f"UPDATE {countries_table} SET sovereign_country = %s, updated_at = NOW() WHERE code = %s",
-                        (sovereign, code),
-                    )
-                else:
-                    cur.execute(
-                        f"UPDATE {countries_table} SET sovereign_country = NULL, updated_at = NOW() WHERE code = %s",
-                        (code,),
-                    )
 
         conn.commit()
         logger.info(

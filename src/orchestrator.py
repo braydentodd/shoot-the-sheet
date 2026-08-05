@@ -1271,7 +1271,7 @@ def _match_entities(
 ) -> int:
     """Cross-league: match all staging identities against identity registries.
 
-    Sets matched_sts_id and reviewed=True on every staging row whose
+    Sets matched_sts_id and status='ready' on every staging row whose
     (identity, ext_id) pair exists.  Overwrites previously-set values.
     """
     logger.info(phase_marker("match_entities"))
@@ -1306,7 +1306,7 @@ def _match_entities(
                     """
                     UPDATE {staging_table} s
                        SET matched_sts_id = i.{id_col},
-                           reviewed = TRUE
+                           status = 'ready'
                       FROM {id_table} i
                      WHERE s.identity = i.identity
                        AND s.ext_id = i.ext_id
@@ -1336,7 +1336,7 @@ def _match_games(
 
     Populates core.identities_games so that merge_staging can
     resolve ext_game_id -> game_id for all staging games (not just
-    reviewed ones).  Also upserts into core.games using the
+    ready ones).  Also upserts into core.games using the
     (date, home_team_id, away_team_id) unique constraint as dedup key
     across identities.
     """
@@ -1346,7 +1346,7 @@ def _match_games(
     with db_connection() as conn:
         with conn.cursor() as cur:
             # 1) Upsert games from staging using (date, home, away) dedup key
-            #    No reviewed = TRUE filter — we need game_ids for all staged games
+            #    No status = 'ready' filter — we need game_ids for all staged games
             #    so merge_staging can copy them to intermediate.
             cur.execute(
                 """
@@ -1434,7 +1434,7 @@ MERGE_TABLE_CONFIG = {
     "players": {
         "intermediate_table": "intermediate.players",
         "conflict_cols": ["sts_id"],
-        "staging_metadata": ["identity", "ext_id", "reviewed"],
+        "staging_metadata": ["identity", "ext_id", "status"],
         "column_aliases": {"matched_sts_id": "sts_id"},
         "identity_joins": [],
         "value_resolution": {
@@ -1444,7 +1444,7 @@ MERGE_TABLE_CONFIG = {
     "teams": {
         "intermediate_table": "intermediate.teams",
         "conflict_cols": ["sts_id"],
-        "staging_metadata": ["identity", "ext_id", "reviewed"],
+        "staging_metadata": ["identity", "ext_id", "status"],
         "column_aliases": {"matched_sts_id": "sts_id"},
         "identity_joins": [],
         "value_resolution": {
@@ -1454,7 +1454,7 @@ MERGE_TABLE_CONFIG = {
     "leagues_teams": {
         "intermediate_table": "intermediate.leagues_teams",
         "conflict_cols": ["league_code", "team_id"],
-        "staging_metadata": ["identity"],
+        "staging_metadata": ["identity", "status"],
         "column_aliases": {},
         "identity_joins": [
             ("ext_team_id", "team_id", "core.identities_teams"),
@@ -1464,7 +1464,7 @@ MERGE_TABLE_CONFIG = {
     "teams_players": {
         "intermediate_table": "intermediate.teams_players",
         "conflict_cols": ["league_code", "team_id", "player_id"],
-        "staging_metadata": ["identity"],
+        "staging_metadata": ["identity", "status"],
         "column_aliases": {},
         "identity_joins": [
             ("ext_team_id", "team_id", "core.identities_teams"),
@@ -1475,7 +1475,7 @@ MERGE_TABLE_CONFIG = {
     "team_seasons": {
         "intermediate_table": "intermediate.team_seasons",
         "conflict_cols": ["league_code", "team_id", "season", "season_type"],
-        "staging_metadata": ["identity"],
+        "staging_metadata": ["identity", "status"],
         "column_aliases": {},
         "identity_joins": [
             ("ext_team_id", "team_id", "core.identities_teams"),
@@ -1492,7 +1492,7 @@ MERGE_TABLE_CONFIG = {
             "season",
             "season_type",
         ],
-        "staging_metadata": ["identity"],
+        "staging_metadata": ["identity", "status"],
         "column_aliases": {},
         "identity_joins": [
             ("ext_player_id", "player_id", "core.identities_players"),
@@ -1504,7 +1504,7 @@ MERGE_TABLE_CONFIG = {
     "games": {
         "intermediate_table": "intermediate.games",
         "conflict_cols": ["game_id"],
-        "staging_metadata": ["identity", "ext_id"],
+        "staging_metadata": ["identity", "ext_id", "status"],
         "column_aliases": {},
         "identity_joins": [
             ("ext_home_team_id", "home_team_id", "core.identities_teams"),
@@ -1521,7 +1521,7 @@ MERGE_TABLE_CONFIG = {
     "team_games": {
         "intermediate_table": "intermediate.team_games",
         "conflict_cols": ["league_code", "game_id", "team_id"],
-        "staging_metadata": ["identity"],
+        "staging_metadata": ["identity", "status"],
         "column_aliases": {},
         "identity_joins": [
             ("ext_team_id", "team_id", "core.identities_teams"),
@@ -1535,12 +1535,12 @@ MERGE_TABLE_CONFIG = {
             ("LEFT JOIN core.identities_games ig"
              "  ON sg.identity = ig.identity AND sg.ext_game_id = ig.ext_id"),
         ],
-        "where_clause": "sg.pbp_status IS DISTINCT FROM 'error'",
+        "where_clause": "sg.status IS DISTINCT FROM 'error'",
     },
     "player_games": {
         "intermediate_table": "intermediate.player_games",
         "conflict_cols": ["league_code", "game_id", "player_id", "team_id"],
-        "staging_metadata": ["identity"],
+        "staging_metadata": ["identity", "status"],
         "column_aliases": {},
         "identity_joins": [
             ("ext_player_id", "player_id", "core.identities_players"),
@@ -1555,7 +1555,7 @@ MERGE_TABLE_CONFIG = {
             ("LEFT JOIN core.identities_games ig"
              "  ON sg.identity = ig.identity AND sg.ext_game_id = ig.ext_id"),
         ],
-        "where_clause": "sg.pbp_status IS DISTINCT FROM 'error'",
+        "where_clause": "sg.status IS DISTINCT FROM 'error'",
     },
 }
 
@@ -1821,7 +1821,7 @@ def _promote_intermediate(
                     )
                 ]
 
-                from src.definitions.schema import get_table
+                from src.lib.schema_resolver import get_table
 
                 core_meta = get_table(core_table)
                 conflict_cols = list(core_meta.get("primary_key") or [])
@@ -1887,19 +1887,20 @@ def _clean_staging(
     """Delete consumed staging rows for a single identity.
 
     Order matters:
-      1. Games where BOTH home AND away teams are reviewed.
-      2. Players WHERE reviewed = TRUE (CASCADE handles children).
-      3. Teams WHERE reviewed = TRUE (CASCADE handles children).
+      1. Games where BOTH home AND away teams are ready.
+      2. Players WHERE status = 'ready' (CASCADE handles children).
+      3. Teams WHERE status = 'ready' (CASCADE handles children).
 
-    Unreviewed rows remain in staging (will not be re-fetched because
-    coverage marks them as covered).
+    Rows that are not ready (including ``error`` games awaiting review)
+    remain in staging; they are not re-fetched because coverage marks
+    them as covered.
     """
     logger.info(phase_marker("clean_staging", f"identity={identity}"))
     total_deleted = 0
 
     with db_connection() as conn:
         with conn.cursor() as cur:
-            # Step 1: Games where both teams are reviewed
+            # Step 1: Games where both teams are ready
             cur.execute(
                 """
                 DELETE FROM staging.games g
@@ -1908,10 +1909,10 @@ def _clean_staging(
                    AND g.ext_home_team_id = ht.ext_id
                    AND g.identity = at.identity
                    AND g.ext_away_team_id = at.ext_id
-                   AND ht.reviewed = TRUE
-                   AND at.reviewed = TRUE
+                   AND ht.status = 'ready'
+                   AND at.status = 'ready'
                    AND g.identity = %s
-                   AND g.pbp_status IS DISTINCT FROM 'error'
+                   AND g.status IS DISTINCT FROM 'error'
                 """,
                 (identity,),
             )
@@ -1920,29 +1921,29 @@ def _clean_staging(
                 logger.info("Deleted %d games from staging", deleted)
             total_deleted += deleted
 
-            # Step 2: Reviewed players (CASCADE -> teams_players,
+            # Step 2: Ready players (CASCADE -> teams_players,
             #          countries_players, player_seasons, player_games)
             cur.execute(
-                "DELETE FROM staging.players WHERE reviewed = TRUE AND identity = %s",
+                "DELETE FROM staging.players WHERE status = 'ready' AND identity = %s",
                 (identity,),
             )
             deleted = cur.rowcount
             if deleted:
                 logger.info(
-                    "Deleted %d reviewed players from staging (+ cascaded)", deleted
+                    "Deleted %d ready players from staging (+ cascaded)", deleted
                 )
             total_deleted += deleted
 
-            # Step 3: Reviewed teams (CASCADE -> leagues_teams,
+            # Step 3: Ready teams (CASCADE -> leagues_teams,
             #          teams_players, team_seasons, team_games)
             cur.execute(
-                "DELETE FROM staging.teams WHERE reviewed = TRUE AND identity = %s",
+                "DELETE FROM staging.teams WHERE status = 'ready' AND identity = %s",
                 (identity,),
             )
             deleted = cur.rowcount
             if deleted:
                 logger.info(
-                    "Deleted %d reviewed teams from staging (+ cascaded)", deleted
+                    "Deleted %d ready teams from staging (+ cascaded)", deleted
                 )
             total_deleted += deleted
 
@@ -2485,12 +2486,9 @@ def _maintain_pbp(
         accumulate_result_set,
         player_on_court_intervals,
     )
-    from src.lib.pbp_classifier import (
-        EventClassifier,
-        FieldLookupStrategy,
-        UnclassifiedEventError,
-    )
-    from src.lib.pbp_derive import derive_game_context_events
+    from src.lib.pbp_classifier import EventClassifier, UnclassifiedEventError
+    from src.lib.pbp_deriver import derive_game_context_events
+    from src.sources.nba_data.classifier import FieldLookupStrategy
 
     # Get game IDs for this season from staging.games
     game_rows = _load_pbp_games(league_code, season, identity_code)
@@ -2590,7 +2588,7 @@ def _maintain_pbp(
                 "game_id": ext_game_id,
                 "error": str(exc),
             })
-            _set_pbp_status(identity_code, ext_game_id, "error")
+            _set_game_status(identity_code, ext_game_id, "error")
             continue
 
         if not raw_rows:
@@ -2622,7 +2620,7 @@ def _maintain_pbp(
                 ext_game_id, len(unclassified),
                 identity_code, dataset_name,
             )
-            _set_pbp_status(identity_code, ext_game_id, "error")
+            _set_game_status(identity_code, ext_game_id, "error")
             continue
 
         # 2. Normalize (all events are classified)
@@ -2640,7 +2638,7 @@ def _maintain_pbp(
                 "game_id": ext_game_id,
                 "error": str(exc),
             })
-            _set_pbp_status(identity_code, ext_game_id, "error")
+            _set_game_status(identity_code, ext_game_id, "error")
             continue
 
         if not events:
@@ -2664,22 +2662,29 @@ def _maintain_pbp(
                 seq=derr.seq,
                 event=derr.event,
             )
-        if derive_errors:
+        error_derive_errors = [e for e in derive_errors if e.severity == "error"]
+        if error_derive_errors:
             logger.error(
                 "Game %s: %d derivation error(s) -- marked errored for review",
-                ext_game_id, len(derive_errors),
+                ext_game_id, len(error_derive_errors),
             )
 
-        # 4. Accumulate team result sets
-        team_results = []
+        # 4. Accumulate team result sets (per scope: self + opponent rows).
+        team_scopes: dict[str, dict[str, dict[str, Any]]] = {}
         for team_id in (home_team_id, away_team_id):
             opp_id = away_team_id if team_id == home_team_id else home_team_id
-            result_set = accumulate_result_set(events, "team", team_id, opp_entity_id=opp_id)
-            result_set["game_id"] = ext_game_id
-            team_results.append((team_id, result_set))
+            team_scopes[team_id] = {
+                "team": accumulate_result_set(
+                    events, "team", team_id, opp_entity_id=opp_id,
+                ),
+                "opp_team": accumulate_result_set(
+                    events, "opp_team", team_id, opp_entity_id=opp_id,
+                ),
+            }
 
-        # 4. Accumulate player result sets
-        player_results: dict[str, dict[str, Any]] = {}
+        # 4. Accumulate player result sets (per scope: self, opponent,
+        #    on-court rows).
+        player_scopes: dict[str, dict[str, dict[str, Any]]] = {}
         player_in_events = [e for e in events if e["event"] == "player_in"]
 
         if player_in_events:
@@ -2691,23 +2696,32 @@ def _maintain_pbp(
 
             for player_id, player_team in player_teams.items():
                 intervals = player_on_court_intervals(events, player_id)
-
                 opp_team = away_team_id if player_team == home_team_id else home_team_id
-                result_set = accumulate_result_set(
-                    events, "player", player_id,
-                    opp_entity_id=opp_team,
-                    player_team_id=player_team,
-                    on_court_intervals=intervals,
-                )
-                result_set["game_id"] = ext_game_id
-                player_results[player_id] = result_set
+                player_scopes[player_id] = {
+                    "player": accumulate_result_set(
+                        events, "player", player_id,
+                        opp_entity_id=opp_team,
+                        player_team_id=player_team,
+                        on_court_intervals=intervals,
+                    ),
+                    "opp_player": accumulate_result_set(
+                        events, "opp_player", player_id,
+                        opp_entity_id=opp_team,
+                        player_team_id=player_team,
+                        on_court_intervals=intervals,
+                    ),
+                    "on_player": accumulate_result_set(
+                        events, "on_player", player_id,
+                        opp_entity_id=opp_team,
+                        player_team_id=player_team,
+                        on_court_intervals=intervals,
+                    ),
+                }
 
         # 5. Write team results to staging
         team_rows = {}
-        for team_id, result_set in team_results:
-            row = _map_pbp_result_to_columns(
-                result_set, pbp_col_map, "team_games"
-            )
+        for team_id, scopes in team_scopes.items():
+            row = _map_pbp_result_to_columns(scopes, pbp_col_map, "team_games")
             if row:
                 row["ext_team_id"] = team_id
                 row["ext_game_id"] = ext_game_id
@@ -2738,12 +2752,10 @@ def _maintain_pbp(
                 write_failed = True
 
         # 6. Write player results to staging
-        if player_results:
+        if player_scopes:
             player_rows = {}
-            for player_id, result_set in player_results.items():
-                row = _map_pbp_result_to_columns(
-                    result_set, pbp_col_map, "player_games"
-                )
+            for player_id, scopes in player_scopes.items():
+                row = _map_pbp_result_to_columns(scopes, pbp_col_map, "player_games")
                 if row:
                     row["ext_player_id"] = player_id
                     row["ext_game_id"] = ext_game_id
@@ -2771,24 +2783,25 @@ def _maintain_pbp(
                     })
                     write_failed = True
 
-        # 7. Record the per-game PBP status.  Errored games (derive
-        # errors, unclassified events, or write failures) stay in staging
-        # with all of their data; they never merge to intermediate and
-        # survive cleanup until reviewed and re-run.
-        if derive_errors or write_failed:
-            _set_pbp_status(identity_code, ext_game_id, "error")
+        # 7. Record the per-game PBP status.  Errored games (error-severity
+        # derive errors, unclassified events, or write failures) stay in
+        # staging with all of their data; they never merge to intermediate
+        # and survive cleanup until reviewed and re-run.
+        if error_derive_errors or write_failed:
+            _set_game_status(identity_code, ext_game_id, "error")
         else:
-            _set_pbp_status(identity_code, ext_game_id, "ready")
+            _set_game_status(identity_code, ext_game_id, "ready")
 
     logger.info("PBP complete: %d rows written for %s", total_rows, season)
     return total_rows
 
 
-def _set_pbp_status(identity_code: str, ext_game_id: str, status: str) -> None:
-    """Record the PBP processing status for a game on ``staging.games``.
+def _set_game_status(identity_code: str, ext_game_id: str, status: str) -> None:
+    """Record the processing status for a game on ``staging.games.status``.
 
     The status drives merge/cleanup gating: ``error`` games are excluded
-    from ``_merge_staging`` and survive ``_clean_staging`` until reviewed.
+    from ``_merge_staging`` and survive ``_clean_staging`` until reviewed
+    and re-run.
     """
     from src.lib.postgres import db_connection
 
@@ -2798,7 +2811,7 @@ def _set_pbp_status(identity_code: str, ext_game_id: str, status: str) -> None:
                 cur.execute(
                     """
                     UPDATE staging.games
-                       SET pbp_status = %s
+                       SET status = %s
                      WHERE identity = %s
                        AND (ext_id = %s OR ext_game_id = %s)
                     """,
@@ -2807,7 +2820,7 @@ def _set_pbp_status(identity_code: str, ext_game_id: str, status: str) -> None:
             conn.commit()
     except (ConnectionError, OSError, RuntimeError) as exc:
         logger.warning(
-            "Failed to set pbp_status=%s for game %s: %s",
+            "Failed to set status=%s for game %s: %s",
             status, ext_game_id, exc,
         )
 
@@ -2865,21 +2878,29 @@ def _build_pbp_column_map(
     league_code: str,
     identity_code: str,
     dataset_name: str = "pbp_stats",
-) -> dict[str, dict[str, str]]:
-    """Build mapping from PBP result set fields to DB columns.
+) -> dict[str, dict[tuple[str, str], str]]:
+    """Build mapping from (accumulator field, scope) pairs to DB columns.
 
     Returns:
-        {target_table: {accumulator_field: db_column_name}}
+        {target_table: {(accumulator_field, scope): db_column_name}}
 
     Example:
         {
-            "team_games": {"fg2m": "fg2m", "fg3m": "fg3m", ...},
-            "player_games": {"fg2m": "fg2m", ...},
+            "team_games": {
+                ("fg2m", "team"): "fg2m",
+                ("fg2m", "opp_team"): "opp_fg2m",
+                ...
+            },
+            "player_games": {
+                ("fg2m", "player"): "fg2m",
+                ("fg2m", "on_player"): "on_fg2m",
+                ...
+            },
         }
     """
     from src.definitions.db_columns import DB_COLUMNS
 
-    col_map: dict[str, dict[str, str]] = {}
+    col_map: dict[str, dict[tuple[str, str], str]] = {}
 
     for col_name, col_meta in DB_COLUMNS.items():
         mapping = col_meta.get("dataset_mapping")
@@ -2897,25 +2918,30 @@ def _build_pbp_column_map(
                 continue
 
             field = pbp_source.get("field")
-            if not field:
+            result_set = pbp_source.get("result_set")
+            if not field or not result_set:
                 continue
 
             target_map = col_map.setdefault(target, {})
-            target_map[field] = col_name
+            target_map[(field, result_set)] = col_name
 
     return col_map
 
 
 def _map_pbp_result_to_columns(
-    result_set: dict[str, Any],
-    pbp_col_map: dict[str, dict[str, str]],
+    result_sets_by_scope: dict[str, dict[str, Any]],
+    pbp_col_map: dict[str, dict[tuple[str, str], str]],
     target_table: str,
 ) -> dict[str, Any]:
-    """Map accumulator result set fields to DB column names."""
+    """Map per-scope accumulator rows to a DB row.
+
+    Each DB column is keyed by ``(field, scope)``; the value is read
+    from the matching scope's accumulator row.
+    """
     target_map = pbp_col_map.get(target_table, {})
     row: dict[str, Any] = {}
-    for field, col_name in target_map.items():
-        val = result_set.get(field)
+    for (field, scope), col_name in target_map.items():
+        val = result_sets_by_scope.get(scope, {}).get(field)
         if val is not None:
             row[col_name] = val
     return row

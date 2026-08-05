@@ -16,7 +16,8 @@ in :func:`validate_config`.
 """
 
 import logging
-from typing import Any, Dict, List, Union
+from collections.abc import Mapping
+from typing import Any
 
 from src.definitions.db_columns import VALID_TRANSFORMS
 from src.lib.source_resolver import get_identity_entities
@@ -29,7 +30,7 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 
-def _validate_pg_types(db_columns: Dict[str, Any]) -> List[str]:
+def _validate_pg_types(db_columns: Mapping[str, Any]) -> list[str]:
     """Validate that all DB_COLUMNS types are valid PostgreSQL types."""
     from src.definitions.schema import VALID_PG_TYPES
 
@@ -43,8 +44,8 @@ def _validate_pg_types(db_columns: Dict[str, Any]) -> List[str]:
 
 
 def _validate_identity_structure(
-    db_columns: Dict[str, Any],
-) -> List[str]:
+    db_columns: Mapping[str, Any],
+) -> list[str]:
     """Validate the nested identity structure in DB_COLUMNS.
 
     DB_COLUMNS uses a nested structure: {league: {identity: {table: {...}}}}
@@ -54,7 +55,7 @@ def _validate_identity_structure(
     table names present in at least one schema.
     """
     from src.definitions.datasets import DATASETS
-    from src.definitions.schema import iter_tables
+    from src.lib.schema_resolver import iter_tables
 
     valid_table_names = frozenset(table_name for _, _, table_name, _ in iter_tables())
 
@@ -108,12 +109,12 @@ def _validate_identity_structure(
 
 
 def _validate_dataset_refs(
-    db_columns: Dict[str, Any],
-    provider_filter: Union[str, None] = None,
-) -> List[str]:
+    db_columns: Mapping[str, Any],
+    provider_filter: str | None = None,
+) -> list[str]:
     """Validate that source dataset references exist in DATASETS."""
     from src.definitions.datasets import DATASETS
-    from src.definitions.schema import iter_tables
+    from src.lib.schema_resolver import iter_tables
 
     valid_table_names = frozenset(table_name for _, _, table_name, _ in iter_tables())
 
@@ -150,17 +151,14 @@ def _validate_dataset_refs(
 
 
 def _validate_table_definitions(
-    db_columns: Dict[str, Any],
-) -> List[str]:
+    db_columns: Mapping[str, Any],
+) -> list[str]:
     """Robustly validate all table definitions in TABLES registry.
 
     Checks primary keys, indexes, foreign keys, and unique constraints.
     """
-    from src.definitions.schema import (
-        VALID_FK_ACTIONS,
-        VALID_FK_STRATEGIES,
-        iter_tables,
-    )
+    from src.definitions.schema import VALID_FK_ACTIONS, VALID_FK_STRATEGIES
+    from src.lib.schema_resolver import iter_tables
 
     errors = []
 
@@ -279,12 +277,13 @@ def _validate_table_definitions(
     return errors
 
 
-def _validate_fk_targets() -> List[str]:
+def _validate_fk_targets() -> list[str]:
     """Every FK ref_schema/ref_table must resolve to a known table, and the
     on_update / on_delete actions must be in the allowed set."""
-    from src.definitions.schema import VALID_FK_ACTIONS, iter_tables
+    from src.definitions.schema import VALID_FK_ACTIONS
+    from src.lib.schema_resolver import iter_tables
 
-    errors: List[str] = []
+    errors: list[str] = []
 
     for qualified_name, schema_name, table_name, meta in iter_tables():
         for fk in meta.get("foreign_keys") or []:
@@ -299,7 +298,7 @@ def _validate_fk_targets() -> List[str]:
     return errors
 
 
-def _validate_league_stage_definitions() -> List[str]:
+def _validate_league_stage_definitions() -> list[str]:
     """Validate global ETL phase ordering declarations."""
     from src.definitions.pipeline import (
         PIPELINE,
@@ -307,7 +306,7 @@ def _validate_league_stage_definitions() -> List[str]:
         VALID_PHASES,
     )
 
-    errors: List[str] = []
+    errors: list[str] = []
 
     if not isinstance(PIPELINE, dict):
         return [f"PIPELINE: expected dict, got {type(PIPELINE).__name__}"]
@@ -351,12 +350,12 @@ def _validate_league_stage_definitions() -> List[str]:
     return errors
 
 
-def _validate_dataset_mapping_references() -> List[str]:
+def _validate_dataset_mapping_references() -> list[str]:
     """Validate that all dataset_mapping references point to valid datasets."""
     from src.definitions.datasets import DATASETS
     from src.definitions.db_columns import DB_COLUMNS
 
-    errors: List[str] = []
+    errors: list[str] = []
 
     for col_name, col_def in DB_COLUMNS.items():
         mapping = col_def.get("dataset_mapping")
@@ -374,7 +373,7 @@ def _validate_dataset_mapping_references() -> List[str]:
                     continue
 
                 for entity, entity_map in identity_map.items():
-                    for dataset_name in entity_map.keys():
+                    for dataset_name in entity_map:
                         # Check that dataset exists under this identity
                         if dataset_name not in DATASETS.get(identity_code, {}):
                             errors.append(
@@ -385,11 +384,11 @@ def _validate_dataset_mapping_references() -> List[str]:
     return errors
 
 
-def _validate_transform_references() -> List[str]:
+def _validate_transform_references() -> list[str]:
     """Validate that all transform references are in VALID_TRANSFORMS."""
     from src.definitions.db_columns import DB_COLUMNS
 
-    errors: List[str] = []
+    errors: list[str] = []
 
     for col_name, col_def in DB_COLUMNS.items():
         mapping = col_def.get("dataset_mapping")
@@ -410,13 +409,13 @@ def _validate_transform_references() -> List[str]:
     return errors
 
 
-def _validate_target_tables() -> List[str]:
+def _validate_target_tables() -> list[str]:
     """Validate that every target_tables entry exists in SCHEMAS registry."""
     from src.definitions.datasets import DATASETS
-    from src.definitions.schema import iter_tables
+    from src.lib.schema_resolver import iter_tables
 
     valid_qualified = {qual for qual, _, _, _ in iter_tables()}
-    errors: List[str] = []
+    errors: list[str] = []
 
     for identity_code, datasets in DATASETS.items():
         for dataset_name, ds_def in datasets.items():
@@ -434,7 +433,7 @@ def _validate_target_tables() -> List[str]:
     return errors
 
 
-def _validate_target_tables_cover_dataset_mapping() -> List[str]:
+def _validate_target_tables_cover_dataset_mapping() -> list[str]:
     """Validate that every table a dataset populates via DB_COLUMNS is
     declared in that dataset's ``target_tables``.
 
@@ -456,7 +455,7 @@ def _validate_target_tables_cover_dataset_mapping() -> List[str]:
     from src.definitions.datasets import DATASETS
     from src.definitions.db_columns import DB_COLUMNS
 
-    errors: List[str] = []
+    errors: list[str] = []
 
     for col_name, col_def in DB_COLUMNS.items():
         mapping = col_def.get("dataset_mapping")
@@ -467,7 +466,7 @@ def _validate_target_tables_cover_dataset_mapping() -> List[str]:
             for identity_code, identity_map in league_map.items():
                 ds_registry = DATASETS.get(identity_code, {})
                 for table_name, table_map in identity_map.items():
-                    for dataset_name in table_map.keys():
+                    for dataset_name in table_map:
                         ds_def = ds_registry.get(dataset_name)
                         if ds_def is None:
                             # Reported separately by
@@ -487,26 +486,26 @@ def _validate_target_tables_cover_dataset_mapping() -> List[str]:
     return errors
 
 
-def _validate_result_sets() -> List[str]:
+def _validate_result_sets() -> list[str]:
     """Validate that all result_set entries are consistent within a dataset."""
     from src.definitions.db_columns import DB_COLUMNS
 
-    errors: List[str] = []
+    errors: list[str] = []
 
     # Build a map of identity -> dataset -> list of result_sets used
-    dataset_result_sets: Dict[str, Dict[str, set]] = {}
+    dataset_result_sets: dict[str, dict[str, set]] = {}
 
-    for col_name, col_def in DB_COLUMNS.items():
+    for col_def in DB_COLUMNS.values():
         mapping = col_def.get("dataset_mapping")
         if not mapping:
             continue
 
-        for league_code, league_map in mapping.items():
+        for league_map in mapping.values():
             for identity_code, identity_map in league_map.items():
                 if identity_code not in dataset_result_sets:
                     dataset_result_sets[identity_code] = {}
 
-                for entity, entity_map in identity_map.items():
+                for entity_map in identity_map.values():
                     for dataset_name, ds_mapping in entity_map.items():
                         result_set = ds_mapping.get("result_set")
                         if result_set:
@@ -542,12 +541,12 @@ def _validate_result_sets() -> List[str]:
 # ============================================================================
 
 
-def _validate_rate_limit_sources() -> List[str]:
+def _validate_rate_limit_sources() -> list[str]:
     """Every key in SOURCE_RATE_LIMITS must be a registered source."""
     from src.definitions.rate_limits import SOURCE_RATE_LIMITS
     from src.definitions.sources import VALID_SOURCES
 
-    errors: List[str] = []
+    errors: list[str] = []
     for source_code in SOURCE_RATE_LIMITS:
         if source_code not in VALID_SOURCES:
             errors.append(
@@ -562,18 +561,21 @@ def _validate_rate_limit_sources() -> List[str]:
 # ============================================================================
 
 
-def _validate_pbp_events() -> List[str]:
+def _validate_pbp_events() -> list[str]:
     """Validate every ``PBP_EVENTS`` entry against its uniform schema."""
     from src.definitions.pbp import PBP_EVENTS
 
-    errors: List[str] = []
+    errors: list[str] = []
     required = {
-        "sort_priority", "indicate_poss", "indicate_on_court",
-        "shot", "points", "poss_transition",
+        "indicate_poss", "indicate_on_court", "shot", "points",
+        "shot_family", "shot_result", "foul_family", "poss_transition",
     }
     valid_conditions = {"always", "live_shot", "jump_ball_changes_possession", None}
     valid_end = {"self", "opponent", "last_possessing", None}
     valid_start = {"self", "opponent", "next_poss_event", None}
+    valid_shot_family = {"fg", "ft", "none"}
+    valid_shot_result = {"make", "miss", "none"}
+    valid_foul_family = {"standard", "elevated", "none"}
 
     for name, ev_def in PBP_EVENTS.items():
         prefix = f"PBP_EVENTS['{name}']"
@@ -586,13 +588,17 @@ def _validate_pbp_events() -> List[str]:
         extra = set(ev_def.keys()) - required
         if extra:
             errors.append(f"{prefix}: unknown key(s) {sorted(extra)}")
-        if not isinstance(ev_def.get("sort_priority"), int):
-            errors.append(f"{prefix}: sort_priority must be int")
         for bool_key in ("indicate_poss", "indicate_on_court", "shot"):
             if not isinstance(ev_def.get(bool_key), bool):
                 errors.append(f"{prefix}: {bool_key} must be bool")
         if not isinstance(ev_def.get("points"), int):
             errors.append(f"{prefix}: points must be int")
+        if ev_def.get("shot_family") not in valid_shot_family:
+            errors.append(f"{prefix}: shot_family invalid: {ev_def.get('shot_family')!r}")
+        if ev_def.get("shot_result") not in valid_shot_result:
+            errors.append(f"{prefix}: shot_result invalid: {ev_def.get('shot_result')!r}")
+        if ev_def.get("foul_family") not in valid_foul_family:
+            errors.append(f"{prefix}: foul_family invalid: {ev_def.get('foul_family')!r}")
         trans = ev_def.get("poss_transition")
         if trans is not None:
             if not isinstance(trans, dict):
@@ -607,18 +613,36 @@ def _validate_pbp_events() -> List[str]:
     return errors
 
 
-def _validate_chain_rules() -> List[str]:
-    """Validate every ``CHAIN_RULES`` entry against its uniform schema."""
-    from src.definitions.chain_rules import CHAIN_RULES
-    from src.definitions.pbp import PBP_EVENTS
+def _validate_pbp_clock_events() -> list[str]:
+    """Validate ``PBP_CLOCK_EVENTS`` names canonical ``PBP_EVENTS`` keys.
 
-    errors: List[str] = []
+    The clock-completion pass fills missing ``secs`` only for the event
+    types named here, so every name must exist in ``PBP_EVENTS`` -- a
+    typo would silently leave a clock-required field unfillable.
+    """
+    from src.definitions.pbp import PBP_CLOCK_EVENTS, PBP_EVENTS
+
+    errors: list[str] = []
+    if not isinstance(PBP_CLOCK_EVENTS, frozenset):
+        errors.append("PBP_CLOCK_EVENTS: expected frozenset")
+        return errors
+    for name in sorted(PBP_CLOCK_EVENTS):
+        if name not in PBP_EVENTS:
+            errors.append(f"PBP_CLOCK_EVENTS: unknown event {name!r}")
+    return errors
+
+
+def _validate_chain_rules() -> list[str]:
+    """Validate every ``CHAIN_RULES`` entry against its uniform schema."""
+    from src.definitions.pbp import CHAIN_RULES, PBP_EVENTS
+
+    errors: list[str] = []
     required = {
-        "anchor", "scope", "position", "skip", "max_gap",
+        "anchor", "scope", "skip", "max_gap",
         "cross_period", "reanchor", "required", "synthesize", "suppress",
+        "superseded_by",
     }
     valid_scopes = {"previous", "next", "sequence"}
-    valid_positions = {"before", "after"}
     valid_synthesize = {
         "none", "team_rebound", "team_turnover", "scoring_opp",
         "poss_marker", "lineup_sweep", "starters",
@@ -640,8 +664,6 @@ def _validate_chain_rules() -> List[str]:
             errors.append(f"{prefix}: unknown key(s) {sorted(extra)}")
         if rule.get("scope") not in valid_scopes:
             errors.append(f"{prefix}: scope invalid: {rule.get('scope')!r}")
-        if rule.get("position") not in valid_positions:
-            errors.append(f"{prefix}: position invalid: {rule.get('position')!r}")
         if rule.get("synthesize") not in valid_synthesize:
             errors.append(f"{prefix}: synthesize invalid: {rule.get('synthesize')!r}")
         if rule.get("suppress") not in valid_suppress:
@@ -657,19 +679,27 @@ def _validate_chain_rules() -> List[str]:
             for skip_name in rule["skip"]:
                 if skip_name not in PBP_EVENTS:
                     errors.append(f"{prefix}: skip references unknown event {skip_name!r}")
-        for anchor_name in str(rule.get("anchor", "")).split("|"):
-            if anchor_name not in PBP_EVENTS and anchor_name not in special_anchors:
-                errors.append(f"{prefix}: anchor references unknown token {anchor_name!r}")
+        if not isinstance(rule.get("anchor"), tuple) or not rule["anchor"]:
+            errors.append(f"{prefix}: anchor must be a non-empty tuple of tokens")
+        else:
+            for anchor_name in rule["anchor"]:
+                if anchor_name not in PBP_EVENTS and anchor_name not in special_anchors:
+                    errors.append(f"{prefix}: anchor references unknown token {anchor_name!r}")
+        if not isinstance(rule.get("superseded_by"), tuple):
+            errors.append(f"{prefix}: superseded_by must be a tuple of event names")
+        else:
+            for evt_name in rule["superseded_by"]:
+                if evt_name not in PBP_EVENTS:
+                    errors.append(f"{prefix}: superseded_by references unknown event {evt_name!r}")
     return errors
 
 
-def _validate_invariants() -> List[str]:
+def _validate_invariants() -> list[str]:
     """Validate every ``INVARIANTS`` entry against its uniform schema."""
-    from src.definitions.chain_rules import INVARIANTS
-    from src.definitions.pbp import PBP_EVENTS
+    from src.definitions.pbp import INVARIANTS, PBP_EVENTS
 
-    errors: List[str] = []
-    required = {"events", "except_events", "state", "severity", "message"}
+    errors: list[str] = []
+    required = {"except_events", "severity"}
 
     for name, inv in INVARIANTS.items():
         prefix = f"INVARIANTS['{name}']"
@@ -684,26 +714,23 @@ def _validate_invariants() -> List[str]:
             errors.append(f"{prefix}: unknown key(s) {sorted(extra)}")
         if inv.get("severity") not in ("error", "warn"):
             errors.append(f"{prefix}: severity invalid: {inv.get('severity')!r}")
-        if not isinstance(inv.get("message"), str):
-            errors.append(f"{prefix}: message must be str")
-        for key in ("events", "except_events"):
-            if not isinstance(inv.get(key), tuple):
-                errors.append(f"{prefix}: {key} must be a tuple of event names")
-            else:
-                for evt in inv[key]:
-                    if evt not in PBP_EVENTS:
-                        errors.append(f"{prefix}: {key} references unknown event {evt!r}")
+        if not isinstance(inv.get("except_events"), tuple):
+            errors.append(f"{prefix}: except_events must be a tuple of event names")
+        else:
+            for evt in inv["except_events"]:
+                if evt not in PBP_EVENTS:
+                    errors.append(f"{prefix}: except_events references unknown event {evt!r}")
     return errors
 
 
-def _validate_pbp_result_set_fields() -> List[str]:
+def _validate_pbp_result_set_fields() -> list[str]:
     """Validate every ``RESULT_SET_FIELDS`` entry has the uniform shape."""
-    from src.definitions.pbp import PBP_EVENTS, RESULT_SET_FIELDS
+    from src.definitions.pbp import PBP_EVENTS, PBP_SCOPES, RESULT_SET_FIELDS
 
-    errors: List[str] = []
+    errors: list[str] = []
     required = {"op", "type", "events", "formula", "fields",
                 "result_sets", "requires_clock"}
-    valid_scopes = {"team", "player", "opp_team", "opp_player", "on_player"}
+    valid_scopes = set(PBP_SCOPES)
 
     for field, f_def in RESULT_SET_FIELDS.items():
         prefix = f"RESULT_SET_FIELDS['{field}']"
@@ -718,38 +745,76 @@ def _validate_pbp_result_set_fields() -> List[str]:
         for evt in f_def.get("events") or []:
             if evt not in PBP_EVENTS:
                 errors.append(f"{prefix}: events references unknown event {evt!r}")
-        for rs, scope in (f_def.get("result_sets") or {}).items():
-            if op == "count" and scope not in valid_scopes:
-                errors.append(f"{prefix}: result_sets[{rs!r}] scope invalid: {scope!r}")
+        result_sets = f_def.get("result_sets")
+        if not isinstance(result_sets, tuple):
+            errors.append(f"{prefix}: result_sets must be a tuple of PBP_SCOPES members")
+            continue
+        for scope in result_sets:
+            if scope not in valid_scopes:
+                errors.append(f"{prefix}: result_sets contains unknown scope {scope!r}")
+        if len(set(result_sets)) != len(result_sets):
+            errors.append(f"{prefix}: result_sets contains duplicates")
     return errors
 
 
-def _validate_pbp_db_mappings() -> List[str]:
-    """Every count result field must have a ``pbp_stats`` DB column mapping.
+def _validate_pbp_db_mappings() -> list[str]:
+    """Validate the ``RESULT_SET_FIELDS`` <-> ``DB_COLUMNS`` PBP mapping in
+    both directions.
 
-    This is the guard against the silent naming-drift bug where a
-    ``RESULT_SET_FIELDS`` key had no matching ``DB_COLUMNS`` entry and the
-    player/team column never populated.  Intermediate fields (those
-    referenced only by derived formulas, e.g. the fg2/fg3 assist split
-    behind ``assist_points``) are exempt.
+    Forward: every count result field's scopes must each have a
+    ``pbp_stats`` DB column mapping.  This is the guard against the
+    silent naming-drift bug where a ``RESULT_SET_FIELDS`` key had no
+    matching ``DB_COLUMNS`` entry and the player/team column never
+    populated.  Intermediate fields (those referenced only by derived
+    formulas, e.g. the fg2/fg3 assist split behind ``assist_points``)
+    are exempt.
+
+    Reverse: every ``pbp_stats`` field referenced by a ``DB_COLUMNS``
+    entry must exist in ``RESULT_SET_FIELDS``, or the accumulator never
+    produces it and the column silently never populates.
     """
     from src.definitions.db_columns import DB_COLUMNS
-    from src.definitions.pbp import RESULT_SET_FIELDS
+    from src.definitions.pbp import PBP_SCOPES, RESULT_SET_FIELDS
 
-    errors: List[str] = []
-    valid_scopes = {"team", "player", "opp_team", "opp_player", "on_player"}
+    errors: list[str] = []
+    valid_scopes = set(PBP_SCOPES)
 
     intermediate: set[str] = set()
     for f_def in RESULT_SET_FIELDS.values():
         if f_def.get("op") == "derived":
             intermediate.update(f_def.get("fields") or [])
 
+    # -- Reverse: every DB pbp_stats field must exist in RESULT_SET_FIELDS.
+    for col_name, col_def in DB_COLUMNS.items():
+        mapping = col_def.get("dataset_mapping") or {}
+        for league_map in mapping.values():
+            for identity_map in league_map.values():
+                for target_map in identity_map.values():
+                    if not isinstance(target_map, dict):
+                        continue
+                    pbp = target_map.get("pbp_stats")
+                    if not isinstance(pbp, dict):
+                        continue
+                    field = pbp.get("field")
+                    if field and field not in RESULT_SET_FIELDS:
+                        errors.append(
+                            f"DB_COLUMNS['{col_name}'] maps pbp_stats field "
+                            f"{field!r} which is not defined in RESULT_SET_FIELDS"
+                        )
+                    result_set = pbp.get("result_set")
+                    if result_set and result_set not in valid_scopes:
+                        errors.append(
+                            f"DB_COLUMNS['{col_name}'] maps pbp_stats field "
+                            f"{field!r} with unknown result_set {result_set!r}"
+                        )
+
+    # -- Forward: every count result field's scopes need a pbp_stats mapping.
     for field, f_def in RESULT_SET_FIELDS.items():
         if f_def.get("op") != "count":
             continue
         if field in intermediate:
             continue
-        for rs, scope in (f_def.get("result_sets") or {}).items():
+        for scope in (f_def.get("result_sets") or ()):
             if scope not in valid_scopes:
                 continue
             found = False
@@ -776,17 +841,83 @@ def _validate_pbp_db_mappings() -> List[str]:
                     break
             if not found:
                 errors.append(
-                    f"RESULT_SET_FIELDS['{field}'] result_sets[{rs!r}]: "
+                    f"RESULT_SET_FIELDS['{field}'] result_sets[{scope!r}]: "
                     f"no DB_COLUMNS entry maps pbp_stats field {field!r} "
                     f"with result_set {scope!r}"
                 )
     return errors
 
 
+def _validate_column_checks() -> list[str]:
+    """Validate every per-column ``check`` picklist in ``DB_COLUMNS``.
+
+    Guards the config-driven picklists (now inline on each ``Column``
+    entry): a non-``None`` check must be a non-empty, duplicate-free list
+    of strings, and every picklist derived from another definition must
+    match that definition exactly so the DB CHECK never drifts.
+    """
+    from src.definitions.datasets import DATASETS, VALID_IDENTITIES
+    from src.definitions.db_columns import (
+        DB_COLUMNS,
+        STAGING_STATUS_VALUES,
+        TABLE_NAME_VALUES,
+    )
+    from src.definitions.leagues import LEAGUES
+    from src.definitions.pbp import PBP_EVENTS, PBP_HANDLING_VALUES
+    from src.definitions.pipeline import VALID_PHASES
+
+    errors: list[str] = []
+
+    # Canonical picklists: every column whose values come from another
+    # definition must carry ``check`` derived from that definition (the
+    # single place the values are edited).  ``gender``/``season_type``
+    # aggregate across every league so a new league extends the domain;
+    # ``target`` derives from the schema registry's table names.
+    derived_checks = {
+        "identity": VALID_IDENTITIES,
+        "league_code": frozenset(LEAGUES),
+        "phase": VALID_PHASES,
+        "season_type": frozenset(
+            st for league in LEAGUES.values() for st in league["season_types"]
+        ),
+        "gender": frozenset(league["gender"] for league in LEAGUES.values()),
+        "event": frozenset(PBP_EVENTS),
+        "dataset": frozenset(ds for identity in DATASETS.values() for ds in identity),
+        "handling": PBP_HANDLING_VALUES,
+        "status": frozenset(STAGING_STATUS_VALUES),
+        "target": TABLE_NAME_VALUES,
+    }
+
+    for col_name, col_def in DB_COLUMNS.items():
+        check = col_def.get("check")
+        prefix = f"DB_COLUMNS['{col_name}']['check']"
+        if col_name in derived_checks:
+            expected = derived_checks[col_name]
+            if check is None:
+                errors.append(f"{prefix}: must be populated from its canonical definition")
+            elif set(check) != set(expected):
+                errors.append(
+                    f"{prefix}: must equal its canonical definition "
+                    f"{sorted(expected)}"
+                )
+            continue
+        if check is None:
+            continue
+        if not isinstance(check, list) or not check:
+            errors.append(f"{prefix}: must be a non-empty list of strings")
+            continue
+        if not all(isinstance(v, str) and v for v in check):
+            errors.append(f"{prefix}: all values must be non-empty strings")
+            continue
+        if len(set(check)) != len(check):
+            errors.append(f"{prefix}: duplicate values")
+    return errors
+
+
 # ============================================================================
 # PUBLIC API
 # ============================================================================
-def _validate_cross_row_config() -> List[str]:
+def _validate_cross_row_config() -> list[str]:
     """Validate every ``cross_row`` config in DB_COLUMNS.
 
     Checks that each ``cross_row`` dict has the required fields:
@@ -796,7 +927,7 @@ def _validate_cross_row_config() -> List[str]:
     """
     from src.definitions.db_columns import DB_COLUMNS
 
-    errors: List[str] = []
+    errors: list[str] = []
     allowed_keys = frozenset({"group_by", "match_field", "match_contains"})
 
     for col_name, col_def in DB_COLUMNS.items():
@@ -865,10 +996,10 @@ def _validate_cross_row_config() -> List[str]:
     return errors
 
 
-def validate_config() -> List[str]:
+def validate_config() -> list[str]:
     from src.definitions.db_columns import DB_COLUMNS
 
-    errors: List[str] = []
+    errors: list[str] = []
 
     errors.extend(_validate_pg_types(DB_COLUMNS))
     errors.extend(_validate_identity_structure(DB_COLUMNS))
@@ -882,7 +1013,9 @@ def validate_config() -> List[str]:
     errors.extend(_validate_result_sets())
     errors.extend(_validate_cross_row_config())
     errors.extend(_validate_rate_limit_sources())
+    errors.extend(_validate_column_checks())
     errors.extend(_validate_pbp_events())
+    errors.extend(_validate_pbp_clock_events())
     errors.extend(_validate_chain_rules())
     errors.extend(_validate_invariants())
     errors.extend(_validate_pbp_result_set_fields())
@@ -891,7 +1024,7 @@ def validate_config() -> List[str]:
     return errors
 
 
-def validate_all() -> List[str]:
+def validate_all() -> list[str]:
     """One-call entry point that validates every ETL configuration plus all
     registered sources' own configs.
 
@@ -903,7 +1036,7 @@ def validate_all() -> List[str]:
     """
     from src.definitions.sources import SOURCES
 
-    aggregated: List[str] = []
+    aggregated: list[str] = []
     # Cross-cuts ETL definitions + per-source DATASETS (no league required).
     aggregated.extend(validate_config())
 

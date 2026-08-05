@@ -1,8 +1,8 @@
 # PBP System Rebuild - Tracking Document
 
 **Created:** 2026-08-02
-**Status:** Implementation complete (2026-08-03) -- Round 3 folded in, engine implemented and tested
-**Supersedes for scope:** `pbp_review_tracking.md` (kept as history; this doc covers the rebuild)
+**Status:** Implementation complete (2026-08-03); Round 4 cleanup/consolidation complete (2026-08-04)
+**Supersedes for scope:** `pbp_review_tracking.md` (history; this doc covers the rebuild)
 
 ---
 
@@ -1015,25 +1015,38 @@ design):
 
 ### 11.4 Remaining topics (for review, not blocking)
 
-1. **`o_foul_draw` semantics widened.** The engine needs the fouled player
-   for every foul (and-one / fouled-miss detection).  The nba_data normalizer
-   now emits `o_foul_draw` for every foul row with a fouled player (PLAYER2),
-   not just offensive fouls.  The `o_fouls_draws` stat therefore counts all
-   fouls drawn, not only offensive fouls.  Rename the stat/column (e.g.
-   `fouls_draws`) if the narrower meaning was intended.
-2. **Dead `RESULT_SET_FIELDS` entries dropped.** No DB column exists for:
-   `opp_steals`, `opp_blocks`, `on_steals`, `on_blocks`, `opp_fg2_assists`,
-   `opp_fg3_assists`, `on_fg2_assists`, `on_fg3_assists`,
-   `opp_o_fouls_draws`, `on_o_fouls_draws`, `on_poss`.  These were dead
-   (never populated) and were removed from the config.  Add columns if any
-   are wanted; `fg2_assists`/`fg3_assists` remain as intermediate fields
-   behind the derived `assist_points` (the DB has a single `assists` column
-   from box scores).
-3. **Real-data residual errors.** ~1 error per game remains on 2010-11 data
-   (possession mismatches on noisy event orderings, rare data quirks).  These
-   games fail closed and land in the manual-review queue -- the designed
-   behavior.  A cross-check of the reference game (21000001) against the old
-   review is in Section 13.
+1. **~~`o_foul_draw` semantics widened.~~ RESOLVED (Rounds 5/6, 2026-08-04).**
+   `standard_foul` split into `o_standard_foul` / `d_standard_foul`;
+   `o_foul_draw` fires only for offensive fouls; the separate `foul_drawn`
+   attribution is gone -- standard foul events carry the fouled player
+   directly in `PBPEvent.fouled_player_id`.
+2. **~~Staging status column.~~ RESOLVED (Round 6, 2026-08-04).**  One uniform
+   `status` column (`pending` / `ready` / `error`, CHECK constrained) on
+   every staging table replaces `pbp_status` + `reviewed`; orchestrator
+   match/merge/clean flows gate on it.
+3. **~~Column check picklists.~~ RESOLVED (Round 7, 2026-08-04).**  Inline
+   `check` field on every `Column` entry (single source of truth; named
+   constraints refresh additively at sync).
+4. **~~`pbp_chains.py` file split.~~ RESOLVED (Round 7, 2026-08-04).**
+   `CHAIN_RULES` + `INVARIANTS` merged into `src/definitions/pbp.py`.
+5. **InvariantDef dead fields (rd6 Q7, pending).**  Recommend dropping
+   `events` / `state` / `message` (never read; `events` can drift from
+   `PBP_EVENTS`), keeping `severity` + `except_events`.  Waiting on user
+   confirmation before the shared-config schema change.
+6. **Definitions-style consistency (rd6 Q8, pending).**  `datasets.py`
+   entry key ordering varies; `rate_limits.py` uses legacy `Dict`/`Tuple`
+   annotations.  Cosmetic; propose a canonical key order + `dict` syntax
+   pass on confirmation.
+7. **Catalog migration (DB-side, pending live DB).**  Run the standard
+   discover/review flow over MSG=6 to split reviewed `foul` rows into
+   `o_standard_foul` / `d_standard_foul` / `elevated_foul`.  The config side
+   is done: the `core.pbp_events.handling` CHECK derives from
+   `PBP_HANDLING_VALUES`, and the classifier fails closed for anything else.
+8. **Real-data residual errors.**  ~1 error per game remains on 2010-11 data
+   (possession mismatches on noisy event orderings, rare data quirks).
+   Errored games fail closed, stay in staging (`status='error'`), and land in
+   the manual-review queue -- the designed behavior.  The review/remediate
+   workflow (status flag + re-run) is the lightweight design in Section 10.
 
 ---
 
@@ -1093,6 +1106,653 @@ implementation record and the remaining (non-blocking) topics.
 ---
 
 ## 13. Discussion log
+
+### 2026-08-05: Round 12 -- scoped clock-completion (`PBP_CLOCK_EVENTS`), total=True TypedDict, zero diagnostics, source-agnostic audit
+
+Round 12 implements `pbp_responses_rd_12.md` pts 1-4 and answers pt 5
+(file organization) with a recommendation.  `validate_all()` clean, 70
+unit tests pass (2 new clock tests, +2 from 68), reference game 21000001
+byte-identical (0 derive errors, 531 normalized -> 1126 derived,
+180/180 poss, 100% player-minutes 28800, 88/80 points, 1427/1419 +
+1419/1427 poss-secs, all event counts unchanged), `export_game_csv`
+writes clean.  `pbp_accumulator.py`, `pbp_deriver.py`, `pbp_clock.py`,
+and `pbp_normalizer.py` are ALL at zero diagnostics (previously the
+accumulator/deriver carried ~195 Pyright TypedDict errors).
+
+**Pt 1 (Q1) -- clock-completion scoped to clock-required event types.**
+The user: "I think this should only be applicable to certain events" --
+filling a shot/turnover/FT fabricates metadata nothing consumes.  New
+canonical constant `PBP_CLOCK_EVENTS` in `src/definitions/pbp.py` =
+`{period_start, period_end, player_in, player_out, poss_start,
+poss_end}` -- exactly the events the clock-derived result fields read
+(team `secs` <- period_end; player `secs` <- player_in/out;
+`o_poss_secs` <- poss_start/end; period_start anchors the possession
+pass).  New validator `_validate_pbp_clock_events()` (every name must
+be a `PBP_EVENTS` key -- a typo would silently leave a field
+unfillable) wired into `validate_config()`.  `fill_missing_secs` now
+fills ONLY `PBP_CLOCK_EVENTS` events; any event is still a valid clock
+SOURCE (nearest previous timed event in the same period), so a
+non-eligible timed event updates the period's last-known clock even
+though non-eligible untimed events are never filled.  `tests/
+test_pbp_clock.py` rewritten to the scoped contract (eligible fill,
+non-eligible stay None, unknown-clock periods stay None, no
+cross-period, timed/untimed no-ops).
+
+**Pt 2 (Q2) -- docstring truth.**  The deriver module docstring and
+`run()` comment no longer say "metadata-only" -- replaced with: the
+completion pass fills `secs` only for `PBP_CLOCK_EVENTS` types; all
+derivation rules key off `seq`; a period with no established clock
+stays untimed and is never fabricated.  Same fix in the
+`RESULT_SET_FIELDS` header comment in `src/definitions/pbp.py`.
+
+**Pt 3 (Q3) -- source-agnostic audit.**  `src/lib` was already generic
+in code; removed the two behavioral claims that named a source: the
+deriver's "nbastats credit duplicates" rebound comment -> "sources may
+credit duplicates", and `pbp_classifier.py`'s docstring reference to
+`nba_data.classifier` -> "each source implements MatchStrategy in its
+own classifier module (see src/sources)".  `pbp_discover.py`'s
+`nba_id.pbp_stats` string is a CLI usage example, not logic -- kept.
+
+**Pt 4 (Q4) -- `PBPEvent` is now `total=True`; accumulator + deriver at
+zero diagnostics.**  Every producer already emits all 12 fields, so the
+TypedDict is `total=True` (optional values are expressed via types,
+never key omission).  This cleared ~195 Pyright "Could not access item"
+errors repo-wide (deriver 163 -> 0, accumulator 32 -> 0, tests 70 ->
+0, diagnose/export scripts largely cleared; remaining script/test
+errors are the pre-existing MockClassifier structural-type mismatch,
+out of scope).  Residual fixes in the deriver: `_mk` now emits
+`fouled_player_id: None`; `_reanchor_fouls` guards `chain_id` before
+dict use and indexes `first_ft["period"]`/`["secs"]` directly;
+`_suppress_intra_sequence_rebounds` + `_stage_3_scoring` guard
+`chain_id` before `setdefault` and use `.values()`; `_finalize` binds
+local `anchor`/`pos` to narrow the `PBPEvent | None` / `int | None`
+closure vars; `_stage_3_scoring` guards the re-found `nxt`; the
+possession stage resolves `poss_transition` through the `EventDef` and
+`_handle_transition` is typed `PossTransition`; `_has_following_event`
+uses `enumerate`; `_validate_invariants` merges the nested `player_in`
+/`player_out` conditionals.  Accumulator: team `secs` filters to timed
+`period_end`s before `max` (TypeError guard), `_pair_windows` merges
+the nested `elif`.  Behavior is unchanged (all fixtures fully timed, so
+the fill is a no-op for the reference game).
+
+**Pt 5 (Q5) -- file organization: recommendation, no change yet.**
+Keep the five `src/lib` modules and three `src/sources/nba_data`
+modules separate -- distinct phases/concerns, standard layout.  Merge
+candidate: `pbp_clock.py` (one ~20-line function invoked only by the
+deriver) could fold into `pbp_deriver.py` as `_fill_missing_secs`; the
+clock tests would fold into `tests/test_pbp_deriver.py`.  This deletes
+a file, so it awaits explicit approval.  Optional naming note:
+`pbp_discover.py` is the only verb-named lib module among noun-named
+siblings (a `pbp_discovery.py` rename would touch `src/cli.py` and the
+orchestrator).  Both are presented to the user as questions.
+
+**Open (awaiting user):** the Pt 5 merge/rename decision.
+
+### 2026-08-04: Round 11 -- per-event secs + clock-completion pass, scoped clock gating, `_mk` refactor
+
+Round 11 implements `pbp_responses_rd_11.md` pts 1-3.  `validate_all()`
+clean, 68 unit tests pass (8 new), reference game 21000001 byte-identical
+(0 derive errors, 180/180 poss, 100% player-minutes, 88/80 points,
+1427/1419 + 1419/1427 poss-secs, all event counts unchanged),
+`export_game_csv` writes clean.  `pbp_normalizer.py` now has ZERO
+diagnostics (the four `_mk` late-binding warnings are gone).
+
+**Pt 1 -- per-event `secs`, no whole-game nulling, clock-completion pass.
+(Round 11 Q1: what is best practice for untimed events?)  Answer: infer,
+never error -- a deliberate clock-completion pass, not a fallback.**
+
+- The normalizer no longer blanks every event's `secs` when any event
+  lacks a usable clock.  Each event keeps its own parsed `secs`; a game
+  with any untimed event stays in feed order (a fully timed game is
+  still clock-ordered).  A period family with no established length
+  (e.g. OT without a period-5 clock) yields `secs=None` per event -- we
+  never invent a clock.
+- New generic lib module `src/lib/pbp_clock.py`:
+  `fill_missing_secs(events)` forward-fills each event's missing `secs`
+  from the nearest previous timed event **within the same period**
+  (per-period floor fill).  A period with zero clock data keeps its
+  events at `None`; fully timed / fully untimed games are no-ops.
+  This answers the user's "can player_in/out and period_start/end be
+  inferred from the nearest previous indicate_poss event?" -- yes,
+  generically, from the nearest previous timed event (which for
+  timestamped sources is exactly the possession/indicate_poss backbone).
+- The pass is invoked once per game at the end of
+  `derive_game_context_events` (single choke point), so normalized AND
+  derived events are complete for every downstream consumer.  Documented
+  in the deriver docstring as metadata-only -- every rule still keys off
+  `seq`.
+
+**Pt 2 -- scoped clock gating (Round 11 Q2, approved).**
+
+- `timed = all(...)` and the `requires_clock and not timed` gate in
+  `accumulate_result_set` are gone.  Each clock-consuming path checks
+  only the events it reads:
+  - team `secs` (game length): `None` unless every `period_end` carries
+    `secs` (also fixes the all-None `max()` TypeError);
+  - player `secs` (minutes): the player's own `player_in`/`player_out`
+    boundary markers only;
+  - `o_poss_secs`: per-window -- a window counts via `seq` always, its
+    seconds are included only when both boundary markers carry `secs`;
+    summed timed windows, `None` when no counted window is timed
+    (never report 0 when measurement was impossible);
+  - `poss` counts: unchanged (seq-based, never clocked).
+- `requires_clock` remains on the two fields as documentation; its
+  header comment now describes per-event gating.  A partially timed
+  game therefore salvages whatever clock data exists instead of
+  blanking every clock field.
+
+**Pt 3 -- `_mk` late-binding fix (Round 11 Q5).**
+
+- The inline closure `_mk` in `pbp_normalizer.py` is replaced by a
+  module-level `_mk_event(base, event, team_id, player_id, *,
+  chain_id, fouled_player_id)`; `base` is the per-row context dict
+  (identity/game_id/event_id/seq/secs/period/source) built once per raw
+  row and passed explicitly -- no loop variables captured late, no
+  default-arg capture trick, zero diagnostics.
+
+**Tests.**  `test_untimed_game_when_ot_clock_missing` converted to the
+new contract (period-1 clock parses to 0; OT make/assist stay `None`);
+new `test_partially_timed_game_preserves_per_event_secs`;
+`tests/test_pbp_clock.py` (fill within period, never fabricate an
+unknown-clock period, timed/untimed no-ops); four new accumulator tests
+(untimed period_end -> team secs None, possession secs sum timed
+windows only, None when no timed window, player secs scoped to own
+interval).
+
+**Open (flagged, not blocking):** floor-fill undercounts a filled
+interval's exact duration by construction (standard conservative
+choice; matches "nearest previous" wording); summed-timed-window
+aggregation (None only when no counted window is timed); unknown-clock
+periods stay untimed forever (never fabricate).  All three are the
+implemented defaults -- adjust on user's word.
+
+### 2026-08-04: Round 7 -- rd6 fold-in (check picklists, poss mapping, config merge, audit)
+
+Round 7 implements the approved rd6 items and answers Q1-Q4/Q7/Q8/Q10 with
+audits.  `validate_config()` / `validate_all()` clean, 52 unit tests pass,
+reference game 21000001 still clean (0 derive errors, 180/180 possession
+starts/ends, 100% player-minutes coverage, team points 88/80).
+
+**Implemented this round (user-approved):**
+
+- **Inline `check` picklists on every column (rd6 Q5).**  `COLUMN_CHECKS`
+  registry removed.  Every `Column` entry now carries a `check` field
+  (`None` unless value-restricted): `handling` ->
+  `sorted(PBP_HANDLING_VALUES)` and `status` ->
+  `list(STAGING_STATUS_VALUES)` (both derived, single place to edit).
+  `schema_builder` emits a DETERMINISTICALLY NAMED constraint
+  (`{table}_{col}_check`) on CREATE and refresh-syncs it on every sync
+  (DROP + ADD inside the sync, additive-safe as picklists grow/shrink).
+  `_validate_column_checks` validates every inline picklist (non-empty,
+  no dups, string-only; handling/status must equal their definitions).
+- **`poss` mapping for `player_games` (rd6 Q9).**  `on_poss` column deleted;
+  `player_games.poss` now maps `pbp_stats` field `poss` result_set
+  `on_player` (team possessions while the player is on court -- exactly
+  what `on_poss` held).  Box-score `POSS` stays for `player_seasons` /
+  `team_seasons` / `team_games`; the player_games box-score mapping was
+  removed (conflicting definitions of "poss" would race first-write-wins).
+  Accumulator unchanged: `on_player` poss was already computed via
+  `_player_possession_count`.  Reference game: Pierce 75, Rondo 76.
+- **`pbp_chains.py` merged into `pbp.py` (rd6 Q6).**  `CHAIN_RULES` +
+  `INVARIANTS` (and their TypedDicts) now live in `src/definitions/pbp.py`
+  -- one file, one domain.  Imports updated in `pbp_deriver`,
+  `config_validation`, tests; file deleted.
+- **Jump-ball turnover supersession is config-driven (rd6 Q1/Q10).**
+  `_has_following_turnover` (the one nbastats-specific forward scan in the
+  engine) deleted.  `ChainRule` gains a uniform `superseded_by` field:
+  `jump_ball_turnover` declares `superseded_by: ("turnover",)` with
+  `max_gap: 2`; the engine's `_has_following_event` reads it generically.
+  Behavior on 21000001 unchanged (2 jump balls, 37 turnovers, 0 errors).
+
+**Audit answers (rd6 Q1-Q4/Q7/Q8/Q10):**
+
+- **Q1/Q10 -- no source-specific hacks remain.**  Grep audit: no
+  `if source == ...`, no game/team-id specials in generic lib.  Remaining
+  conventions are vocabulary-structure helpers on the canonical event names
+  (`startswith("ft")` / `startswith("fg")` / `endswith("_miss")`) and
+  `_foul_type` (event == `elevated_foul` -> elevated, else standard) --
+  stable on the fixed foul vocabulary; flagged as the place to add a
+  `foul_family` EventDef field IF the foul vocabulary ever grows.
+- **Q2 -- `fouled_player_id` is the right design.**  Generic `PBPEvent`
+  field, set by the normalizer from the source's PLAYER2, read generically
+  by the engine (`_fouled_player` falls back to `o_foul_draw` for sources
+  that express the link as an event).  No engine change needed.
+- **Q3 -- priorities.**  `sort_priority` remains documented intent only
+  (config docstring says so); real order = source feed order + chain
+  placement.  Keeping it as written intent; happy to drop it.
+- **Q4 -- untimed sources work by design.**  Every derivation rule keys off
+  `seq`; `secs` is optional metadata (`requires_clock` gates clock fields to
+  `None`).  An untimed normalizer simply preserves feed order (no sort),
+  so no per-source timing config is needed.
+- **Q7 -- CHAIN_RULES / INVARIANTS field audit.**  Read by engine:
+  `anchor`, `scope`, `skip`, `max_gap`, `cross_period`, `reanchor`,
+  `required`, `synthesize`, `suppress`, `superseded_by`; `severity`,
+  `except_events`.  NOT read: `position` (documented intent, like
+  `sort_priority`) and INVARIANTS `events` / `state` / `message` (pure
+  documentation -- the rule KEY names the check and the engine supplies
+  richer messages; `events` tuples can drift from `PBP_EVENTS`).
+  **Recommendation (pending):** drop `events` / `state` / `message` from
+  `InvariantDef`, keep `severity` + `except_events`; keep `position` as
+  documented intent.
+- **Q8 -- definitions audit (all 14 files).**  Uniform TypedDicts,
+  validators, and derived value sets are in good shape.  Findings:
+  (1) `datasets.py` entry key ordering varies across entries
+  (`league_schedule` vs `recent_games` vs `pbp_stats`) -- cosmetic, but
+  inconsistent; recommend one canonical order.  (2) `rate_limits.py` uses
+  `Dict`/old annotations (not `dict`), unlike the rest -- typing-only,
+  recommend unifying.  (3) `countries.py` / `normalization.py` are flat
+  data dicts -- fine.  (4) `schema.py` `Table` is uniform; columns are
+  fully driven by `DB_COLUMNS` (no drift).  (5) Every dict is consumed by
+  code or a validator; no dead entries found.
+
+### 2026-08-04: Round 8 -- rd7 fold-in (config fields over splicing, picklist completion, d_poss_secs removal)
+
+Round 8 implements the approved rd7 items and answers Q1-Q7/Q9 with the
+full definitions+engine+db_columns fold.  `validate_config()` /
+`validate_all()` clean, 52 unit tests pass, reference game 21000001 still
+clean (0 derive errors, 180/180 possession starts/ends, 100% player-minutes
+coverage, team points 88/80, o_poss_secs 1427/1419, opp o_poss_secs
+1419/1427 = the old d_poss_secs).
+
+**Implemented this round (user-approved rd7 directives):**
+
+- **Q3 -- string splicing killed; config fields are authoritative.**
+  `EventDef` now carries `shot_family` (fg/ft/none), `shot_result`
+  (make/miss/none), and `foul_family` (standard/elevated/none) on every
+  entry.  The engine derives `_FG_EVENTS` / `_FT_EVENTS` / `_MISS_EVENTS` /
+  `_FG_MISS_EVENTS` frozensets from `PBP_EVENTS`; `_is_ft` / `_is_fg` and
+  `_foul_type` (now `_foul_family`) read config; every
+  `endswith("_miss")` / `startswith("fg|ft")` reference replaced.  The
+  normalizer's `_FOUL_TYPES` also derives from `foul_family != "none"`
+  instead of `endswith("_foul")`.  No vocabulary string splicing remains
+  in engine or normalizer.
+- **Q4 -- no fallbacks.**  `_fouled_player()` no longer falls back to the
+  `o_foul_draw` attribution; a standard foul without `fouled_player_id`
+  records the new `foul_without_fouled_player` invariant (severity error)
+  and the game fails.  Audit results below.
+- **Q5 -- `sort_priority` removed.**  It was documented intent only (chains
+  + source feed order determine ordering).  Dropped from `EventDef`, all 30
+  entries, the validator, and the tests; stale normalizer docstring fixed.
+- **Q7 -- `d_poss_secs` field removed, column re-mapped.**
+  `RESULT_SET_FIELDS` no longer defines `d_poss_secs`; `o_poss_secs`
+  result_sets widened to (team, opp_team, on_player, opp_player) and the
+  accumulator computes the opp scopes (opponent windows / opponent windows
+  while the player is on court).  DB column `d_poss_secs` now maps
+  `o_poss_secs` at `opp_team` (team_games) and `opp_player` (player_games).
+  `diagnose_pbp.py` prints `opp_o_poss_secs`; the box-score CSV drops the
+  field automatically (columns come from `RESULT_SET_FIELDS`).
+- **Q9 -- dead config fields removed; anchor is a tuple.**  `InvariantDef`
+  slimmed to `{severity, except_events}` (dropped `events` / `state` /
+  `message` -- the rule KEY names the check and the engine supplies
+  messages).  `ChainRule` dropped `position`; `anchor` is now a
+  `tuple[str, ...]` (uniform with every other event list in the configs);
+  special tokens stay single strings in the tuple.
+- **Q1 -- `check` picklists completed (derived from canonical definitions).**
+  `identity` -> `VALID_IDENTITIES`, `league_code` -> `LEAGUES`, `phase` ->
+  `VALID_PHASES`, `season_type` -> union of league `season_types`,
+  `gender` -> union of league `gender`, `event` (errors) -> `PBP_EVENTS`,
+  `dataset` -> union of `DATASETS` names.  `_validate_column_checks` now
+  enforces every derived picklist equals its canonical definition (the
+  single place to edit), so the DB CHECK cannot drift.
+- **Q2 -- box `POSS` restored on `player_games.poss`.**  The box-score
+  mapping (`player_game_stats` / `POSS` / `LeagueGameLog`) is back
+  alongside `pbp_stats` / `poss` / `on_player`.  NOTE: the two are
+  different definitions of "poss" -- box `POSS` is the league's possession
+  *estimate*; PBP `on_player` poss is a literal count of derived windows
+  while on court -- and first-write-wins staging means whichever phase
+  writes first supplies the value.
+- **Q8 -- consistency pass.**  `datasets.py` entries reordered to one
+  canonical key order (`min_season, max_season, source, phase, coverage,
+  iterates_by, per_season_type, row_filters, target_tables, prune_tables,
+  source_mapping`) incl. the `team_hustle_stats` source_mapping;
+  `rate_limits.py` / `season_formats.py` / `countries.py` /
+  `normalization.py` modernized to builtin generics (`dict` / `list` /
+  `tuple` / `frozenset`, `X | None`).
+
+**Audit answers (rd7 Q4/Q6):**
+
+- **Q4 -- fallback audit.**  Data-integrity fallback fixed:
+  `_fouled_player` o_foul_draw path (now the invariant error above).
+  Flagged: `_infer_period_lengths` defaults to 720/300s when no
+  period_start clock rows exist (source-specific clock math, dead for
+  nbastats which always emits period_start -- recommend error-on-uninferable
+  if a stricter posture is wanted).  Justified soft defaults (raw CSV cell
+  coercion): `_to_int`/`_to_str`, `_parse_pctime` -> 0, `get()` cell
+  defaults, `chain_id or anchor` on derived events, `p3_team or tip_team`
+  source-field precedence, and the documented bench/coach foul
+  `entity_type="unknown"` branch (a first-class case, not a fallback).
+- **Q6 -- untimed sources work by design (no per-source timing config).**
+  Every derivation rule keys off `seq`; `secs` is optional metadata.
+  `requires_clock: True` fields (`secs`, `o_poss_secs`) output `None` for
+  an entire game when any event lacks a clock -- the accumulator computes
+  `timed = all(...)` per game.  An untimed normalizer just preserves feed
+  order.
+
+### 2026-08-04: Round 9 -- rd8 fold-in (ft_miss consolidation, stricter clock inference, typing + picklist completion)
+
+Round 9 implements the six items in `pbp_responses_rd8.md` and answers
+Q2/Q3.  `validate_config()` / `validate_all()` clean, 60 unit tests pass
+(7 new), reference game 21000001 still byte-identical in outcomes
+(0 derive errors, 180/180 possession starts/ends, 100% player-minutes,
+team points 88/80, o_poss_secs 1427/1419, opp 1419/1427, 165
+`pot_poss_ending_scoring_opp`, 34 `ft1_make` + 16 `ft_miss` = 50 FTA,
+30 `d_standard_foul` / 10 `o_standard_foul` / 5 `elevated_foul`,
+37 turnovers, 2 jump balls, 24 o_reb).
+
+**Implemented this round (user-approved rd8 directives):**
+
+- **FT misses consolidated into one `ft_miss` (Q1).**  `ft1_miss` /
+  `ft2_miss` / `ft3_miss` deleted from `PBPEventType`, `PBP_EVENTS`
+  (30 -> 28 events), `CHAIN_RULES` (19 -> 17 entries), and
+  `RESULT_SET_FIELDS['fta']`; a single `ft_miss` (points 0, shot_family
+  ft, shot_result miss) replaces them.  The FT chain rules
+  (`ft1_make`/`ft2_make`/`ft3_make`/`ft_miss`) share one skip list
+  referencing the consolidated miss; the o_reb/d_reb skip lists still
+  list only makes (a miss is the rebound anchor, never skipped).  The
+  engine needed NO code change -- `_FT_EVENTS` / `_MISS_EVENTS` derive
+  from `PBP_EVENTS`.  `diagnose_pbp.py`'s MockClassifier maps MSG=3 to
+  `ft_miss` on a missed FT.
+- **Clock inference errors instead of 720/300 defaults (Q4).**
+  `_infer_period_lengths` raises `ValueError` when a game has no
+  period-1 clock data, and when OT events exist (period >= 5) without a
+  period-5 period_start clock.  A valid four-period game never errors;
+  nbastats always emits period_start so real data is unaffected.  The
+  maintain phase already catches `ValueError` around normalize and marks
+  the game errored (stays in staging).  4 new normalizer tests lock it
+  in.
+- **`config_validation.py` typing modernized (Q5).**  All legacy
+  `Dict` / `List` / `Union` signatures replaced with builtin generics
+  (`dict[...]` / `list[...]` / `X | None`); the four `db_columns`
+  params widened from `Dict[str, Any]` to `Mapping[str, Any]` (fixes
+  the Pyright `Mapping[str, Column]` vs `Dict[str, Any]` argument
+  errors in `validate_config` / `validate_all`).  Mechanical only -- no
+  behavior change.
+- **Picklist completion: `laterality`, `target`, `col_name` (Q6).**
+  `hand` renamed `laterality` (`check: ["L", "R"]`, inline literal --
+  L/R has no canonical source elsewhere), inserted alphabetically
+  between `jersey_num` and `league_code`.  `target` (coverage tables)
+  now carries `check = sorted(TABLE_NAME_VALUES)` -- a new module
+  constant derived from `SCHEMAS` bare table names (matches what
+  `seed_coverage` writes).  `col_name` (coverage tables) is
+  self-referential: its `check` is assigned after the dict literal
+  closes (`DB_COLUMNS["col_name"]["check"] = sorted(DB_COLUMNS)`)
+  since a self-referential picklist cannot be spelled inline.
+  `_validate_column_checks` gained `target` and `col_name` derived
+  checks, so the DB CHECK cannot drift.  `conf` intentionally left
+  unenforced (conference names not a closed set).
+
+**Answers (rd8 Q2/Q3):**
+
+- **Q2 -- config fields, not string splicing (keep the fields).**
+  Semantics live declaratively in `PBP_EVENTS`, where
+  `_validate_pbp_events` enforces the uniform schema at startup and
+  `test_pbp_events_uniform` locks it.  String splicing couples behavior
+  to the literal spelling of event names, silently misbehaves when the
+  vocabulary grows -- the `ft_miss` consolidation itself is a live
+  example of vocabulary drift (three spliced names collapsed into one
+  with zero engine edits) -- and cannot be validated.  The fields let
+  the engine derive typed sets (`_FG_EVENTS` / `_FT_EVENTS` /
+  `_MISS_EVENTS`) at import with no splicing, matching the uniform
+  TypedDict convention across every definitions file.
+- **Q3 -- `foul_without_fouled_player` scenarios.**  A
+  `d_standard_foul` / `o_standard_foul` event whose source row provides
+  no resolvable fouled player (PLAYER2 empty / "0" / not a player
+  entity) leaves `fouled_player_id` unset and fails the game (severity
+  error).  Triggers: (a) catalog misclassification -- an action type
+  reviewed as a standard foul that the source records without a
+  PLAYER2 (some away-from-play / loose-ball rows); (b) double/offsetting
+  fouls or bench/coach technicals mislabeled as standard -- those are
+  legitimately `elevated_foul`, which never carries the field and is
+  exempt.  The fouled player id drives fouled-shot miss removal
+  (matches the misser), FT-trip team attribution, and player-level /
+  on-court stat scoping; the old `o_foul_draw` fallback only covered
+  offensive fouls, duplicated the normalizer's direct link, and hid
+  source bugs.  A missing value now lands the game in `status='error'`
+  for manual review / correction / rerun rather than corrupting stats.
+
+### 2026-08-04: Round 9 follow-up -- clock-optional normalizer (reverses the Round 9 Q4 strictness)
+
+`pbp_responses_rd9.md` directed three changes; all implemented and
+verified (`validate_all()` clean, 60/60 tests pass, reference game
+21000001 byte-identical: 0 derive errors, 180/180 poss, 100%
+player-minutes, 88/80 points, 1427/1419 + 1419/1427 poss-secs, all
+event counts unchanged).
+
+- **Clock-optional normalizer (rd9 pt 1) -- REVERSES Round 9's Q4.**
+  The user rejected the `ValueError` strictness: sources without
+  timestamps must work by design, and missing clocks are simply not
+  needed, not an error.  `src/sources/nba_data/pbp_normalizer.py`:
+  `_parse_pctime` now returns `int | None` (`None` = unparseable; `0`
+  remains a legal elapsed value so it is never a failure sentinel),
+  `_infer_period_lengths` returns `tuple[int | None, int | None]` and
+  never raises (a length the data cannot establish is `None`), and
+  `_pctime_to_secs` returns `None` when the clock string does not parse
+  or the period family's length is unknown.  `secs` is now a per-game
+  property: if every event is timed the game is clock-ordered as
+  before; if any event lacks a usable clock, every event's `secs` is
+  set to `None` and the game stays in feed order -- exactly matching
+  the accumulator's `timed = all(e.get("secs") is not None ...)` gate,
+  so `requires_clock` fields output `None` for untimed games.  The
+  inference branches (period_start clock, or max remaining clock in
+  period 1 / the first OT period) are preserved: an OT game with
+  parseable clocks but no period-5 period_start is *timed* via the
+  max-clock fallback, not errored.  Two normalizer tests converted from
+  `assertRaises(ValueError)` to untimed-graceful tests
+  (`test_untimed_game_without_period_one_clock`,
+  `test_untimed_game_when_ot_clock_missing`); the two inference tests
+  unchanged.  The sort tiebreaker also moved into a typed helper
+  (`_event_order`) to clear pre-existing TypedDict diagnostics on the
+  sort key (remaining `_mk` closure warnings are pre-existing and
+  warning-level only).
+- **`schema_resolver.py` typing modernized (rd9 pt 3).**  `typing
+  Iterator`/`Tuple`/`Any` replaced with `collections.abc.Iterator` and
+  builtin `tuple[...]`; `iter_tables` now yields
+  `Iterator[tuple[str, str, str, Table]]` (typed `Table` instead of
+  `Any`).  Mechanical only; zero diagnostics.
+- **`col_name` post-literal assignment explained (rd9 pt 2).**  No code
+  change.  `DB_COLUMNS` is a dict literal, and `col_name`'s allowed
+  values are the registry's own keys -- a self-referential set that
+  cannot be spelled inline (you cannot reference `DB_COLUMNS` inside
+  its own literal).  One line after the literal therefore assigns
+  `DB_COLUMNS["col_name"]["check"] = sorted(DB_COLUMNS)`, and
+  `_validate_column_checks` enforces the derived check so the DB CHECK
+  cannot drift.  It is a wart only in that every other `check` is an
+  inline expression; it is the single post-literal mutation, kept
+  because it emits a real PG CHECK (single source of truth).  If the
+  user prefers 100%-literal definitions, the alternative is
+  validation-only (`check: None` + enforcement in
+  `_validate_column_checks`, no DB CHECK) -- not changed pending their
+  call.
+
+### 2026-08-04: Round 10 -- col_name unconstrained; clock machinery under review
+
+- **`col_name` check -> None (rd10 pt 4).**  The post-literal assignment
+  (`DB_COLUMNS["col_name"]["check"] = sorted(DB_COLUMNS)`) is deleted,
+  `col_name` keeps its inline `check: None`, the `col_name` entry is
+  removed from `_validate_column_checks` derived_checks, and
+  `test_column_checks_complete` now asserts `check is None`.  No DB CHECK
+  on the coverage column; the self-referential wart is gone.
+- **Clock machinery (rd10 pt 1-3) -- OPEN, awaiting decision.**  The user
+  questioned why `_infer_period_lengths` / `_pctime_to_secs` exist.
+  Facts established: nbastats emits PERIOD + PCTIMESTRING (time remaining
+  in period), never elapsed seconds; the two helpers are the ONLY way to
+  build the monotonic `secs` timeline from that, and `secs` feeds exactly
+  two `requires_clock` result fields -- `o_poss_secs` (possession
+  seconds) and `secs` (player minutes / team game length).  Derivation is
+  100% seq-based; nothing else consumes `secs`.  Deleting the helpers
+  makes those outputs None for every game (timed or not).  Also open: the
+  whole-game `timed = all(...)` gate vs per-event `secs` + scoped gates
+  (possession seconds only need secs on poss_start/poss_end anchors;
+  minutes need player_in/out; game length needs period_end).  Options
+  presented to the user: (A) keep the data-driven inference + move to
+  per-event/scoped gating [recommended]; (B) delete the clock machinery
+  and the `requires_clock` fields/DB columns.  Awaiting their call.
+
+### 2026-08-04: Round 6 -- catalog authority, status column, result-set consolidation
+
+Round 6 (the eight points in `pbp_responses_rd5.md`) implemented and
+verified: `validate_config()` clean, 52 unit tests pass, reference game
+21000001 clean (0 derive errors, 180/180 possession starts/ends, 100%
+player-minutes coverage, team points 88/80 matching the real final).
+
+- **Foul semantics driven by the catalog (Q1).**  `FOUL_ACTIONTYPE_MAP` was
+  deleted from `src/sources/nba_data/config.py` and the normalizer's
+  map-vs-catalog warning check removed -- `core.pbp_events` (via the
+  classifier) is the single authority.  The normalizer's foul vocabulary is
+  derived from `PBP_EVENTS` (names ending in `_foul`).  `diagnose_pbp.py`
+  keeps a diagnostics-only copy of the MSG=6 map (mirrors reviewed catalog
+  rows; never a production authority).
+- **`foul_drawn` removed; `fouled_player_id` added (Q2).**  Standard foul
+  events carry the fouled player directly in `PBPEvent.fouled_player_id`;
+  the engine's `_fouled_player()` reads it (falling back to `o_foul_draw`).
+  `o_foul_draw` fires only for `o_standard_foul`, so `o_fouls_drawn` is
+  correct.  Reference game: 30 `d_standard_foul` + 10 `o_standard_foul`,
+  every one carrying the fouled player.
+- **Config-driven CHECK picklists (Q3).**  New `COLUMN_CHECKS` registry in
+  `db_columns.py` (column name -> allowed values), emitted as PostgreSQL
+  `CHECK (col IN (...))` by `schema_builder` on CREATE and ADD COLUMN, and
+  validated by `_validate_column_checks` (handling must equal
+  `PBP_HANDLING_VALUES`; status must equal `STAGING_STATUS_VALUES`).
+  Chosen as a separate registry rather than a `check` key on all 108
+  `Column` entries: no per-column churn, and any future column opts in
+  (e.g. `season_type`).
+- **Unified `status` column (Q5).**  `pbp_status` and `reviewed` replaced by
+  one `status` column on every staging table (`pending`/`ready`/`error`,
+  default `pending`, CHECK constrained).  Orchestrator: `_match_entities`
+  sets `status='ready'`; `_set_pbp_status` renamed `_set_game_status`;
+  `_merge_staging` metadata/`where_clause`s gate on `status`;
+  `_clean_staging` deletes `status='ready'` rows and retains `error` games.
+- **File organization (Q4/Q8).**  `coerce.py` folded into `transform.py`
+  (`to_int`/`to_str`); `pbp_derive.py` -> `pbp_deriver.py`;
+  `chain_rules.py` -> `pbp_chains.py` (PBP-prefixed, mirrors `pbp.py`);
+  test modules renamed to match.  `_find_forward` now enforces `max_gap`
+  (no dead config); dead locals (`foul_has_fts`, `start_spec`) removed.
+- **`RESULT_SET_FIELDS` consolidated (Q6).**  One field per stat -- no more
+  `opp_`/`on_` prefixed mirrors.  `result_sets` is a tuple of `PBP_SCOPES`
+  members (`team`, `player`, `opp_team`, `opp_player`, `on_player`); the
+  accumulator is called once per scope and the orchestrator assembles a DB
+  row from per-scope rows via a `(field, scope) -> column` map.
+  `_handle_special` dispatches on (field, scope); `_build_partitions`
+  builds all five partitions per call.
+- **Stat matrix corrected to `pbp_data.tsv` (Q7).**  `poss`: team/opponent/on
+  (no player-level poss from PBP -- box-score POSS covers it; new `on_poss`
+  column = team possessions while a player is on court); `o_poss_secs`:
+  team/on; new `d_poss_secs` field (team/on = opponent offensive-possession
+  seconds) replaces the `opp_o_poss_secs` mirror; `points`: opp/on scopes
+  added (new `opp_points` / `on_points` columns); `secs` gained pbp_stats
+  mappings.  Naming drift fixed: `o_fouls_draws` -> `o_fouls_drawn`
+  (matches the TSV).  `games` has no PBP field (season-level box-score
+  fact).  The six FT `CHAIN_RULES` entries stay explicit -- uniform,
+  validator-enforced; generating them would put procedural code in
+  definitions.
+- **`sort_priority` documented, not removed.**  It is the written
+  same-second ordering contract; sources sort by `(secs, eventnum)` and the
+  engine chain-places same-second events.  `max_gap` is enforced in both
+  search directions.
+
+### 2026-08-04: Round 5 -- foul split, review CSVs, DRY/audit pass
+
+Round 5 (`pbp_responses_rd5.md`) was folded in.  What landed (all
+verified: `validate_config()` clean, 51 unit tests pass, reference game
+21000001 clean through `diagnose_pbp.py`):
+
+- **Offensive-foul split (Q6).**  `standard_foul` was replaced by
+  `o_standard_foul` / `d_standard_foul` in `PBP_EVENTS`, the
+  `PBPEventType` literal, `CHAIN_RULES` (FT anchors,
+  `o_foul_draw` anchors to `o_standard_foul` only), `INVARIANTS`
+  (`event_off_court` excepts), and `RESULT_SET_FIELDS` (`standard_fouls`
+  counts both variants).  A new `foul_drawn` attribution event carries
+  the fouled player for defensive fouls (the fouled-shot-miss and
+  and-one logic need it); `o_foul_draw` is now emitted only for
+  offensive fouls, so `o_fouls_draws` is finally correct.
+  `FOUL_ACTIONTYPE_MAP` maps action types 4/26 to `o_standard_foul` and
+  the rest of the standard family to `d_standard_foul`; the dead
+  `OFFENSIVE_FOUL_ACTION_TYPES` constant was deleted.  Reference game
+  now shows 10 `o_standard_foul` = 10 `o_foul_draw`, 30
+  `d_standard_foul` = 30 `foul_drawn`, 5 `elevated_foul`.
+- **Review CSVs (Q5).**  New `export_game_csv.py` (reuses the
+  `diagnose_pbp.py` harness) writes `data/review/` for game 21000001:
+  `pbp_raw_21000001.csv` (441 rows), `pbp_standardized_21000001.csv`
+  (1156 derived events, contract columns + review names), and
+  `pbp_box_score_21000001.csv` (PBP-derived team + player box score --
+  20 rows; totals Boston 88 / Miami 80, matching the real final; player
+  points verified against raw `PLAYER1_TEAM_ID`).  The box score is
+  PBP-derived, not an official box score.
+- **DRY wins (Q1/Q8-Q10).**  Shared `src/lib/coerce.py` (`to_int` /
+  `to_str`) replaced the duplicated `_to_int` / `_to_str` helpers in the
+  nba_data classifier and normalizer; the normalizer's foul vocabulary
+  is now derived from `FOUL_ACTIONTYPE_MAP.values()` instead of a
+  hardcoded tuple.
+- **Status-column answer (Q4).**  Recommendation recorded in 11.4: a
+  single uniform `status` on every staging table replacing `pbp_status`
+  + `reviewed`.  Not implemented -- schema-wide, pending approval.
+- **Picklist answer (Q6).**  Enforcement is config-driven today (the
+  classifier fails closed for non-`PBP_EVENTS` handling); optional DB
+  `CHECK` generated from `PBP_EVENTS` at schema-build time.
+- **Audit findings logged.**  Remaining (not blocking): the six
+  near-identical FT `CHAIN_RULES` entries (candidate for generation),
+  `_find_forward`'s unused `gap`/`max_gap` (accepted but unenforced),
+  a few dead locals (`foul_has_fts`, `start_spec`), and the
+  `PBPEvent` `total=False` TypedDict (would be `total=True` for full
+  static checking).  All are pre-existing and deferred.
+
+### 2026-08-04: Round 4 -- cleanup and consolidation
+
+Round 4 (`pbp_responses_rd4.md`) was folded in and implemented.  What
+landed (all verified: `validate_config()` clean, 50 unit tests pass, real
+2010-11 game through `diagnose_pbp.py`):
+
+- **db_columns finished (Q1).**  `points` column added (box-score PTS from
+  `player_basic_stats` / `team_basic_stats` / `player_game_stats` /
+  `team_game_stats` + `pbp_stats` from the accumulator); `assists` gained its
+  `pbp_stats` mapping; `ftm` confirmed correct (counts `ft1_make` +
+  `ft2_make` + `ft3_make`); **all 108 `DB_COLUMNS` entries re-ordered
+  alphabetically** (one-shot deterministic transform, verified by AST +
+  `validate_config()`).  Three latent duplicate-key bugs fixed: `identity`,
+  `dataset`, and `ext_game_id` each appeared twice (staging/coverage version
+  silently overwritten by the later `errors` version) -- merged into single
+  entries with the union of tables.
+- **Result fields (Q1).**  Added `assists` (fg2 + fg3), `opp_d_rebs`, and
+  `opp_turnovers` count fields -- the last two were DB columns with `pbp_stats`
+  mappings but no accumulator field, so they silently never populated.  The
+  mapping guard in `config_validation.py` now checks BOTH directions, so this
+  drift class is caught forever.
+- **`points` is now a special field** that sums the `PBP_EVENTS` point values
+  instead of a formula over make-counts, so leagues with multi-point FTs
+  score correctly (identical results for the NBA).
+- **Error model consolidated (Q2).**  `PbpError` moved out of `pbp_errors.py`
+  (deleted) into `error_recorder.py`; the dead `to_log_payload()` was removed;
+  `error_recorder` now derives its insert columns from `DB_COLUMNS` (no
+  schema drift).  `PbpError.severity` is taken from `INVARIANTS`, and the
+  orchestrator marks a game errored only for error-severity violations.
+- **Config authority wired (Q6).**  The derive engine now consumes
+  `CHAIN_RULES` and `INVARIANTS` where it previously hardcoded the same
+  values: attribution set (scope == "sequence"), per-FT-chain `required` /
+  `reanchor`, rebound-chain `suppress`, and `synthesize` gates for team
+  rebounds and jump-ball turnovers.  No behavior change (config values equal
+  the prior hardcoded ones) -- the config is genuinely authoritative now.
+- **File organization (Q3/Q8).**  nba-specific match strategy
+  (`build_nba_signature` / `build_nba_event_key` / `FieldLookupStrategy`)
+  moved from `src/lib/pbp_classifier.py` to a new
+  `src/sources/nba_data/classifier.py`; discovery now resolves the source's
+  own signature builders (source-agnostic).  `get_table` / `iter_tables`
+  moved from `src/definitions/schema.py` to `src/lib/schema_resolver.py`
+  (definitions hold config, lib holds code); the dead `VALID_*_TABLES`
+  constants and `pbp_discover._to_int` were removed.
+- **Foul map renamed (Q4).**  `FOUL_TAXONOMY` -> `FOUL_ACTIONTYPE_MAP` (a
+  declarative map from MSG=6 action types to `standard_foul` /
+  `elevated_foul`).
+- **Minutes bug fixed (real-data validation).**  The period-end lineup sweep
+  anchored its `player_out` to the `period_start` instead of the
+  `period_end`, producing negative on-court intervals.  Anchored to the
+  `period_end`; the reference game now shows exactly 100% court coverage
+  (28,800 secs = 10 players x 48 minutes) -- the original "Point 1: Player
+  minutes" issue.
+- **`diagnose_pbp.py` updated** to the canonical foul events and removed the
+  obsolete `poss_ending_ft_trip` references.
+- **Tracking docs slimmed (Q9).**  `pbp_review_tracking.md`,
+  `pbp_responses_rd1-4.md`, and `proposed_pbp_events.py` removed (superseded);
+  `todo.md` / `resources.md` slimmed.
 
 ### 2026-08-03: Round 3 folded in and implementation complete
 

@@ -12,9 +12,15 @@ canonical event stream:
     and jump-ball-turnover synthesis
   - cleanup + invariant validation (pairing, on-court, lineup size)
 
-Every rule operates on ``seq`` -- never on ``secs``.  Timestamps, when
-present, are metadata only.  The engine accumulates ALL errors for a
-game and returns them (finish-the-game-first).
+Every rule operates on ``seq`` -- never on ``secs``.  The engine
+accumulates ALL errors for a game and returns them (finish-the-game-first).
+
+Before returning, a clock-completion pass fills missing ``secs`` only
+for the clock-required event types in ``PBP_CLOCK_EVENTS`` (period
+boundaries, player in/out markers, possession markers), inheriting the
+nearest previous timed event in the same period.  All derivation rules
+key off ``seq``; ``secs`` is optional per-event metadata consumed only
+by the accumulator's clock-derived fields.
 """
 
 from __future__ import annotations
@@ -22,11 +28,43 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from src.definitions.chain_rules import CHAIN_RULES, INVARIANTS
-from src.definitions.pbp import PBP_EVENTS, PBPEvent
-from src.lib.pbp_errors import PbpError
+from src.definitions.pbp import (
+    CHAIN_RULES,
+    INVARIANTS,
+    PBP_EVENTS,
+    PBPEvent,
+    PossTransition,
+)
+from src.lib.error_recorder import PbpError
+from src.lib.pbp_clock import fill_missing_secs
 
 logger = logging.getLogger(__name__)
+
+# Attribution chains are the CHAIN_RULES entries bound within the same
+# source row (``scope == "sequence"``): fg2_assist, fg3_assist, block,
+# steal, o_foul_draw.  Derived from config so the engine never hardcodes
+# the list.
+ATTRIBUTION_EVENTS: frozenset[str] = frozenset(
+    name for name, rule in CHAIN_RULES.items() if rule["scope"] == "sequence"
+)
+
+# Vocabulary views derived from ``PBP_EVENTS`` so the engine never
+# splices event names (``startswith("fg")`` / ``endswith("_miss")``).
+# ``shot_family`` / ``shot_result`` / ``foul_family`` are the canonical
+# fields; these sets are the derived views the engine consumes.
+_FG_EVENTS: frozenset[str] = frozenset(
+    name for name, ev_def in PBP_EVENTS.items()
+    if ev_def["shot_family"] == "fg"
+)
+_FT_EVENTS: frozenset[str] = frozenset(
+    name for name, ev_def in PBP_EVENTS.items()
+    if ev_def["shot_family"] == "ft"
+)
+_MISS_EVENTS: frozenset[str] = frozenset(
+    name for name, ev_def in PBP_EVENTS.items()
+    if ev_def["shot_result"] == "miss"
+)
+_FG_MISS_EVENTS: frozenset[str] = _FG_EVENTS & _MISS_EVENTS
 
 # ---------------------------------------------------------------------------
 # Public types
@@ -113,6 +151,10 @@ class _DeriveEngine:
         events = self._stage_5_cleanup(events)
 
         self._reindex(events)
+        # Clock-completion pass: forward-fill missing ``secs`` for the
+        # clock-required event types (``PBP_CLOCK_EVENTS``) within each
+        # period; all derivation rules key off ``seq``.
+        fill_missing_secs(events)
         return DeriveResult(events=events, errors=self.errors)
 
     # ==================================================================
@@ -131,10 +173,12 @@ class _DeriveEngine:
         event: PBPEvent | None = None,
         **detail: object,
     ) -> None:
+        severity = INVARIANTS.get(rule, {}).get("severity", "error")
         self.errors.append(
             PbpError(
                 rule=rule,
                 message=message,
+                severity=severity,
                 game_id=self._game_id,
                 event_id=event.get("event_id") if event else None,
                 seq=event.get("seq") if event else None,
@@ -168,6 +212,7 @@ class _DeriveEngine:
             "player_id": player_id,
             "event": event,
             "chain_id": chain_id or anchor.get("event_id"),
+            "fouled_player_id": None,
             "source": source or f"derived:{event}",
         }
 
@@ -192,27 +237,27 @@ class _DeriveEngine:
 
     @staticmethod
     def _is_ft(e: PBPEvent) -> bool:
-        return e["event"].startswith("ft")
+        return e["event"] in _FT_EVENTS
 
     @staticmethod
     def _is_fg(e: PBPEvent) -> bool:
-        return e["event"].startswith("fg")
+        return e["event"] in _FG_EVENTS
 
     @staticmethod
     def _is_source(e: PBPEvent) -> bool:
         return not str(e.get("source", "")).startswith("derived:")
 
     @staticmethod
-    def _foul_type(e: PBPEvent) -> str:
-        return "elevated" if e["event"] == "elevated_foul" else "standard"
+    def _foul_family(e: PBPEvent) -> str:
+        return PBP_EVENTS[e["event"]]["foul_family"]
 
     # ==================================================================
     # Stage 1 -- chain resolution
     # ==================================================================
 
     def _stage_1_chains(self, events: list[PBPEvent]) -> list[PBPEvent]:
-        ft_chain = CHAIN_RULES["ft1_make"]  # identical shape for all FT events
-        reb_chain = CHAIN_RULES["o_reb"]
+        ft_chain = CHAIN_RULES["ft1_make"]  # uniform for every FT event
+        reb_chain = CHAIN_RULES["o_reb"]  # uniform for o_reb / d_reb
         skip_ft = frozenset(ft_chain["skip"])
         skip_reb = frozenset(reb_chain["skip"])
 
@@ -220,18 +265,20 @@ class _DeriveEngine:
         for e in events:
             if not self._is_ft(e):
                 continue
+            rule = CHAIN_RULES[e["event"]]
             foul = self._find_backward(
-                events, e["seq"], ft_chain["anchor"],
+                events, e["seq"], rule["anchor"],
                 skip=skip_ft,
-                max_gap=ft_chain["max_gap"],
-                cross_period=ft_chain["cross_period"],
+                max_gap=rule["max_gap"],
+                cross_period=rule["cross_period"],
             )
             if foul is None:
-                self._error(
-                    "ft_without_foul",
-                    f"Free throw {e['event']} has no invoking foul",
-                    e,
-                )
+                if rule["required"]:
+                    self._error(
+                        "ft_without_foul",
+                        f"Free throw {e['event']} has no invoking foul",
+                        e,
+                    )
                 continue
             e["chain_id"] = foul["event_id"]
 
@@ -240,26 +287,29 @@ class _DeriveEngine:
         # the chain: o_reb when the rebounding team is the shooting team,
         # d_reb otherwise.  A rebound is placed directly after its shot
         # (the user rule "rebounds and shots at the same sec keep the
-        # order they came in"): when the same-second priority sort placed
-        # the rebound ahead of its miss, the rebound is re-anchored to
-        # sit immediately after the shot.
+        # order they came in"): when the feed placed the rebound ahead
+        # of its miss, the rebound is re-anchored to sit immediately
+        # after the shot.
         rebound_moves: list[tuple[PBPEvent, PBPEvent]] = []
         for e in events:
             if e["event"] not in ("o_reb", "d_reb", "rebound"):
                 continue
+            # o_reb and d_reb chain rules are uniform; a neutral source
+            # ``rebound`` uses the same search semantics.
+            rule = CHAIN_RULES["o_reb"] if e["event"] != "d_reb" else CHAIN_RULES["d_reb"]
             shot = self._find_backward(
-                events, e["seq"], reb_chain["anchor"],
+                events, e["seq"], rule["anchor"],
                 skip=skip_reb,
-                max_gap=reb_chain["max_gap"],
-                cross_period=reb_chain["cross_period"],
+                max_gap=rule["max_gap"],
+                cross_period=rule["cross_period"],
             )
             if shot is None:
-                # The same-second priority sort may have placed the
-                # rebound ahead of its miss entirely -- look forward.
+                # The feed may place the rebound ahead of its miss
+                # entirely -- look forward.
                 shot = self._find_forward(
                     events, e["seq"], skip=skip_reb,
-                    max_gap=reb_chain["max_gap"],
-                    cross_period=reb_chain["cross_period"],
+                    max_gap=rule["max_gap"],
+                    cross_period=rule["cross_period"],
                 )
                 if shot is not None and not self._is_shot(shot):
                     shot = None
@@ -288,11 +338,13 @@ class _DeriveEngine:
         events = self._remove_fouled_misses(events)
 
         # 1e. Re-anchor cross-period fouls to sit before their first FT.
-        events = self._reanchor_fouls(events)
+        if ft_chain["reanchor"]:
+            events = self._reanchor_fouls(events)
 
         # 1f. Suppress intra-sequence rebound artifacts so they never act
         # as indicate_poss events.
-        events = self._suppress_intra_sequence_rebounds(events)
+        if reb_chain["suppress"] == "open_scoring_sequence":
+            events = self._suppress_intra_sequence_rebounds(events)
 
         self._reindex(events)
         return events
@@ -301,7 +353,7 @@ class _DeriveEngine:
         self,
         events: list[PBPEvent],
         idx: int,
-        anchor_spec: str,
+        anchor_spec: tuple[str, ...],
         *,
         skip: frozenset[str],
         max_gap: int,
@@ -309,12 +361,12 @@ class _DeriveEngine:
     ) -> PBPEvent | None:
         """Search backward from *idx* for an anchor event.
 
-        ``anchor_spec`` is a ``|``-joined list of event names or a
-        special token: ``"shot"`` (any shot) or ``"miss"`` (any missed
-        shot).  Returns the first matching event, or ``None`` if none is
-        found within ``max_gap`` non-skipped events.
+        ``anchor_spec`` is a tuple of event names or special tokens:
+        ``"shot"`` (any shot) or ``"miss"`` (any missed shot).  Returns
+        the first matching event, or ``None`` if none is found within
+        ``max_gap`` non-skipped events.
         """
-        anchors = anchor_spec.split("|")
+        anchors = anchor_spec
         anchor_shot = "shot" in anchors
         anchor_miss = "miss" in anchors
         start_period = events[idx].get("period")
@@ -327,7 +379,7 @@ class _DeriveEngine:
                 continue
             if anchor_shot and self._is_shot(cand):
                 return cand
-            if anchor_miss and cand["event"].endswith("_miss"):
+            if anchor_miss and cand["event"] in _MISS_EVENTS:
                 return cand
             if cand["event"] in anchors:
                 return cand
@@ -343,8 +395,9 @@ class _DeriveEngine:
     ) -> list[PBPEvent]:
         """Move each chained event to sit immediately after its anchor.
 
-        Used to enforce chain placement (``position: after``) when the
-        same-second priority sort left an event ahead of its anchor.
+        Used to enforce chain placement (a rebound always sits directly
+        after its shot) when the feed order left the event ahead of its
+        anchor.
         """
         move_ids = {e["event_id"] for e, _ in pairs}
         result = [e for e in events if e["event_id"] not in move_ids]
@@ -363,7 +416,12 @@ class _DeriveEngine:
         max_gap: int,
         cross_period: bool,
     ) -> PBPEvent | None:
-        """Return the first non-skipped event after *idx* (or None)."""
+        """Return the first non-skipped event after *idx* (or None).
+
+        ``max_gap`` bounds the number of NON-skipped events the search
+        may pass over (mirroring ``_find_backward``) so the config value
+        is genuinely authoritative.
+        """
         start_period = events[idx].get("period")
         gap = 0
         for j in range(idx + 1, len(events)):
@@ -372,13 +430,16 @@ class _DeriveEngine:
                 return None
             if cand["event"] in skip:
                 continue
+            if max_gap >= 0 and gap >= max_gap:
+                return None
+            gap += 1
             return cand
         return None
 
     def _resolve_attributions(self, events: list[PBPEvent]) -> None:
         """Bind attribution events to their primary via same event_id."""
         for e in events:
-            if e["event"] in ("fg2_assist", "fg3_assist", "block", "steal", "o_foul_draw"):
+            if e["event"] in ATTRIBUTION_EVENTS:
                 primary = self._by_id.get(e.get("chain_id") or "")
                 if primary is not None:
                     e["chain_id"] = primary["event_id"]
@@ -394,14 +455,14 @@ class _DeriveEngine:
         """
         remove: set[str] = set()
         for i, e in enumerate(events):
-            if not self._is_fg(e) or not e["event"].endswith("_miss"):
+            if e["event"] not in _FG_MISS_EVENTS:
                 continue
             nxt = self._find_forward(
                 events, i, skip=frozenset({"block"}), max_gap=1, cross_period=False,
             )
-            if nxt is None or nxt["event"] != "standard_foul":
+            if nxt is None or self._foul_family(nxt) != "standard":
                 continue
-            if self._fouled_player(events, nxt) != e["player_id"]:
+            if self._fouled_player(nxt) != e["player_id"]:
                 continue
             if not self._foul_has_fts(events, nxt):
                 continue
@@ -415,12 +476,16 @@ class _DeriveEngine:
             remove.add(e["event_id"])
         return [e for e in events if e["event_id"] not in remove]
 
-    def _fouled_player(self, events: list[PBPEvent], foul: PBPEvent) -> str | None:
-        """Return the fouled player id for *foul* via its o_foul_draw chain."""
-        for e in events:
-            if e["event"] == "o_foul_draw" and e.get("chain_id") == foul["event_id"]:
-                return e.get("player_id") or None
-        return None
+    def _fouled_player(self, foul: PBPEvent) -> str | None:
+        """Return the fouled player id for a standard foul.
+
+        Standard foul events carry the fouled player directly in
+        ``PBPEvent.fouled_player_id`` (set by the normalizer).  A
+        standard foul without one is a data-integrity error recorded by
+        the ``foul_without_fouled_player`` invariant -- there is no
+        fallback attribution path.
+        """
+        return foul.get("fouled_player_id") or None
 
     def _foul_has_fts(self, events: list[PBPEvent], foul: PBPEvent) -> bool:
         """True if any FT event chains to *foul*."""
@@ -442,7 +507,7 @@ class _DeriveEngine:
             events, idx, skip=frozenset({"fg2_assist", "fg3_assist"}),
             max_gap=1, cross_period=False,
         )
-        if nxt is None or nxt["event"] != "standard_foul":
+        if nxt is None or self._foul_family(nxt) != "standard":
             return False
         trip_fts = [
             e for e in events
@@ -459,10 +524,14 @@ class _DeriveEngine:
         """
         first_ft_by_foul: dict[str, PBPEvent] = {}
         for e in events:
-            if self._is_ft(e) and e.get("chain_id"):
-                cur = first_ft_by_foul.get(e["chain_id"])
-                if cur is None or e["seq"] < cur["seq"]:
-                    first_ft_by_foul[e["chain_id"]] = e
+            if not self._is_ft(e):
+                continue
+            chain_id = e.get("chain_id")
+            if chain_id is None:
+                continue
+            cur = first_ft_by_foul.get(chain_id)
+            if cur is None or e["seq"] < cur["seq"]:
+                first_ft_by_foul[chain_id] = e
 
         moves: list[tuple[PBPEvent, PBPEvent]] = []
         for foul_id, first_ft in first_ft_by_foul.items():
@@ -478,8 +547,8 @@ class _DeriveEngine:
         result = [e for e in events if e["event_id"] not in move_ids]
         self._reindex(result)
         for foul, first_ft in moves:
-            foul["period"] = first_ft.get("period")
-            foul["secs"] = first_ft.get("secs")
+            foul["period"] = first_ft["period"]
+            foul["secs"] = first_ft["secs"]
             result.insert(first_ft["seq"], foul)
         self._reindex(result)
         self._by_id = {e["event_id"]: e for e in result}
@@ -497,8 +566,12 @@ class _DeriveEngine:
         # A shot is non-final when a later shot shares its foul trip.
         trip_shots: dict[str, list[PBPEvent]] = {}
         for e in events:
-            if self._is_shot(e) and e.get("chain_id"):
-                trip_shots.setdefault(e["chain_id"], []).append(e)
+            if not self._is_shot(e):
+                continue
+            chain_id = e.get("chain_id")
+            if chain_id is None:
+                continue
+            trip_shots.setdefault(chain_id, []).append(e)
         for trip in trip_shots.values():
             if len(trip) > 1:
                 last = max(trip, key=lambda x: x["seq"])
@@ -515,15 +588,19 @@ class _DeriveEngine:
             if self._make_absorbed_by_trip(events, i):
                 non_final.add(e["event_id"])
 
-        # Only one rebound per anchor shot: nbastats credit duplicates on
-        # tip-in sequences (miss -> o_reb -> tip make -> o_reb).  Keep the
-        # first rebound for each anchor; suppress the rest.
+        # Only one rebound per anchor shot: sources may credit duplicates
+        # on tip-in sequences (miss -> o_reb -> tip make -> o_reb).  Keep
+        # the first rebound for each anchor; suppress the rest.
         rebound_anchors: dict[str, list[PBPEvent]] = {}
         for e in events:
-            if e["event"] in ("o_reb", "d_reb") and e.get("chain_id"):
-                rebound_anchors.setdefault(e["chain_id"], []).append(e)
+            if e["event"] not in ("o_reb", "d_reb"):
+                continue
+            chain_id = e.get("chain_id")
+            if chain_id is None:
+                continue
+            rebound_anchors.setdefault(chain_id, []).append(e)
         duplicate_reb_ids: set[str] = set()
-        for anchor_id, rebs in rebound_anchors.items():
+        for rebs in rebound_anchors.values():
             if len(rebs) > 1:
                 first = min(rebs, key=lambda x: x["seq"])
                 for reb in rebs:
@@ -589,16 +666,24 @@ class _DeriveEngine:
                     sub_pairs.get(e["event_id"], frozenset()) | {e["event"]}
                 )
 
-        def _finalize(anchor: PBPEvent) -> None:
-            """Validate lineups, sweep, and insert starter player_ins."""
-            nonlocal period_start_pos
-            self._validate_period_lineup(on_court, period_anchor)
+        def _finalize(end_anchor: PBPEvent) -> None:
+            """Validate lineups, sweep, and insert starter player_ins.
+
+            ``end_anchor`` is the period's ``period_end`` event: the sweep
+            ``player_out`` rows inherit its clock so on-court intervals
+            measure real minutes (period_end secs minus period_start secs).
+            """
+            anchor = period_anchor
+            pos = period_start_pos
+            if anchor is None or pos is None:
+                return
+            self._validate_period_lineup(on_court, anchor)
             # Sweep: every on-court player gets a player_out right after
             # the period_end.
             for team, players in sorted(on_court.items()):
                 for pid in sorted(players):
                     sweep = self._mk(
-                        anchor, "player_out", team, pid,
+                        end_anchor, "player_out", team, pid,
                         source="derived:lineup_sweep",
                     )
                     result.append(sweep)
@@ -607,11 +692,11 @@ class _DeriveEngine:
             for team, players in sorted(starters.items()):
                 for pid in sorted(players):
                     starter_events.append(self._mk(
-                        period_anchor, "player_in", team, pid,
+                        anchor, "player_in", team, pid,
                         source="derived:starter",
                     ))
             if starter_events:
-                result[period_start_pos + 1:period_start_pos + 1] = starter_events
+                result[pos + 1:pos + 1] = starter_events
 
         for e in events:
             evt = e["event"]
@@ -634,7 +719,7 @@ class _DeriveEngine:
             if evt == "period_end":
                 result.append(e)
                 if in_period and period_start_pos is not None and period_anchor is not None:
-                    _finalize(period_anchor)
+                    _finalize(e)
                 in_period = False
                 continue
 
@@ -724,10 +809,13 @@ class _DeriveEngine:
         # Precompute trip facts from stage-1 chains.
         ft_by_foul: dict[str, list[PBPEvent]] = {}
         for e in events:
-            if self._is_ft(e) and e.get("chain_id"):
-                ft_by_foul.setdefault(e["chain_id"], []).append(e)
-        foul_has_fts = {fid for fid in ft_by_foul}
-        for fid, fts in ft_by_foul.items():
+            if not self._is_ft(e):
+                continue
+            chain_id = e.get("chain_id")
+            if chain_id is None:
+                continue
+            ft_by_foul.setdefault(chain_id, []).append(e)
+        for fts in ft_by_foul.values():
             last = max(fts, key=lambda x: x["seq"])
             self._trip_last_ft_ids.add(last["event_id"])
 
@@ -746,6 +834,8 @@ class _DeriveEngine:
                 events, i, skip=frozenset({"fg2_assist", "fg3_assist"}),
                 max_gap=1, cross_period=False,
             )
+            if nxt is None:
+                continue
             self._and_one_make_ids.add(e["event_id"])
             self._and_one_foul_ids.add(nxt["event_id"])
 
@@ -759,15 +849,13 @@ class _DeriveEngine:
             nonlocal seq_last_shot, open_trip_foul
             if (
                 seq_last_shot is not None
-                and seq_last_shot["event"].endswith("_miss")
+                and seq_last_shot["event"] in _MISS_EVENTS
             ):
                 self._sequence_final_misses.add(seq_last_shot["event_id"])
             seq_last_shot = None
             open_trip_foul = None
 
         for e in events:
-            evt = e["event"]
-
             if self._is_shot(e):
                 if self._is_ft(e):
                     foul = self._by_id.get(e.get("chain_id") or "")
@@ -775,7 +863,7 @@ class _DeriveEngine:
                         # ft_without_foul already recorded in stage 1.
                         result.append(e)
                         continue
-                    if self._foul_type(foul) == "elevated":
+                    if self._foul_family(foul) == "elevated":
                         # Elevated trips are transparent: they neither
                         # start nor continue a scoring sequence.
                         result.append(e)
@@ -855,7 +943,7 @@ class _DeriveEngine:
         for e in events:
             if e["event_id"] not in self._sequence_final_misses:
                 continue
-            if not e["event"].endswith("_miss"):
+            if e["event"] not in _MISS_EVENTS:
                 continue
             nxt = self._next_indicate_poss(events, e["seq"])
             if nxt is None or nxt["event"] == "period_end":
@@ -868,7 +956,8 @@ class _DeriveEngine:
         for e in events:
             evt = e["event"]
             team = e.get("team_id", "")
-            transition = PBP_EVENTS.get(evt, {}).get("poss_transition")
+            ev_def = PBP_EVENTS.get(evt)
+            transition = ev_def["poss_transition"] if ev_def is not None else None
 
             if evt == "period_start":
                 # Place the period's first poss_start at the period_start
@@ -893,17 +982,26 @@ class _DeriveEngine:
 
             if evt == "jump_ball_win":
                 # A real turnover in the current window -- or one recorded
-                # immediately after the jump ball (nbastats logs the
-                # held-ball team turnover after the jump) -- means the
-                # possession change is already recorded: skip synthesis
-                # and skip the jump-ball's own transition.
-                real_turnover = window_turnovers > 0 or self._has_following_turnover(
-                    events, e["seq"],
+                # immediately after the jump ball (sources log the held-ball
+                # team turnover after the jump row) -- means the possession
+                # change is already recorded: skip synthesis and skip the
+                # jump-ball's own transition.  The "immediately after" rule
+                # is config-driven via the chain rule's ``superseded_by``
+                # and ``max_gap``.
+                jb_rule = CHAIN_RULES["jump_ball_turnover"]
+                real_turnover = (
+                    window_turnovers > 0
+                    or self._has_following_event(
+                        events, e["seq"],
+                        event_types=jb_rule["superseded_by"],
+                        max_gap=jb_rule["max_gap"],
+                    )
                 )
                 if (
                     current_poss is not None
                     and current_poss != team
                     and not real_turnover
+                    and jb_rule["synthesize"] == "team_turnover"
                 ):
                     # Synthesize a team turnover for the possessor placed
                     # immediately before the jump-ball; its always
@@ -949,8 +1047,9 @@ class _DeriveEngine:
             # Team-rebound synthesis: place a team rebound right after a
             # sequence-final miss with no assigned rebound.
             if (
-                evt.endswith("_miss")
+                evt in _MISS_EVENTS
                 and e["event_id"] in self._sequence_final_misses
+                and CHAIN_RULES["o_reb"]["synthesize"] == "team_rebound"
             ):
                 has_real = any(
                     x.get("chain_id") == e["event_id"]
@@ -1006,28 +1105,36 @@ class _DeriveEngine:
         self._reindex(result)
         return result
 
-    def _has_following_turnover(self, events: list[PBPEvent], idx: int) -> bool:
-        """True when a source turnover follows within two non-skipped events.
+    def _has_following_event(
+        self,
+        events: list[PBPEvent],
+        idx: int,
+        *,
+        event_types: tuple[str, ...],
+        max_gap: int,
+    ) -> bool:
+        """True when a source event of one of *event_types* follows within
+        ``max_gap`` non-skipped events of *idx*.
 
-        nbastats records the held-ball team turnover AFTER the jump-ball
-        row; the real turnover carries the possession change.
+        Config-driven via a chain rule's ``superseded_by``/``max_gap``:
+        the real event (e.g. a held-ball team turnover after a jump-ball
+        row) carries the possession change, so synthesis is unnecessary.
         """
-        gap = 0
-        for j in range(idx + 1, len(events)):
-            cand = events[j]
+        if not event_types:
+            return False
+        for gap, cand in enumerate(events[idx + 1:], start=1):
             if cand["event"] == "period_end":
                 return False
-            if cand["event"] == "turnover" and self._is_source(cand):
+            if cand["event"] in event_types and self._is_source(cand):
                 return True
-            gap += 1
-            if gap > 2:
+            if max_gap >= 0 and gap > max_gap:
                 return False
         return False
 
     def _handle_transition(
         self,
         e: PBPEvent,
-        transition: dict,
+        transition: PossTransition,
         current_poss: str | None,
         team: str,
         result: list[PBPEvent],
@@ -1041,7 +1148,6 @@ class _DeriveEngine:
         evt = e["event"]
         condition = transition.get("condition")
         end_spec = transition.get("end_team")
-        start_spec = transition.get("start_team")
 
         if condition == "always":
             if evt in ("d_reb", "turnover"):
@@ -1068,13 +1174,13 @@ class _DeriveEngine:
             return None
 
         if condition == "live_shot":
-            if not self._is_shot(e) or evt.endswith("_miss"):
+            if not self._is_shot(e) or evt in _MISS_EVENTS:
                 return None
             if self._is_ft(e):
                 foul = self._by_id.get(e.get("chain_id") or "")
                 if foul is None:
                     return None
-                if self._foul_type(foul) == "elevated":
+                if self._foul_family(foul) == "elevated":
                     return None  # elevated FTs never transition
                 if e["event_id"] not in self._trip_last_ft_ids:
                     return None  # mid-trip FT
@@ -1163,6 +1269,18 @@ class _DeriveEngine:
     def _validate_invariants(self, events: list[PBPEvent]) -> None:
         """Run pairing, on-court, and end-of-game checks over the final
         stream.  Errors are accumulated (finish-the-game-first)."""
+        # --- Standard fouls must carry the fouled player. ---
+        for e in events:
+            if (
+                PBP_EVENTS[e["event"]]["foul_family"] == "standard"
+                and not e.get("fouled_player_id")
+            ):
+                self._error(
+                    "foul_without_fouled_player",
+                    f"Standard foul {e['event']} has no fouled player",
+                    e,
+                )
+
         # --- Possession marker pairing (per team). ---
         poss_open: dict[str, str] = {}
         for e in events:
@@ -1203,17 +1321,15 @@ class _DeriveEngine:
                 self._error("activity_after_end", "Event activity after the final period_end", e)
                 continue
 
-            if evt == "player_in":
-                if team and player:
-                    on_court.setdefault(team, set()).add(player)
-                    player_open.setdefault(player, []).append(e["event_id"])
-            elif evt == "player_out":
-                if team and player:
-                    on_court.setdefault(team, set()).discard(player)
-                    if player_open.get(player):
-                        player_open[player].pop()
-                    elif self._is_source(e):
-                        self._error("player_out_not_on_court", f"player_out for off-court player {player}", e)
+            if evt == "player_in" and team and player:
+                on_court.setdefault(team, set()).add(player)
+                player_open.setdefault(player, []).append(e["event_id"])
+            elif evt == "player_out" and team and player:
+                on_court.setdefault(team, set()).discard(player)
+                if player_open.get(player):
+                    player_open[player].pop()
+                elif self._is_source(e):
+                    self._error("player_out_not_on_court", f"player_out for off-court player {player}", e)
             elif (
                 self._is_indicate_on_court(e)
                 and team

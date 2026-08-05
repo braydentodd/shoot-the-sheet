@@ -9,8 +9,10 @@ Reads the single unified ``RESULT_SET_FIELDS`` dict from
 defines which result sets it appears in and how to compute it.
 
 All on-court / possession window logic operates on ``seq`` -- never
-``secs``.  Clock-derived fields (``secs``, possession seconds) are
-``requires_clock`` gated and output ``None`` for untimed games.
+``secs``.  Clock-derived fields (``secs``, possession seconds) read only
+the events they need: a value is computed from the events the field
+consumes and outputs ``None`` when those events carry no clock
+(per-event clock gating).
 
 Convention: code lives in lib.  Config/dicts/constants live in
 definitions (src.definitions.pbp).
@@ -32,69 +34,65 @@ logger = logging.getLogger(__name__)
 
 def accumulate_result_set(
     events: list[PBPEvent],
-    result_set: str,
+    scope: str,
     entity_id: str,
     opp_entity_id: str | None = None,
     player_team_id: str | None = None,
     on_court_intervals: list[tuple[int, int]] | None = None,
 ) -> dict[str, Any]:
-    """Accumulate standard PBP events into one result set row.
+    """Accumulate standard PBP events into one result-set row.
 
-    Generic over result-set type.  Iterates ``RESULT_SET_FIELDS`` once,
-    skipping fields that don't apply to *result_set*.
+    Generic over scope.  Iterates ``RESULT_SET_FIELDS`` once, computing
+    every field that appears in *scope* (a ``PBP_SCOPES`` member).  The
+    same field is computed once per scope -- ``team`` / ``opp_team`` for
+    a team's self/opponent row, ``player`` / ``opp_player`` /
+    ``on_player`` for a player's own/opponent/on-court row -- so a DB
+    row is assembled from several scope rows via the (field, scope)
+    column map.
 
     Args:
         events: Standard PBPEvent rows for a single game (final seq).
-        result_set: Which result set to produce ("team" or "player").
+        scope: Which ``PBP_SCOPES`` member to compute.
         entity_id: Subject entity ID (team_id or player_id).
         opp_entity_id: Opposing entity ID.
-        player_team_id: Subject player's team ID (player result set only).
+        player_team_id: Subject player's team ID (player scopes only).
         on_court_intervals: Court-time intervals as ``(start_seq, end_seq)``
-            pairs (player result set only).
+            pairs (player scopes only).
 
     Returns:
-        Dict of field_name -> value.
+        Dict of field_name -> value for this scope.
     """
-    timed = all(e.get("secs") is not None for e in events)
-
     partitions = _build_partitions(
-        events, result_set, entity_id, opp_entity_id,
-        player_team_id, on_court_intervals,
+        events, entity_id, opp_entity_id, player_team_id, on_court_intervals,
     )
 
     result: dict[str, Any] = {}
 
     for field_name, field_def in RESULT_SET_FIELDS.items():
-        rs_map = field_def.get("result_sets", {})
-        if result_set not in rs_map:
+        if scope not in field_def.get("result_sets", ()):
             continue
 
         op = field_def["op"]
-        scope_or_handler = rs_map[result_set]
 
         if op == "count":
-            source = _scope_events(scope_or_handler, partitions)
             event_set = set(field_def["events"])
             result[field_name] = sum(
-                1 for e in source if e["event"] in event_set
+                1 for e in partitions[scope] if e["event"] in event_set
             )
 
         elif op == "derived":
             result[field_name] = _evaluate_derived(field_def, result)
 
         elif op == "special":
-            if field_def.get("requires_clock") and not timed:
-                result[field_name] = None
-                continue
             result[field_name] = _handle_special(
-                scope_or_handler,
+                field_name,
+                scope,
                 events,
                 partitions,
                 entity_id,
                 opp_entity_id,
                 player_team_id,
                 on_court_intervals,
-                result,
             )
 
     return result
@@ -107,54 +105,35 @@ def accumulate_result_set(
 
 def _build_partitions(
     events: list[PBPEvent],
-    result_set: str,
     entity_id: str,
     opp_entity_id: str | None,
     player_team_id: str | None,
     on_court_intervals: list[tuple[int, int]] | None,
 ) -> dict[str, list[PBPEvent]]:
-    """Partition events by scope for the given result set type."""
-    if result_set == "team":
-        return {
-            "team": [e for e in events if e["team_id"] == entity_id],
-            "opp_team": [
-                e for e in events
-                if opp_entity_id and e["team_id"] == opp_entity_id
-            ],
-        }
-
-    if result_set == "player":
-        player_events = [
+    """Partition events by scope for the given entity context."""
+    return {
+        "team": [e for e in events if e["team_id"] == entity_id],
+        "opp_team": [
+            e for e in events
+            if opp_entity_id and e["team_id"] == opp_entity_id
+        ],
+        "player": [
             e for e in events if e["player_id"] == entity_id
-        ]
-        opp_events = [
+        ],
+        "opp_player": [
             e for e in events
             if opp_entity_id
             and e["team_id"] == opp_entity_id
             and _is_on_court(e, on_court_intervals)
-        ]
-        on_events = [
+        ],
+        "on_player": [
             e for e in events
             if player_team_id
             and e["team_id"] == player_team_id
             and e["player_id"] != entity_id
             and _is_on_court(e, on_court_intervals)
-        ]
-        return {
-            "player": player_events,
-            "opp_player": opp_events,
-            "on_player": on_events,
-        }
-
-    return {}
-
-
-def _scope_events(
-    scope: str,
-    partitions: dict[str, list[PBPEvent]],
-) -> list[PBPEvent]:
-    """Route to the correct event list based on scope."""
-    return partitions.get(scope, [])
+        ],
+    }
 
 
 # ============================================================================
@@ -236,44 +215,52 @@ def player_on_court_intervals(
 
 
 def _handle_special(
-    handler: str,
+    field: str,
+    scope: str,
     all_events: list[PBPEvent],
     partitions: dict[str, list[PBPEvent]],
     entity_id: str,
     opp_entity_id: str | None,
     player_team_id: str | None,
     on_court_intervals: list[tuple[int, int]] | None,
-    result: dict[str, Any],
 ) -> Any:
-    """Dispatch a special field handler by name."""
+    """Compute a special field for one scope.
 
-    # -- Team handlers --
-    if handler == "team_secs":
-        # Derive from period_end events (game length), not max team-event timestamp.
-        period_ends = [e for e in all_events if e["event"] == "period_end"]
-        if period_ends:
-            return max(e["secs"] for e in period_ends)
-        return None
+    ``scope`` is the row the value is computed for: "team" (self),
+    "opp_team" (opponent), "player" (the player's own value),
+    "opp_player" (opponents while the player is on court), or
+    "on_player" (the team's value while the player is on court).
+    """
+    if field == "points":
+        return _sum_points(partitions.get(scope, []))
 
-    if handler == "team_o_poss_secs":
-        return _calc_possession_secs(all_events, entity_id)
+    if field == "secs":
+        if scope == "team":
+            # Derive from period_end events (game length), not max
+            # team-event timestamp.  None when any period_end is untimed
+            # (never report 0 when measurement was impossible).
+            period_ends = [e for e in all_events if e["event"] == "period_end"]
+            timed_ends = [e["secs"] for e in period_ends if e["secs"] is not None]
+            if not timed_ends or len(timed_ends) != len(period_ends):
+                return None
+            return max(timed_ends)
+        return _calc_player_secs(all_events, entity_id)
 
-    if handler == "opp_team_o_poss_secs":
-        if opp_entity_id:
-            return _calc_possession_secs(all_events, opp_entity_id)
-        return None
+    if field == "win":
+        team_id = entity_id if scope == "team" else player_team_id
+        # DNP (no on-court intervals) -> no win value for players.
+        if scope != "team" and (not player_team_id or not on_court_intervals):
+            return None
+        team_pts = _sum_points(
+            [e for e in all_events if e["team_id"] == team_id]
+        )
+        opp_pts = _sum_points(
+            [e for e in all_events
+             if opp_entity_id and e["team_id"] == opp_entity_id]
+        )
+        return team_pts > opp_pts if team_pts != opp_pts else None
 
-    if handler == "team_poss":
-        return sum(1 for e in all_events
-                   if e["event"] == "poss_start" and e["team_id"] == entity_id)
-
-    if handler == "opp_team_poss":
-        if opp_entity_id:
-            return sum(1 for e in all_events
-                       if e["event"] == "poss_start" and e["team_id"] == opp_entity_id)
-        return None
-
-    if handler == "player_start":
+    if field == "start":
         # Started the game = a derived starter player_in in the first period.
         for e in all_events:
             if (
@@ -285,58 +272,64 @@ def _handle_special(
                 return True
         return False
 
-    if handler == "team_win":
-        team_events = [e for e in all_events if e["team_id"] == entity_id]
-        team_pts = _sum_points(team_events)
-        opp_events = [e for e in all_events
-                      if opp_entity_id and e["team_id"] == opp_entity_id]
-        opp_pts = _sum_points(opp_events)
-        return team_pts > opp_pts if team_pts != opp_pts else None
-
-    # -- Player handlers --
-    if handler == "player_win":
-        # DNP (no on-court intervals) -> no win value
-        if not player_team_id or not on_court_intervals:
+    if field == "poss":
+        if scope == "team":
+            return sum(
+                1 for e in all_events
+                if e["event"] == "poss_start" and e["team_id"] == entity_id
+            )
+        if scope == "opp_team":
+            if opp_entity_id:
+                return sum(
+                    1 for e in all_events
+                    if e["event"] == "poss_start"
+                    and e["team_id"] == opp_entity_id
+                )
             return None
-        team_events = [e for e in all_events if e["team_id"] == player_team_id]
-        team_pts = _sum_points(team_events)
-        opp_events = [e for e in all_events
-                      if opp_entity_id and e["team_id"] == opp_entity_id]
-        opp_pts = _sum_points(opp_events)
-        return team_pts > opp_pts if team_pts != opp_pts else None
-
-    if handler == "player_secs":
-        return _calc_player_secs(all_events, entity_id)
-
-    if handler == "player_o_poss_secs":
-        if player_team_id:
-            return _player_possession_secs(
-                all_events, player_team_id, entity_id, on_court_intervals)
+        if scope == "on_player":
+            if player_team_id:
+                return _player_possession_count(
+                    all_events, player_team_id, entity_id, on_court_intervals,
+                )
+            return None
+        if scope == "opp_player":
+            if opp_entity_id:
+                return _player_possession_count(
+                    all_events, opp_entity_id, entity_id, on_court_intervals,
+                )
+            return None
         return None
 
-    if handler == "opp_player_o_poss_secs":
-        if opp_entity_id:
-            return _player_possession_secs(
-                all_events, opp_entity_id, entity_id, on_court_intervals)
-        return None
-
-    if handler == "player_poss":
-        if player_team_id:
-            return _player_possession_count(
-                all_events, player_team_id, entity_id, on_court_intervals)
-        return None
-
-    if handler == "player_opp_poss":
-        if opp_entity_id:
-            return _player_possession_count(
-                all_events, opp_entity_id, entity_id, on_court_intervals)
+    if field == "o_poss_secs":
+        # Offensive possession seconds use the team's own windows; the
+        # opponent's offensive possession seconds are the same field in
+        # the ``opp_team`` / ``opp_player`` scopes (no ``d_poss_secs``
+        # mirror field exists -- DB columns map the opp scopes instead).
+        if scope == "team":
+            return _calc_possession_secs(all_events, entity_id)
+        if scope == "opp_team":
+            if opp_entity_id:
+                return _calc_possession_secs(all_events, opp_entity_id)
+            return None
+        if scope == "on_player":
+            if player_team_id:
+                return _player_possession_secs(
+                    all_events, player_team_id, entity_id, on_court_intervals,
+                )
+            return None
+        if scope == "opp_player":
+            if opp_entity_id:
+                return _player_possession_secs(
+                    all_events, opp_entity_id, entity_id, on_court_intervals,
+                )
+            return None
         return None
 
     return None
 
 
 # ============================================================================
-# POSSESSION CALCULATIONS (seq-paired, clock-gated)
+# POSSESSION CALCULATIONS (seq-paired, per-window clock)
 # ============================================================================
 
 
@@ -350,10 +343,13 @@ def _pair_windows(
     for e in events:
         if e["event"] == "poss_start" and e["team_id"] == team_id:
             open_marker = e
-        elif e["event"] == "poss_end" and e["team_id"] == team_id:
-            if open_marker is not None:
-                windows.append((open_marker, e))
-                open_marker = None
+        elif (
+            e["event"] == "poss_end"
+            and e["team_id"] == team_id
+            and open_marker is not None
+        ):
+            windows.append((open_marker, e))
+            open_marker = None
     return windows
 
 
@@ -363,17 +359,23 @@ def _calc_possession_secs(
 ) -> int | None:
     """Sum seconds between poss_start/poss_end pairs for a team.
 
-    Clock-gated: returns ``None`` when the game has no clock.
+    Per-window clock gating: a window counts toward the total only when
+    both boundary markers carry ``secs``; returns ``None`` when no
+    window is timed (never report 0 when measurement was impossible).
     """
-    if any(e.get("secs") is None for e in events):
-        return None
     windows = _pair_windows(events, team_id)
     if not windows:
         return None
-    total = sum(
-        max(0, (end["secs"] or 0) - (start["secs"] or 0))
-        for start, end in windows
-    )
+    total = 0
+    timed = 0
+    for start, end in windows:
+        start_secs, end_secs = start.get("secs"), end.get("secs")
+        if start_secs is None or end_secs is None:
+            continue
+        timed += 1
+        total += max(0, end_secs - start_secs)
+    if timed == 0:
+        return None
     return total if total > 0 else None
 
 
@@ -382,21 +384,25 @@ def _player_possession_windows(
     team_id: str,
     player_id: str,
     on_court_intervals: list[tuple[int, int]] | None,
-) -> tuple[int, int]:
-    """Count possession windows and total secs where a player qualifies.
+) -> tuple[int, int, int]:
+    """Return qualified windows, timed windows, and total secs.
 
     A player qualifies for a possession window if they were on court
     during part of the window AND at least one of the window's
     ``indicate_poss`` events falls inside their on-court span (seq-based).
+    A window's seconds are included only when both boundary markers
+    carry ``secs`` (per-window clock gating); ``timed_count`` is how many
+    qualified windows were measurable.
     """
     if on_court_intervals is None:
-        return 0, 0
+        return 0, 0, 0
 
     windows = _pair_windows(events, team_id)
     if not windows:
-        return 0, 0
+        return 0, 0, 0
 
     count = 0
+    timed_count = 0
     total_secs = 0
     for start, end in windows:
         w_start, w_end = start["seq"], end["seq"]
@@ -416,13 +422,13 @@ def _player_possession_windows(
             )
             if has_event:
                 count += 1
-                if any(e.get("secs") is None for e in events):
-                    total_secs += 0
-                else:
-                    total_secs += max(0, (end["secs"] or 0) - (start["secs"] or 0))
+                start_secs, end_secs = start.get("secs"), end.get("secs")
+                if start_secs is not None and end_secs is not None:
+                    timed_count += 1
+                    total_secs += max(0, end_secs - start_secs)
                 break  # count this window once
 
-    return count, total_secs
+    return count, timed_count, total_secs
 
 
 def _player_possession_count(
@@ -431,8 +437,8 @@ def _player_possession_count(
     player_id: str,
     on_court_intervals: list[tuple[int, int]] | None,
 ) -> int | None:
-    """Count qualified possession windows for a player."""
-    count, _ = _player_possession_windows(
+    """Count qualified possession windows for a player (seq-based)."""
+    count, _, _ = _player_possession_windows(
         events, team_id, player_id, on_court_intervals)
     return count if count > 0 else None
 
@@ -443,12 +449,16 @@ def _player_possession_secs(
     player_id: str,
     on_court_intervals: list[tuple[int, int]] | None,
 ) -> int | None:
-    """Sum full possession secs for qualified windows for a player."""
-    if any(e.get("secs") is None for e in events):
-        return None
-    count, total = _player_possession_windows(
+    """Sum full possession secs for qualified windows for a player.
+
+    Per-window clock gating: returns ``None`` when the player qualifies
+    for windows but none is timed.
+    """
+    count, timed_count, total = _player_possession_windows(
         events, team_id, player_id, on_court_intervals)
-    return total if count > 0 else None
+    if count == 0 or timed_count == 0:
+        return None
+    return total if total > 0 else None
 
 
 def _calc_player_secs(
@@ -457,16 +467,23 @@ def _calc_player_secs(
 ) -> int | None:
     """Sum seconds between player_in and player_out events (seq-paired).
 
-    Clock-gated: returns ``None`` when the game has no clock.
+    Reads only the player's own interval boundary markers: an interval
+    counts when both boundaries carry ``secs``; returns ``None`` when
+    the player has intervals but none is timed.
     """
-    if any(e.get("secs") is None for e in events):
-        return None
     intervals = player_on_court_intervals(events, player_id)
     if not intervals:
         return None
+    by_seq = {e["seq"]: e for e in events}
     total = 0
+    timed = 0
     for start_seq, end_seq in intervals:
-        start = next(e for e in events if e["seq"] == start_seq)
-        end = next(e for e in events if e["seq"] == end_seq)
-        total += max(0, (end["secs"] or 0) - (start["secs"] or 0))
+        start_secs = by_seq[start_seq].get("secs")
+        end_secs = by_seq[end_seq].get("secs")
+        if start_secs is None or end_secs is None:
+            continue
+        timed += 1
+        total += max(0, end_secs - start_secs)
+    if timed == 0:
+        return None
     return total if total > 0 else None

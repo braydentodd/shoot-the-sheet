@@ -174,17 +174,7 @@ SCHEMAS: dict[str, dict[str, Table]] = {
         },
         "countries": {
             "primary_key": ["code"],
-            "foreign_keys": [
-                {
-                    "columns": ["sovereign_country"],
-                    "ref_schema": "core",
-                    "ref_table": "countries",
-                    "ref_columns": ["code"],
-                    "strategy": "profile_lookup",
-                    "on_update": "CASCADE",
-                    "on_delete": "SET NULL",
-                }
-            ],
+            "foreign_keys": None,
             "unique_constraints": None,
             "indexes": None,
         },
@@ -1093,37 +1083,3 @@ SCHEMAS: dict[str, dict[str, Table]] = {
 }
 
 
-# ============================================================================
-# ACCESS HELPERS
-# ============================================================================
-
-
-def get_table(qualified_name: str) -> Table:
-    """Look up a table definition by ``'schema.table'`` qualified name.
-
-    Raises ``KeyError`` if the schema or table is not registered.
-    """
-    schema, table = qualified_name.split(".", 1)
-    return SCHEMAS[schema][table]
-
-
-def iter_tables():
-    """Yield ``(qualified_name, schema, table, Table)`` for every table."""
-    for schema, tables in SCHEMAS.items():
-        for table, meta in tables.items():
-            yield f"{schema}.{table}", schema, table, meta
-
-
-# ============================================================================
-# DERIVED TABLE NAME SETS
-# ============================================================================
-
-
-def _get_qualified_tables(schema_name: str) -> frozenset:
-    """Return a frozenset of ``'schema.table'`` names for the given schema."""
-    return frozenset(f"{schema_name}.{t}" for t in SCHEMAS.get(schema_name, {}))
-
-
-VALID_STAGING_TABLES = _get_qualified_tables("staging")
-VALID_CORE_TABLES = _get_qualified_tables("core")
-VALID_INTERMEDIATE_TABLES = _get_qualified_tables("intermediate")
