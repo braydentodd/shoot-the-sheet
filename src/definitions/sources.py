@@ -43,7 +43,9 @@ Optional:
         -> dict | None
 
         Only needed if this source participates in season activity
-        detection.  Register in ``season_detector._SEASON_DETECTORS``.
+        detection.  Resolved automatically: ``season_detector`` looks up
+        ``detect_recent_games`` on the client module via the source
+        registry.
 
 PBP sources (file-based, per-game iteration)
 ---------------------------------------------

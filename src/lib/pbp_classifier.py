@@ -45,6 +45,17 @@ class Classification:
         return self.handling == "ignore"
 
 
+class Classifier(Protocol):
+    """Minimal classifier interface the PBP pipeline consumes.
+
+    ``EventClassifier`` satisfies this protocol; test doubles and
+    diagnostic harnesses implement it directly.  ``classify`` must return
+    a :class:`Classification` or raise :class:`UnclassifiedEventError`.
+    """
+
+    def classify(self, row: dict[str, Any]) -> Classification: ...
+
+
 class MatchStrategy(Protocol):
     """How to build an event key from a raw source row."""
 

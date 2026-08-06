@@ -21,7 +21,6 @@ risks deleting an entity that's about to be referenced.
 """
 
 import logging
-from typing import Dict, List, Union
 
 from src.definitions.leagues import LEAGUES
 from src.lib.leagues_resolver import get_oldest_retained_season
@@ -37,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 def prune_stats_retention(
-    league_code: Union[str, None] = None, current_season: str = ""
+    league_code: str | None = None, current_season: str = ""
 ) -> int:
     """Delete stats rows older than each league's retention window.
 
@@ -86,7 +85,7 @@ def _profile_has_stats_predicate(entity: str) -> str:
     The predicate references ``p.{sts_id}`` and assumes the outer query
     aliases the profile table as ``p``.
     """
-    sub_selects: List[str] = []
+    sub_selects: list[str] = []
     entity_id_col = f"{entity}_id"
     # Core stats tables are named {entity}_seasons (e.g. player_seasons, team_seasons)
     for qualified_name, schema_name, table_name, meta in iter_tables():
@@ -146,7 +145,7 @@ def _delete_pruned(entity: str, cur) -> int:
     return cur.rowcount
 
 
-def prune_entities() -> Dict[str, int]:
+def prune_entities() -> dict[str, int]:
     """Cross-league sweep: delete profile rows that have no stats and no roster
     history.  Requires every league's Phase A run to have completed.
 

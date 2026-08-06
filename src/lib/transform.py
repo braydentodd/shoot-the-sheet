@@ -9,10 +9,9 @@ The pipeline engine executes multi-step transformations defined in config.
 import logging
 import re as _re
 import unicodedata
+from collections.abc import Callable
 from datetime import date, datetime
-from typing import Any, Callable, Dict, Union
-
-from src.lib.math_evaluator import evaluate
+from typing import Any
 
 from src.definitions.normalization import (
     DIACRITICS,
@@ -21,6 +20,7 @@ from src.definitions.normalization import (
     UNICODE_QUOTES,
     WORD_REPLACEMENTS,
 )
+from src.lib.math_evaluator import evaluate
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 
-def safe_int(value: Any, scale: int = 1) -> Union[int, None]:
+def safe_int(value: Any, scale: int = 1) -> int | None:
     """Convert value to scaled integer, returning None for unparseable input."""
     if value is None:
         return None
@@ -61,7 +61,7 @@ def to_str(value: Any) -> str:
     return str(value)
 
 
-def safe_str(value: Any) -> Union[str, None]:
+def safe_str(value: Any) -> str | None:
     """Safely convert to string, returning None for empty/NaN."""
     if value is None or value == "":
         return None
@@ -73,7 +73,7 @@ def safe_str(value: Any) -> Union[str, None]:
     return str(value)
 
 
-def null_if_zero(value: Any) -> Union[int, None]:
+def null_if_zero(value: Any) -> int | None:
     """Return None for 0/empty values; otherwise safe_int."""
     if value is None or value == "" or str(value).lower() == "nan":
         return None
@@ -85,7 +85,7 @@ def null_if_zero(value: Any) -> Union[int, None]:
     return safe_int(value)
 
 
-def parse_inches(raw: Any) -> Union[int, None]:
+def parse_inches(raw: Any) -> int | None:
     """Parse feet/inches string to total inches, rounded to nearest inch.
 
     Handles: 6-10, 6-10.5, 6'10", 6'10, 6'10.5", 6 ft 10 in, 72, 72.5.
@@ -121,7 +121,7 @@ def parse_inches(raw: Any) -> Union[int, None]:
     return None
 
 
-def parse_birthdate(date_str: Any) -> Union[date, None]:
+def parse_birthdate(date_str: Any) -> date | None:
     """Parse birthdate string to date object. Tries common API formats."""
     if not date_str or date_str == "" or str(date_str).lower() in ("nan", "n", "none"):
         return None
@@ -145,7 +145,7 @@ def parse_birthdate(date_str: Any) -> Union[date, None]:
     return None
 
 
-def parse_date(date_str: Any) -> Union[date, None]:
+def parse_date(date_str: Any) -> date | None:
     """Parse date/datetime string to date object.
 
     Handles ISO datetime strings (e.g. '2024-10-22T00:00:00Z') from
@@ -164,7 +164,7 @@ def parse_date(date_str: Any) -> Union[date, None]:
     return parse_birthdate(raw)
 
 
-def format_season(from_year: Any) -> Union[str, None]:
+def format_season(from_year: Any) -> str | None:
     """Convert FROM_YEAR (e.g. 2012) to season string (e.g. '2012-13')."""
     if from_year is None or from_year == "" or str(from_year).lower() == "nan":
         return None
@@ -180,7 +180,7 @@ def format_season(from_year: Any) -> Union[str, None]:
 # ============================================================================
 
 
-def _normalize_name(value: Any) -> Union[str, None]:
+def _normalize_name(value: Any) -> str | None:
     """Normalize an entity name according to matching rules.
 
     Pipeline order (per ``project_tracking/matching.md``):
@@ -227,7 +227,7 @@ def _normalize_name(value: Any) -> Union[str, None]:
     return text or None
 
 
-def match_country(name: Any) -> Union[str, None]:
+def match_country(name: Any) -> str | None:
     """Match a country name/alias to its ISO code via the COUNTRIES registry."""
     if not name:
         return None
@@ -243,7 +243,7 @@ def match_country(name: Any) -> Union[str, None]:
     return None
 
 
-def eq(value: Any, threshold: Any = None) -> Union[bool, None]:
+def eq(value: Any, threshold: Any = None) -> bool | None:
     """Return True if *value* equals *threshold*. None-safe: None → None."""
     if value is None or (
         isinstance(value, str) and value.strip().lower() in ("", "nan", "none")
@@ -252,13 +252,13 @@ def eq(value: Any, threshold: Any = None) -> Union[bool, None]:
     return str(value).strip() == str(threshold).strip()
 
 
-def neq(value: Any, threshold: Any = None) -> Union[bool, None]:
+def neq(value: Any, threshold: Any = None) -> bool | None:
     """Return True if *value* does not equal *threshold*. None-safe."""
     result = eq(value, threshold=threshold)
     return None if result is None else not result
 
 
-def gt(value: Any, threshold: Any = None) -> Union[bool, None]:
+def gt(value: Any, threshold: Any = None) -> bool | None:
     """Return True if *value* > *threshold*. None-safe: None → None."""
     if value is None or (
         isinstance(value, str) and value.strip().lower() in ("", "nan", "none")
@@ -270,7 +270,7 @@ def gt(value: Any, threshold: Any = None) -> Union[bool, None]:
         return None
 
 
-def gte(value: Any, threshold: Any = None) -> Union[bool, None]:
+def gte(value: Any, threshold: Any = None) -> bool | None:
     """Return True if *value* >= *threshold*. None-safe."""
     if value is None or (
         isinstance(value, str) and value.strip().lower() in ("", "nan", "none")
@@ -282,13 +282,13 @@ def gte(value: Any, threshold: Any = None) -> Union[bool, None]:
         return None
 
 
-def lt(value: Any, threshold: Any = None) -> Union[bool, None]:
+def lt(value: Any, threshold: Any = None) -> bool | None:
     """Return True if *value* < *threshold*. None-safe."""
     result = gte(value, threshold=threshold)
     return None if result is None else not result
 
 
-def lte(value: Any, threshold: Any = None) -> Union[bool, None]:
+def lte(value: Any, threshold: Any = None) -> bool | None:
     """Return True if *value* <= *threshold*. None-safe."""
     result = gt(value, threshold=threshold)
     return None if result is None else not result
@@ -298,7 +298,7 @@ def lte(value: Any, threshold: Any = None) -> Union[bool, None]:
 # TRANSFORM DISPATCH
 # ============================================================================
 
-TRANSFORMS: Dict[str, Callable] = {
+TRANSFORMS: dict[str, Callable] = {
     "safe_int": safe_int,
     "safe_str": safe_str,
     "null_if_zero": null_if_zero,
@@ -321,7 +321,7 @@ def apply_transform(
     value: Any,
     transform_name: str,
     scale: int = 1,
-    params: Union[Dict[str, Any], None] = None,
+    params: dict[str, Any] | None = None,
 ) -> Any:
     """Apply a named transform to a value.
 
@@ -355,14 +355,14 @@ def apply_transform(
 
 
 def execute_pipeline(
-    pipeline_config: Dict[str, Any],
+    pipeline_config: dict[str, Any],
     api_fetcher: Callable,
     target: str,
     season: str,
     season_type_name: str,
     entity_id_field: str,
     default_entity_id: Any = None,
-) -> Dict[int, Any]:
+) -> dict[int, Any]:
     """Execute a transformation pipeline and return ``{entity_id: value}``.
 
     Args:
@@ -390,7 +390,7 @@ def execute_pipeline(
     if needs_api:
         api_result = api_fetcher(dataset, dataset_params, execution_tier)
 
-    data: Dict[int, Any] = {}
+    data: dict[int, Any] = {}
     for op in operations:
         op_type = op["type"]
         if op_type == "extract":
@@ -418,11 +418,11 @@ def execute_pipeline(
 
 
 def _op_extract(
-    api_result: Union[Dict[str, Any], None],
-    op: Dict[str, Any],
+    api_result: dict[str, Any] | None,
+    op: dict[str, Any],
     entity_id_field: str,
     default_entity_id: Any = None,
-) -> Dict[int, Any]:
+) -> dict[int, Any]:
     """Extract a field from a specific result set, keyed by entity ID.
 
     Supports optional ``filter_field`` / ``filter_values`` to keep only
@@ -451,15 +451,16 @@ def _op_extract(
 
         # Multi-field extraction (for multiply pipelines)
         if "fields" in op:
-            result: Dict[int, Dict[str, Any]] = {}
+            result: dict[int, dict[str, Any]] = {}
             field_map = op["fields"]  # {alias: api_field}
             for row in rows:
-                if filter_field and filter_values:
-                    if (
-                        filter_field in headers
-                        and row[headers.index(filter_field)] not in filter_values
-                    ):
-                        continue
+                if (
+                    filter_field
+                    and filter_values
+                    and filter_field in headers
+                    and row[headers.index(filter_field)] not in filter_values
+                ):
+                    continue
                 eid = row[id_idx] if id_idx is not None else default_entity_id
                 if eid is None:
                     continue
@@ -477,12 +478,13 @@ def _op_extract(
 
         result = {}
         for row in rows:
-            if filter_field and filter_values:
-                if (
-                    filter_field in headers
-                    and row[headers.index(filter_field)] not in filter_values
-                ):
-                    continue
+            if (
+                filter_field
+                and filter_values
+                and filter_field in headers
+                and row[headers.index(filter_field)] not in filter_values
+            ):
+                continue
             eid = row[id_idx] if id_idx is not None else default_entity_id
             if eid is None:
                 continue
@@ -502,20 +504,20 @@ def _op_extract(
 
 
 def _op_multi_league_extract(
-    op: Dict[str, Any],
+    op: dict[str, Any],
     api_fetcher: Callable,
     base_dataset: str,
     entity_id_field: str,
     season: str,
     season_type_name: str,
-) -> Dict[int, Any]:
+) -> dict[int, Any]:
     """Make multiple API calls with different params and sum results per entity."""
     field = op["field"]
     result_set = op.get("result_set")
     calls = op["calls"]
     id_field = entity_id_field
 
-    totals: Dict[int, int] = {}
+    totals: dict[int, int] = {}
 
     for call_params in calls:
         api_result = api_fetcher(base_dataset, call_params, "none")
@@ -537,13 +539,13 @@ def _op_multi_league_extract(
     return totals
 
 
-def _op_filter(data: Dict[int, Any], op: Dict[str, Any]) -> Dict[int, Any]:
+def _op_filter(data: dict[int, Any], op: dict[str, Any]) -> dict[int, Any]:
     """Keep only entries matching filter criteria."""
     values = set(op["values"])
     return {eid: v for eid, v in data.items() if v in values}
 
 
-def _op_aggregate(data: Dict[int, Any], op: Dict[str, Any]) -> Dict[int, Any]:
+def _op_aggregate(data: dict[int, Any], op: dict[str, Any]) -> dict[int, Any]:
     """Reduce list values to a single value per entity."""
     method = op.get("method", "sum")
     result = {}
@@ -563,7 +565,7 @@ def _op_aggregate(data: Dict[int, Any], op: Dict[str, Any]) -> Dict[int, Any]:
     return result
 
 
-def _op_math(data: Dict[int, Any], op: Dict[str, Any]) -> Dict[int, Any]:
+def _op_math(data: dict[int, Any], op: dict[str, Any]) -> dict[int, Any]:
     """Perform arithmetic on extracted fields via restricted AST evaluator."""
     expression = op["expression"]
     should_round = op.get("round", True)
@@ -601,7 +603,7 @@ def _op_math(data: Dict[int, Any], op: Dict[str, Any]) -> Dict[int, Any]:
 # ============================================================================
 
 
-def aggregate_multi_season_most_recent_non_null(values_by_year: Dict[int, Any]) -> Any:
+def aggregate_multi_season_most_recent_non_null(values_by_year: dict[int, Any]) -> Any:
     """Return most recent non-null value from year-ordered dict.
 
     Args:
@@ -613,7 +615,7 @@ def aggregate_multi_season_most_recent_non_null(values_by_year: Dict[int, Any]) 
     if not values_by_year:
         return None
 
-    for year in reversed(sorted(values_by_year.keys())):
+    for year in sorted(values_by_year, reverse=True):
         value = values_by_year[year]
         if value is not None:
             return value

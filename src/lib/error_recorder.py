@@ -10,16 +10,17 @@ column list from that registry (the single source of truth) and is the
 only consumer that writes to the table.  All ETL phases should call
 :func:`log_error` instead of writing to ``core.errors`` directly.
 
-PBP derivation errors (:class:`PbpError`) carry game context
-(``identity``, ``dataset``, ``ext_game_id``, ``event_id``, ``seq``,
-``event``) plus a ``severity`` taken from the ``INVARIANTS`` config, so
-each error is traceable to the exact event and its severity is
-config-driven.
+PBP derivation errors (:class:`PbpError`) carry game context (``game_id``,
+``event_id``, ``seq``, ``event``, ``team_id``, ``player_id``) plus
+rule-specific ``detail``, so each error is traceable to the exact event.
+Context is persisted as JSONB in the ``detail`` column (queryable with
+``detail->>'key'``); ``message`` stays a human-readable summary.
 """
 
+import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any
 
 from src.definitions.db_columns import DB_COLUMNS
 from src.lib.postgres import db_connection, quote_col
@@ -38,19 +39,17 @@ class PbpError:
     Attributes:
         rule: The ``INVARIANTS`` key or chain rule that fired.
         message: Human-readable description.
-        severity: ``"error"`` fails the game; ``"warn"`` logs loudly.
-            Taken from the fired invariant's config.
         game_id: External game id.
         event_id: Id of the offending event (source id or derived id).
         seq: Sequence position of the offending event.
         event: Canonical event name of the offending event.
         team_id: Team id of the offending event.
         player_id: Player id of the offending event.
+        detail: Rule-specific context, merged into the ``detail`` column.
     """
 
     rule: str
     message: str
-    severity: str = "error"
     game_id: str = ""
     event_id: str | None = None
     seq: int | None = None
@@ -73,18 +72,22 @@ _ERROR_COLUMNS: tuple[str, ...] = tuple(
 )
 
 
+def _format_traceback(exc_info: BaseException | None) -> str | None:
+    """Render an exception's traceback as text, or None when absent."""
+    if exc_info is None:
+        return None
+    import traceback as tb
+
+    return "".join(tb.format_exception(type(exc_info), exc_info, exc_info.__traceback__))
+
+
 def log_error(
     *,
     phase: str,
     message: str,
-    traceback: Optional[str] = None,
+    exc_info: BaseException | None = None,
+    detail: dict[str, Any] | None = None,
     conn: Any = None,
-    identity: Optional[str] = None,
-    dataset: Optional[str] = None,
-    ext_game_id: Optional[str] = None,
-    event_id: Optional[str] = None,
-    seq: Optional[int] = None,
-    event: Optional[str] = None,
 ) -> int:
     """Insert a row into ``core.errors``.
 
@@ -92,28 +95,21 @@ def log_error(
         phase: Which ETL phase produced the error (e.g. ``"maintain_games"``).
         message: Human-readable error description. Include identifying
             context (entity, identity, dataset) in the message itself.
-        traceback: Optional Python stack trace.
+        exc_info: Optional exception whose traceback is stored in the
+            ``traceback`` column.
+        detail: Optional structured context (e.g. ``{"identity": ...,
+            "dataset": ..., "ext_game_id": ...}``) stored as JSONB in the
+            ``detail`` column. Query it with ``detail->>'key'``.
         conn: Optional database connection. When provided the caller manages
             commit; otherwise a new connection is opened and committed.
-        identity: Identity code the error belongs to.
-        dataset: Dataset name the error belongs to.
-        ext_game_id: External game id the error belongs to.
-        event_id: Offending PBP event id.
-        seq: Sequence position of the offending event.
-        event: Canonical event name of the offending event.
 
     Returns the number of rows inserted (0 or 1).
     """
-    data: Dict[str, Any] = {
+    data: dict[str, Any] = {
         "phase": phase,
         "message": message,
-        "traceback": traceback,
-        "identity": identity,
-        "dataset": dataset,
-        "ext_game_id": ext_game_id,
-        "event_id": event_id,
-        "seq": seq,
-        "event": event,
+        "traceback": _format_traceback(exc_info),
+        "detail": json.dumps(detail) if detail else None,
     }
 
     # error_id is auto-assigned by the sequence default
@@ -135,41 +131,8 @@ def log_error(
         with conn.cursor() as cur:
             return _do_insert(cur)
     else:
-        with db_connection() as conn:
-            with conn.cursor() as cur:
+        with db_connection() as db_conn:
+            with db_conn.cursor() as cur:
                 result = _do_insert(cur)
-            conn.commit()
+            db_conn.commit()
             return result
-
-
-def log_error_simple(
-    phase: str,
-    message: str,
-    exc_info: Optional[BaseException] = None,
-    **context: Optional[str],
-) -> int:
-    """Convenience wrapper that accepts an exception.
-
-    Usage::
-
-        log_error_simple("maintain_pbp", "Failed to fetch game 0022400001",
-                         exc_info=e, ext_game_id="0022400001")
-
-    Additional keyword arguments are forwarded to :func:`log_error`
-    (``identity``, ``dataset``, ``ext_game_id``, ``event_id``, ``seq``,
-    ``event``).
-    """
-    traceback = None
-    if exc_info is not None:
-        import traceback as tb
-
-        traceback = "".join(
-            tb.format_exception(type(exc_info), exc_info, exc_info.__traceback__)
-        )
-
-    return log_error(
-        phase=phase,
-        message=message,
-        traceback=traceback,
-        **context,
-    )

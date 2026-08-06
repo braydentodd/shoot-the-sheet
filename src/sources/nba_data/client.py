@@ -6,7 +6,9 @@ extracts CSVs, and returns normalized PBPEvent rows via the normalizer.
 
 Exposes ``fetch_game_pbp`` as the standard entry point called by the
 orchestrator's ``_maintain_pbp`` handler, and ``cleanup_season_files``
-for post-processing file cleanup.
+for post-processing file cleanup.  Re-exports the match-strategy
+builders (``build_signature`` / ``build_event_key``) so discovery can
+resolve them from the client module per the source contract.
 """
 
 import csv
@@ -20,28 +22,38 @@ from typing import Any
 
 from src.definitions.pbp import PBPEvent
 from src.lib.entity_resolver import EntityResolver
-from src.lib.error_recorder import log_error_simple
+from src.lib.error_recorder import log_error
 from src.lib.pbp_classifier import EventClassifier
 from src.lib.rate_limiter import get_rate_limiter
-from src.sources.nba_data.classifier import (
-    build_nba_event_key as build_event_key,
-    build_nba_signature as build_signature,
-)
 from src.sources.nba_data.config import (
     ARCHIVE_DIR,
     ARCHIVE_URL_TEMPLATE,
     COL,
     EXTRACTED_DIR,
 )
-from src.sources.nba_data.pbp_normalizer import normalize_game
+from src.sources.nba_data.match_strategy import (
+    build_nba_event_key as build_event_key,
+)
+from src.sources.nba_data.match_strategy import (
+    build_nba_signature as build_signature,
+)
+from src.sources.nba_data.normalizer import normalize_game
 
 logger = logging.getLogger(__name__)
+
+# Public contract surface: the entry points the orchestrator and
+# discovery dispatch by attribute name.
+__all__ = [
+    "build_event_key",
+    "build_signature",
+    "cleanup_season_files",
+    "fetch_game_pbp",
+    "fetch_raw_rows",
+]
 
 # Cache: {csv_path: {game_id: [rows]}} to avoid re-reading the full
 # season CSV for every game during backfills.
 _season_cache: dict[str, dict[str, list[dict[str, Any]]]] = {}
-
-
 
 
 # ============================================================================
@@ -232,9 +244,9 @@ def _ensure_csv_extracted(
             tar.extractall(path=tmp_dir, filter="data")
         logger.info("Extracted %s -> %s", archive_path, tmp_dir)
     except (tarfile.TarError, OSError) as exc:
-        log_error_simple(
-            "maintain_pbp",
-            f"Failed to extract {archive_path}",
+        log_error(
+            phase="maintain_pbp",
+            message=f"Failed to extract {archive_path}",
             exc_info=exc,
         )
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -244,9 +256,9 @@ def _ensure_csv_extracted(
     try:
         os.rename(tmp_dir, csv_dir)
     except OSError as exc:
-        log_error_simple(
-            "maintain_pbp",
-            f"Failed to rename {tmp_dir} -> {csv_dir}",
+        log_error(
+            phase="maintain_pbp",
+            message=f"Failed to rename {tmp_dir} -> {csv_dir}",
             exc_info=exc,
         )
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -289,9 +301,9 @@ def _download_archive(season: str, archive_dir: str) -> str:
             logger.info("Downloaded %s", dest)
             return dest
     except (urllib.error.URLError, urllib.error.HTTPError, OSError) as exc:
-        log_error_simple(
-            "maintain_pbp",
-            f"Failed to download {url} after retries",
+        log_error(
+            phase="maintain_pbp",
+            message=f"Failed to download {url} after retries",
             exc_info=exc,
         )
         if os.path.isfile(dest):
@@ -325,9 +337,9 @@ def _load_game_rows(
                 gid = str(row.get(COL["GAME_ID"], ""))
                 indexed.setdefault(gid, []).append(row)
     except (csv.Error, UnicodeDecodeError, OSError) as exc:
-        log_error_simple(
-            "maintain_pbp",
-            f"Failed to read nbastats CSV {csv_path}",
+        log_error(
+            phase="maintain_pbp",
+            message=f"Failed to read nbastats CSV {csv_path}",
             exc_info=exc,
         )
         _season_cache[csv_path] = {}

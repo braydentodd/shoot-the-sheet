@@ -13,7 +13,7 @@ Two coverage tables track fetch state at different granularities:
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Union
+from typing import Any
 
 from src.definitions.datasets import DATASETS
 from src.definitions.db_columns import DB_COLUMNS
@@ -62,10 +62,10 @@ def is_coverage_current(
     season: str,
     season_type: str,
     identity_code: str,
-    group: Dict[str, Any],
+    group: dict[str, Any],
     *,
     coverage_level: str = "season",
-    game_id: Union[str, None] = None,
+    game_id: str | None = None,
 ) -> bool:
     """Return True if every col_name in this group has ``covered=true``."""
     dataset = group.get("dataset", "")
@@ -145,10 +145,10 @@ def upsert_coverage(
     season: str,
     season_type: str,
     identity_code: str,
-    group: Dict[str, Any],
+    group: dict[str, Any],
     *,
     coverage_level: str = "season",
-    game_id: Union[str, None] = None,
+    game_id: str | None = None,
 ) -> None:
     """Upsert coverage rows for every col_name in this call group.
 
@@ -225,7 +225,7 @@ def upsert_coverage(
 
 def seed_coverage(
     league_code: str,
-    seasons: List[str],
+    seasons: list[str],
     identity_code: str,
     *,
     coverage_level: str = "season",
@@ -245,63 +245,85 @@ def seed_coverage(
     inserted = 0
     all_types = get_all_canonical_season_types(league_code)
 
-    with db_connection() as conn:
-        with conn.cursor() as cur:
-            for season in seasons:
-                for st_key in all_types:
-                    # Discover games for game-level coverage
-                    if coverage_level == "game":
-                        cur.execute(
-                            """SELECT game_id FROM core.games
-                                    WHERE league_code = %s AND season = %s
-                                      AND season_type = %s
-                                      AND completed = true""",
-                            (league_code, season, st_key),
-                        )
-                        game_ids: list[str] | None = [
-                            str(row[0]) for row in cur.fetchall()
-                        ]
-                        if not game_ids:
-                            continue
-                    else:
-                        # season_coverages has no game_id column
-                        game_ids = None
+    with db_connection() as conn, conn.cursor() as cur:
+        for season in seasons:
+            for st_key in all_types:
+                # Discover games for game-level coverage
+                if coverage_level == "game":
+                    cur.execute(
+                        """SELECT game_id FROM core.games
+                                WHERE league_code = %s AND season = %s
+                                  AND season_type = %s
+                                  AND completed = true""",
+                        (league_code, season, st_key),
+                    )
+                    game_ids: list[str] | None = [
+                        str(row[0]) for row in cur.fetchall()
+                    ]
+                    if not game_ids:
+                        continue
+                else:
+                    # season_coverages has no game_id column
+                    game_ids = None
 
-                    for col_name, col_def in DB_COLUMNS.items():
-                        dm = col_def.get("dataset_mapping")
-                        if not dm:
+                for col_name, col_def in DB_COLUMNS.items():
+                    dm = col_def.get("dataset_mapping")
+                    if not dm:
+                        continue
+                    for league_key, identities in dm.items():
+                        if league_key != league_code:
                             continue
-                        for league_key, identities in dm.items():
-                            if league_key != league_code:
+                        for ident, targets in identities.items():
+                            if ident != identity_code:
                                 continue
-                            for ident, targets in identities.items():
-                                if ident != identity_code:
-                                    continue
-                                for target, datasets in targets.items():
-                                    for ds_name in datasets:
-                                        ds_def = DATASETS.get(identity_code, {}).get(
-                                            ds_name, {}
-                                        )
-                                        tier = ds_def.get("iterates_by", "none")
-                                        expected_level = (
-                                            "game" if tier == "game" else "season"
-                                        )
-                                        if expected_level != coverage_level:
-                                            continue
-                                        if not is_dataset_available(
-                                            ds_name, season, identity_code
-                                        ):
-                                            continue
+                            for target, datasets in targets.items():
+                                for ds_name in datasets:
+                                    ds_def = DATASETS.get(identity_code, {}).get(
+                                        ds_name, {}
+                                    )
+                                    tier = ds_def.get("iterates_by", "none")
+                                    expected_level = (
+                                        "game" if tier == "game" else "season"
+                                    )
+                                    if expected_level != coverage_level:
+                                        continue
+                                    if not is_dataset_available(
+                                        ds_name, season, identity_code
+                                    ):
+                                        continue
 
-                                        if game_ids is None:
-                                            # season_coverages: one row, no game_id
+                                    if game_ids is None:
+                                        # season_coverages: one row, no game_id
+                                        cur.execute(
+                                            f"""
+                                            INSERT INTO {table} (
+                                                identity, league_code,
+                                                target, season, season_type,
+                                                dataset, col_name, covered
+                                            ) VALUES (%s,%s,%s,%s,%s,%s,%s,false)
+                                            ON CONFLICT ({conflict_sql}) DO NOTHING
+                                            """,
+                                            (
+                                                identity_code,
+                                                league_code,
+                                                target,
+                                                season,
+                                                st_key,
+                                                ds_name,
+                                                col_name,
+                                            ),
+                                        )
+                                        inserted += 1
+                                    else:
+                                        for game_id in game_ids:
                                             cur.execute(
                                                 f"""
                                                 INSERT INTO {table} (
                                                     identity, league_code,
                                                     target, season, season_type,
+                                                    game_id,
                                                     dataset, col_name, covered
-                                                ) VALUES (%s,%s,%s,%s,%s,%s,%s,false)
+                                                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,false)
                                                 ON CONFLICT ({conflict_sql}) DO NOTHING
                                                 """,
                                                 (
@@ -310,36 +332,13 @@ def seed_coverage(
                                                     target,
                                                     season,
                                                     st_key,
+                                                    game_id,
                                                     ds_name,
                                                     col_name,
                                                 ),
                                             )
                                             inserted += 1
-                                        else:
-                                            for game_id in game_ids:
-                                                cur.execute(
-                                                    f"""
-                                                    INSERT INTO {table} (
-                                                        identity, league_code,
-                                                        target, season, season_type,
-                                                        game_id,
-                                                        dataset, col_name, covered
-                                                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,false)
-                                                    ON CONFLICT ({conflict_sql}) DO NOTHING
-                                                    """,
-                                                    (
-                                                        identity_code,
-                                                        league_code,
-                                                        target,
-                                                        season,
-                                                        st_key,
-                                                        game_id,
-                                                        ds_name,
-                                                        col_name,
-                                                    ),
-                                                )
-                                                inserted += 1
-            conn.commit()
+        conn.commit()
 
     return inserted
 

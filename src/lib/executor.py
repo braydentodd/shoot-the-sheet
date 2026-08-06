@@ -13,14 +13,15 @@ in :mod:`src.orchestrator`; the CLI lives in :mod:`src.cli`.
 """
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Any, Callable, Dict, List, Union
+from typing import Any
 
 from src.definitions.datasets import DATASETS
 from src.definitions.execution import ENTITY_CHUNK_SIZE
 from src.definitions.leagues import LEAGUES
-from src.lib.error_recorder import log_error_simple
+from src.lib.error_recorder import log_error
 from src.lib.extract import (
     extract_columns_from_result,
     get_pipeline_columns,
@@ -63,10 +64,10 @@ class ExecutionContext:
     identity_code: str
     phase: str
     api_fetcher: Callable
-    team_ids: Dict[str, int] = field(default_factory=dict)
+    team_ids: dict[str, int] = field(default_factory=dict)
     max_consecutive_failures: int = 5
-    id_aliases: Dict[str, list] = field(default_factory=dict)
-    _null_entity_cache: Dict[frozenset, List[Any]] = field(
+    id_aliases: dict[str, list] = field(default_factory=dict)
+    _null_entity_cache: dict[frozenset, list[Any]] = field(
         default_factory=dict, init=False
     )
 
@@ -111,9 +112,9 @@ def _resolve_staging_table(table_name: str) -> str:
 
 def _fetch_null_entity_ids(
     ctx: ExecutionContext,
-    columns: List[str],
+    columns: list[str],
     conn=None,
-) -> List[Any]:
+) -> list[Any]:
     """Fetch target source IDs from the staging table that have NULL values
     for the given *columns*."""
     cols_key = frozenset(columns)
@@ -142,9 +143,8 @@ def _fetch_null_entity_ids(
         with conn.cursor() as cur:
             source_ids = _query(cur)
     else:
-        with db_connection() as fresh_conn:
-            with fresh_conn.cursor() as cur:
-                source_ids = _query(cur)
+        with db_connection() as fresh_conn, fresh_conn.cursor() as cur:
+            source_ids = _query(cur)
 
     ctx._null_entity_cache[cols_key] = source_ids
     logger.debug(
@@ -163,11 +163,11 @@ def _fetch_null_entity_ids(
 
 def _execute_multi_season_league_wide(
     dataset: str,
-    params: Dict[str, Any],
-    columns: Dict[str, Dict[str, Any]],
+    params: dict[str, Any],
+    columns: dict[str, dict[str, Any]],
     ctx: ExecutionContext,
-    failed: List[Dict[str, Any]],
-    multi_season_config: Dict[str, Any],
+    failed: list[dict[str, Any]],
+    multi_season_config: dict[str, Any],
     conn=None,
 ) -> int:
     """Fetch data across multiple years and aggregate using most_recent_non_null."""
@@ -181,7 +181,7 @@ def _execute_multi_season_league_wide(
     wire = ds_cfg.get("source_mapping", {})
     season_param = wire.get("season_param", "season")
 
-    entity_values_by_year: Dict[int, Dict[int, Any]] = {}
+    entity_values_by_year: dict[int, dict[int, Any]] = {}
 
     logger.info(
         "Multi-season fetch for %s: years %d-%d", dataset, start_year, current_year
@@ -213,16 +213,18 @@ def _execute_multi_season_league_wide(
         except Exception as exc:
             logger.warning("Multi-season %s year %d failed: %s", dataset, year, exc)
             failed.append({"dataset": dataset, "year": year, "error": str(exc)})
-            log_error_simple(
-                ctx.phase,
-                f"Multi-season year fetch failed: identity={ctx.identity_code} "
-                f"league={ctx.db_schema} target={ctx.target} dataset={dataset} "
-                f"year={year} -- {exc}",
+            log_error(
+                phase=ctx.phase,
+                message=(
+                    f"Multi-season year fetch failed: identity={ctx.identity_code} "
+                    f"league={ctx.db_schema} target={ctx.target} dataset={dataset} "
+                    f"year={year} -- {exc}"
+                ),
                 exc_info=exc,
             )
             continue
 
-    final_rows: Dict[int, Dict[str, Any]] = {}
+    final_rows: dict[int, dict[str, Any]] = {}
     col_name = next(iter(columns.keys()))
 
     for entity_id, values_by_year in entity_values_by_year.items():
@@ -246,12 +248,12 @@ def _execute_multi_season_league_wide(
 
 def _execute_league_wide(
     dataset: str,
-    params: Dict[str, Any],
-    columns: Dict[str, Dict[str, Any]],
+    params: dict[str, Any],
+    columns: dict[str, dict[str, Any]],
     ctx: ExecutionContext,
-    failed: List[Dict[str, Any]],
+    failed: list[dict[str, Any]],
     conn=None,
-    result: Union[Dict[str, Any], None] = None,
+    result: dict[str, Any] | None = None,
 ) -> int:
     """One API call returns all entities -- extract, transform, write.
 
@@ -274,11 +276,13 @@ def _execute_league_wide(
         except Exception as exc:
             logger.error("League-wide %s failed: %s", dataset, exc)
             failed.append({"dataset": dataset, "params": params, "error": str(exc)})
-            log_error_simple(
-                ctx.phase,
-                f"League-wide fetch failed: identity={ctx.identity_code} "
-                f"league={ctx.db_schema} target={ctx.target} dataset={dataset} "
-                f"-- {exc}",
+            log_error(
+                phase=ctx.phase,
+                message=(
+                    f"League-wide fetch failed: identity={ctx.identity_code} "
+                    f"league={ctx.db_schema} target={ctx.target} dataset={dataset} "
+                    f"-- {exc}"
+                ),
                 exc_info=exc,
             )
             return 0
@@ -313,7 +317,7 @@ def _execute_league_wide(
 def _single_entity_fetcher(
     ctx: ExecutionContext,
     ds: str,
-    extra_params: Dict[str, Any],
+    extra_params: dict[str, Any],
     tier: str,
     id_param: str,
     identity_value: Any,
@@ -325,17 +329,14 @@ def _single_entity_fetcher(
     and SystemExit are still re-raised immediately.
     """
     call_params = {**extra_params, id_param: identity_value}
-    try:
-        return ctx.api_fetcher(ds, call_params)
-    except (KeyboardInterrupt, SystemExit):
-        raise
+    return ctx.api_fetcher(ds, call_params)
 
 
 def _execute_pipeline_per_entity(
     col_name: str,
-    source: Dict[str, Any],
+    source: dict[str, Any],
     ctx: ExecutionContext,
-    failed: List[Dict[str, Any]],
+    failed: list[dict[str, Any]],
     conn=None,
 ) -> int:
     pipeline_config = source["extraction_config"]
@@ -346,7 +347,7 @@ def _execute_pipeline_per_entity(
     if not identities:
         return 0
 
-    all_rows: Dict[int, Dict[str, Any]] = {}
+    all_rows: dict[int, dict[str, Any]] = {}
     written_count = 0
     consecutive_failures = 0
     id_param = ctx.entity_param
@@ -378,12 +379,14 @@ def _execute_pipeline_per_entity(
                 consecutive_failures, ctx.max_consecutive_failures, dataset
             ):
                 failed.append({"column": col_name, "error": str(exc)})
-                log_error_simple(
-                    ctx.phase,
-                    f"Pipeline column aborted after repeated failures: "
-                    f"identity={ctx.identity_code} league={ctx.db_schema} "
-                    f"target={ctx.target} column={col_name} dataset={dataset} "
-                    f"-- {exc}",
+                log_error(
+                    phase=ctx.phase,
+                    message=(
+                        f"Pipeline column aborted after repeated failures: "
+                        f"identity={ctx.identity_code} league={ctx.db_schema} "
+                        f"target={ctx.target} column={col_name} dataset={dataset} "
+                        f"-- {exc}"
+                    ),
                     exc_info=exc,
                 )
                 break
@@ -417,9 +420,9 @@ def _execute_pipeline_per_entity(
 
 def _execute_pipeline_column(
     col_name: str,
-    source: Dict[str, Any],
+    source: dict[str, Any],
     ctx: ExecutionContext,
-    failed: List[Dict[str, Any]],
+    failed: list[dict[str, Any]],
     conn=None,
 ) -> int:
     """Execute a transformation pipeline for a single column."""
@@ -447,11 +450,13 @@ def _execute_pipeline_column(
     except Exception as exc:
         logger.error("Pipeline %s failed: %s", col_name, exc)
         failed.append({"column": col_name, "error": str(exc)})
-        log_error_simple(
-            ctx.phase,
-            f"Pipeline column failed: identity={ctx.identity_code} "
-            f"league={ctx.db_schema} target={ctx.target} column={col_name} "
-            f"-- {exc}",
+        log_error(
+            phase=ctx.phase,
+            message=(
+                f"Pipeline column failed: identity={ctx.identity_code} "
+                f"league={ctx.db_schema} target={ctx.target} column={col_name} "
+                f"-- {exc}"
+            ),
             exc_info=exc,
         )
         return 0
@@ -472,9 +477,9 @@ def _execute_pipeline_column(
 
 def _execute_per_entity(
     dataset: str,
-    columns: Dict[str, Dict[str, Any]],
+    columns: dict[str, dict[str, Any]],
     ctx: ExecutionContext,
-    failed: List[Dict[str, Any]],
+    failed: list[dict[str, Any]],
     tier: str = "player",
     removed_refresh_mode: str = "null_only",
     conn=None,
@@ -506,7 +511,7 @@ def _execute_per_entity(
         )
         return 0
 
-    all_rows: Dict[int, Dict[str, Any]] = {}
+    all_rows: dict[int, dict[str, Any]] = {}
     written_count = 0
     consecutive_failures = 0
     id_param = ctx.entity_param
@@ -537,12 +542,14 @@ def _execute_per_entity(
                 consecutive_failures, ctx.max_consecutive_failures, dataset
             ):
                 failed.append({"dataset": dataset, "error": str(exc)})
-                log_error_simple(
-                    ctx.phase,
-                    f"Per-entity fetch aborted after repeated failures: "
-                    f"identity={ctx.identity_code} league={ctx.db_schema} "
-                    f"target={ctx.target} dataset={dataset} "
-                    f"{id_param}={identity_value} -- {exc}",
+                log_error(
+                    phase=ctx.phase,
+                    message=(
+                        f"Per-entity fetch aborted after repeated failures: "
+                        f"identity={ctx.identity_code} league={ctx.db_schema} "
+                        f"target={ctx.target} dataset={dataset} "
+                        f"{id_param}={identity_value} -- {exc}"
+                    ),
                     exc_info=exc,
                 )
                 break
@@ -607,11 +614,11 @@ def _execute_per_entity(
 
 
 def execute_group(
-    group: Dict[str, Any],
+    group: dict[str, Any],
     ctx: ExecutionContext,
-    failed: List[Dict[str, Any]],
+    failed: list[dict[str, Any]],
     conn=None,
-    result: Union[Dict[str, Any], None] = None,
+    result: dict[str, Any] | None = None,
 ) -> int:
     """Execute a single call group and return rows written.
 

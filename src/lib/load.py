@@ -17,7 +17,7 @@ ID model:
 
 import logging
 from io import StringIO
-from typing import Any, Dict, List, Set, Union
+from typing import Any
 
 from psycopg2.extras import execute_values
 
@@ -63,10 +63,10 @@ def _resolve_league_id(conn, league_code: str) -> str:
 def bulk_upsert(
     conn: Any,
     table: str,
-    columns: List[str],
-    data: List[tuple],
-    conflict_columns: List[str],
-    update_columns: Union[List[str], None] = None,
+    columns: list[str],
+    data: list[tuple],
+    conflict_columns: list[str],
+    update_columns: list[str] | None = None,
     skip_unchanged: bool = False,
     batch_size: int = DEFAULT_BATCH_SIZE,
     coalesce: bool = False,
@@ -136,8 +136,8 @@ def bulk_upsert(
 def bulk_copy(
     conn: Any,
     table: str,
-    columns: List[str],
-    data: List[tuple],
+    columns: list[str],
+    data: list[tuple],
 ) -> int:
     """Ultra-fast initial load via PostgreSQL ``COPY FROM``."""
     if not data:
@@ -171,11 +171,11 @@ def bulk_copy(
 def write_entity_rows(
     target: str,
     table_name: str,
-    rows: Dict[Any, Dict[str, Any]],
+    rows: dict[Any, dict[str, Any]],
     season: str,
     season_type: str,
     league_code: str,
-    identity_code: Union[str, None] = None,
+    identity_code: str | None = None,
 ) -> int:
     """Write extracted rows to the database.
 
@@ -230,14 +230,14 @@ def write_entity_rows(
 
 def write_staged_entity_rows(
     target: str,
-    rows: Dict[Any, Dict[str, Any]],
+    rows: dict[Any, dict[str, Any]],
     league_code: str,
     identity_code: str,
 ) -> int:
     """Merge entity data into the staging table for ``league_code``/``identity_code``."""
     table = f"staging.{target}"
 
-    data_cols: Set[str] = set()
+    data_cols: set[str] = set()
     for vals in rows.values():
         data_cols.update(vals.keys())
     data_cols.discard("league_code")
@@ -268,7 +268,7 @@ def write_staged_entity_rows(
         }
         sorted_data_cols = [c for c in sorted_data_cols if c in valid_cols]
         columns = ["league_code", "identity", "ext_id"] + sorted_data_cols
-        data: List[tuple] = []
+        data: list[tuple] = []
         for source_id, vals in rows.items():
             if source_id is None:
                 continue
@@ -309,10 +309,9 @@ def write_staged_entity_rows(
                 "ext_team_id",
             ] + extra_cols
             lt_data = []
-            for source_id in rows:
+            for source_id, vals in rows.items():
                 if source_id is None:
                     continue
-                vals = rows[source_id]
                 row_values = [league_val, identity_code, str(source_id)]
                 row_values += [vals.get(c) for c in extra_cols]
                 lt_data.append(tuple(row_values))
@@ -357,10 +356,10 @@ def write_staged_entity_rows(
 def _bulk_merge_upsert(
     conn: Any,
     table: str,
-    columns: List[str],
-    data: List[tuple],
-    conflict_columns: List[str],
-    update_columns: Union[List[str], None] = None,
+    columns: list[str],
+    data: list[tuple],
+    conflict_columns: list[str],
+    update_columns: list[str] | None = None,
     skip_unchanged: bool = False,
     batch_size: int = DEFAULT_BATCH_SIZE,
 ) -> int:
@@ -470,7 +469,7 @@ def _ensure_staging_profiles(
 
 def write_staged_roster_rows(
     target: str,
-    rows: Dict[Any, Dict[str, Any]],
+    rows: dict[Any, dict[str, Any]],
     league_code: str,
     identity_code: str,
 ) -> int:
@@ -484,7 +483,7 @@ def write_staged_roster_rows(
     if table is None:
         raise ValueError(f"Unsupported target for roster write: {target!r}")
 
-    data_cols: Set[str] = set()
+    data_cols: set[str] = set()
     for vals in rows.values():
         data_cols.update(vals.keys())
     data_cols.discard("league_code")
@@ -497,7 +496,7 @@ def write_staged_roster_rows(
     with db_connection() as conn:
         league_val = _resolve_league_id(conn, league_code)
 
-        data: List[tuple] = []
+        data: list[tuple] = []
 
         if target == "teams_players":
             columns = [
@@ -575,7 +574,7 @@ def write_staged_roster_rows(
 
 def write_staged_stats_rows(
     target: str,
-    rows: Dict[Any, Dict[str, Any]],
+    rows: dict[Any, dict[str, Any]],
     season: str,
     season_type: str,
     league_code: str,
@@ -598,7 +597,7 @@ def write_staged_stats_rows(
 
     _ensure_staging_profiles(rows.values(), identity_code, league_code)
 
-    data_cols: Set[str] = set()
+    data_cols: set[str] = set()
     for vals in rows.values():
         data_cols.update(vals.keys())
     sorted_data_cols = sorted(data_cols)
@@ -622,7 +621,7 @@ def write_staged_stats_rows(
         sorted_data_cols = [c for c in sorted_data_cols if c not in pk_set]
 
         columns = ["league_code"] + pk_cols + sorted_data_cols
-        data: List[tuple] = []
+        data: list[tuple] = []
         for source_id, vals in rows.items():
             if source_id is None:
                 continue

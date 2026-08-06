@@ -151,6 +151,14 @@ class EventDef(TypedDict, total=True):
             a possession window counts, and to break scoring sequences.
         indicate_on_court: The event indicates a player is on the court
             (builds starting lineups at period starts).
+        inherit_secs_from_indicate_poss: When True, a missing ``secs`` may
+            inherit the nearest previous ``indicate_poss`` event's clock
+            in the same period -- only when that event is timed; an
+            untimed ``indicate_poss`` blocks the fill.  True exactly on
+            the events the clock-derived result fields read:
+            ``period_end`` (team ``secs``), ``player_in`` / ``player_out``
+            (player ``secs``), and ``poss_start`` / ``poss_end``
+            (``o_poss_secs``).
         shot: A scoring opportunity.  Shots are NOT ``indicate_poss``;
             ``pot_poss_ending_scoring_opp`` is placed before the first
             shot of each eligible scoring sequence instead.
@@ -171,6 +179,7 @@ class EventDef(TypedDict, total=True):
 
     indicate_poss: bool
     indicate_on_court: bool
+    inherit_secs_from_indicate_poss: bool
     shot: bool
     points: int
     shot_family: Literal["fg", "ft", "none"]
@@ -183,6 +192,7 @@ PBP_EVENTS: dict[str, EventDef] = {
     "d_reb": {
         "indicate_poss": True,
         "indicate_on_court": True,
+        "inherit_secs_from_indicate_poss": False,
         "shot": False,
         "points": 0,
         "shot_family": "none",
@@ -197,6 +207,7 @@ PBP_EVENTS: dict[str, EventDef] = {
     "o_reb": {
         "indicate_poss": True,
         "indicate_on_court": True,
+        "inherit_secs_from_indicate_poss": False,
         "shot": False,
         "points": 0,
         "shot_family": "none",
@@ -207,6 +218,7 @@ PBP_EVENTS: dict[str, EventDef] = {
     "rebound": {
         "indicate_poss": True,
         "indicate_on_court": True,
+        "inherit_secs_from_indicate_poss": False,
         "shot": False,
         "points": 0,
         "shot_family": "none",
@@ -217,6 +229,7 @@ PBP_EVENTS: dict[str, EventDef] = {
     "o_standard_foul": {
         "indicate_poss": False,
         "indicate_on_court": False,
+        "inherit_secs_from_indicate_poss": False,
         "shot": False,
         "points": 0,
         "shot_family": "none",
@@ -227,6 +240,7 @@ PBP_EVENTS: dict[str, EventDef] = {
     "d_standard_foul": {
         "indicate_poss": False,
         "indicate_on_court": False,
+        "inherit_secs_from_indicate_poss": False,
         "shot": False,
         "points": 0,
         "shot_family": "none",
@@ -237,6 +251,7 @@ PBP_EVENTS: dict[str, EventDef] = {
     "elevated_foul": {
         "indicate_poss": False,
         "indicate_on_court": False,
+        "inherit_secs_from_indicate_poss": False,
         "shot": False,
         "points": 0,
         "shot_family": "none",
@@ -247,6 +262,7 @@ PBP_EVENTS: dict[str, EventDef] = {
     "pot_poss_ending_scoring_opp": {
         "indicate_poss": True,
         "indicate_on_court": False,
+        "inherit_secs_from_indicate_poss": False,
         "shot": False,
         "points": 0,
         "shot_family": "none",
@@ -257,6 +273,7 @@ PBP_EVENTS: dict[str, EventDef] = {
     "fg2_make": {
         "indicate_poss": False,
         "indicate_on_court": True,
+        "inherit_secs_from_indicate_poss": False,
         "shot": True,
         "points": 2,
         "shot_family": "fg",
@@ -271,6 +288,7 @@ PBP_EVENTS: dict[str, EventDef] = {
     "fg2_miss": {
         "indicate_poss": False,
         "indicate_on_court": True,
+        "inherit_secs_from_indicate_poss": False,
         "shot": True,
         "points": 0,
         "shot_family": "fg",
@@ -281,6 +299,7 @@ PBP_EVENTS: dict[str, EventDef] = {
     "fg3_make": {
         "indicate_poss": False,
         "indicate_on_court": True,
+        "inherit_secs_from_indicate_poss": False,
         "shot": True,
         "points": 3,
         "shot_family": "fg",
@@ -295,6 +314,7 @@ PBP_EVENTS: dict[str, EventDef] = {
     "fg3_miss": {
         "indicate_poss": False,
         "indicate_on_court": True,
+        "inherit_secs_from_indicate_poss": False,
         "shot": True,
         "points": 0,
         "shot_family": "fg",
@@ -305,6 +325,7 @@ PBP_EVENTS: dict[str, EventDef] = {
     "turnover": {
         "indicate_poss": True,
         "indicate_on_court": True,
+        "inherit_secs_from_indicate_poss": False,
         "shot": False,
         "points": 0,
         "shot_family": "none",
@@ -319,6 +340,7 @@ PBP_EVENTS: dict[str, EventDef] = {
     "fg2_assist": {
         "indicate_poss": False,
         "indicate_on_court": True,
+        "inherit_secs_from_indicate_poss": False,
         "shot": False,
         "points": 0,
         "shot_family": "none",
@@ -329,6 +351,7 @@ PBP_EVENTS: dict[str, EventDef] = {
     "fg3_assist": {
         "indicate_poss": False,
         "indicate_on_court": True,
+        "inherit_secs_from_indicate_poss": False,
         "shot": False,
         "points": 0,
         "shot_family": "none",
@@ -339,6 +362,7 @@ PBP_EVENTS: dict[str, EventDef] = {
     "block": {
         "indicate_poss": False,
         "indicate_on_court": True,
+        "inherit_secs_from_indicate_poss": False,
         "shot": False,
         "points": 0,
         "shot_family": "none",
@@ -349,6 +373,7 @@ PBP_EVENTS: dict[str, EventDef] = {
     "steal": {
         "indicate_poss": False,
         "indicate_on_court": True,
+        "inherit_secs_from_indicate_poss": False,
         "shot": False,
         "points": 0,
         "shot_family": "none",
@@ -359,6 +384,7 @@ PBP_EVENTS: dict[str, EventDef] = {
     "o_foul_draw": {
         "indicate_poss": False,
         "indicate_on_court": True,
+        "inherit_secs_from_indicate_poss": False,
         "shot": False,
         "points": 0,
         "shot_family": "none",
@@ -369,6 +395,7 @@ PBP_EVENTS: dict[str, EventDef] = {
     "ft1_make": {
         "indicate_poss": False,
         "indicate_on_court": True,
+        "inherit_secs_from_indicate_poss": False,
         "shot": True,
         "points": 1,
         "shot_family": "ft",
@@ -383,6 +410,7 @@ PBP_EVENTS: dict[str, EventDef] = {
     "ft2_make": {
         "indicate_poss": False,
         "indicate_on_court": True,
+        "inherit_secs_from_indicate_poss": False,
         "shot": True,
         "points": 2,
         "shot_family": "ft",
@@ -397,6 +425,7 @@ PBP_EVENTS: dict[str, EventDef] = {
     "ft3_make": {
         "indicate_poss": False,
         "indicate_on_court": True,
+        "inherit_secs_from_indicate_poss": False,
         "shot": True,
         "points": 3,
         "shot_family": "ft",
@@ -411,6 +440,7 @@ PBP_EVENTS: dict[str, EventDef] = {
     "ft_miss": {
         "indicate_poss": False,
         "indicate_on_court": True,
+        "inherit_secs_from_indicate_poss": False,
         "shot": True,
         "points": 0,
         "shot_family": "ft",
@@ -421,6 +451,7 @@ PBP_EVENTS: dict[str, EventDef] = {
     "period_end": {
         "indicate_poss": False,
         "indicate_on_court": False,
+        "inherit_secs_from_indicate_poss": True,
         "shot": False,
         "points": 0,
         "shot_family": "none",
@@ -435,6 +466,7 @@ PBP_EVENTS: dict[str, EventDef] = {
     "player_out": {
         "indicate_poss": False,
         "indicate_on_court": True,
+        "inherit_secs_from_indicate_poss": True,
         "shot": False,
         "points": 0,
         "shot_family": "none",
@@ -445,6 +477,7 @@ PBP_EVENTS: dict[str, EventDef] = {
     "period_start": {
         "indicate_poss": False,
         "indicate_on_court": False,
+        "inherit_secs_from_indicate_poss": False,
         "shot": False,
         "points": 0,
         "shot_family": "none",
@@ -459,6 +492,7 @@ PBP_EVENTS: dict[str, EventDef] = {
     "player_in": {
         "indicate_poss": False,
         "indicate_on_court": True,
+        "inherit_secs_from_indicate_poss": True,
         "shot": False,
         "points": 0,
         "shot_family": "none",
@@ -469,6 +503,7 @@ PBP_EVENTS: dict[str, EventDef] = {
     "jump_ball_win": {
         "indicate_poss": True,
         "indicate_on_court": True,
+        "inherit_secs_from_indicate_poss": False,
         "shot": False,
         "points": 0,
         "shot_family": "none",
@@ -483,6 +518,7 @@ PBP_EVENTS: dict[str, EventDef] = {
     "poss_end": {
         "indicate_poss": False,
         "indicate_on_court": False,
+        "inherit_secs_from_indicate_poss": True,
         "shot": False,
         "points": 0,
         "shot_family": "none",
@@ -493,6 +529,7 @@ PBP_EVENTS: dict[str, EventDef] = {
     "poss_start": {
         "indicate_poss": False,
         "indicate_on_court": False,
+        "inherit_secs_from_indicate_poss": True,
         "shot": False,
         "points": 0,
         "shot_family": "none",
@@ -518,30 +555,6 @@ CATALOG_HANDLING_EXTRA: frozenset[str] = frozenset(
 )
 
 PBP_HANDLING_VALUES: frozenset[str] = frozenset(PBP_EVENTS) | CATALOG_HANDLING_EXTRA
-
-
-# ============================================================================
-# CLOCK-REQUIRED EVENT TYPES
-# ============================================================================
-
-# Events whose ``secs`` the clock-derived result fields actually read:
-# team ``secs`` reads ``period_end``, player ``secs`` reads the player's
-# own ``player_in``/``player_out`` markers, and ``o_poss_secs`` reads
-# ``poss_start``/``poss_end`` (plus ``period_start``, the anchor the
-# deriver's possession pass inherits from).  The deriver's
-# clock-completion pass fills missing ``secs`` ONLY for these event
-# types; every other event keeps its own parsed ``secs`` (or ``None``) --
-# a shot or turnover's clock is never fabricated.  A period with no
-# clock data at all keeps its clock-required events at ``secs=None``;
-# a period's clock is never invented.
-PBP_CLOCK_EVENTS: frozenset[str] = frozenset({
-    "period_start",
-    "period_end",
-    "player_in",
-    "player_out",
-    "poss_start",
-    "poss_end",
-})
 
 
 # ============================================================================
@@ -576,9 +589,11 @@ PBP_SCOPES: tuple[str, ...] = (
 #                     the field reads: outputs None when those events
 #                     carry no clock (e.g. untimed sources).  The
 #                     deriver's clock-completion pass fills missing
-#                     ``secs`` only for the clock-required event types
-#                     (``PBP_CLOCK_EVENTS``), from the nearest previous
-#                     timed event in the period.
+#                     ``secs`` only for events with
+#                     ``inherit_secs_from_indicate_poss=True``,
+#                     copying the nearest previous ``indicate_poss``
+#                     event's clock in the same period (an untimed
+#                     ``indicate_poss`` blocks the fill).
 #
 # One field per stat -- there are no ``opp_`` / ``on_`` prefixed
 # mirrors; a stat's opponent / on-court values come from the same field
@@ -1154,76 +1169,58 @@ class InvariantDef(TypedDict, total=True):
 
     Attributes:
         except_events: Events exempted from the check.
-        severity: ``"error"`` fails the game; ``"warn"`` logs loudly.
     """
 
     except_events: tuple[str, ...]
-    severity: Literal["error", "warn"]
 
 
 INVARIANTS: dict[str, InvariantDef] = {
     "ft_without_foul": {
         "except_events": (),
-        "severity": "error",
     },
     "foul_without_fouled_player": {
         "except_events": (),
-        "severity": "error",
     },
     "fouled_shot_miss": {
         "except_events": (),
-        "severity": "error",
     },
     "double_poss_open": {
         "except_events": (),
-        "severity": "error",
     },
     "poss_end_no_open": {
         "except_events": (),
-        "severity": "error",
     },
     "poss_marker_unpaired": {
         "except_events": (),
-        "severity": "error",
     },
     "poss_mismatch": {
         "except_events": (),
-        "severity": "error",
     },
     "poss_change_without_transition": {
         "except_events": (),
-        "severity": "error",
     },
     "rebound_no_shot": {
         "except_events": (),
-        "severity": "error",
     },
     "player_in_twice": {
         "except_events": (),
-        "severity": "error",
     },
     "player_out_not_on_court": {
         "except_events": (),
-        "severity": "error",
     },
     "player_marker_unpaired": {
         "except_events": (),
-        "severity": "error",
     },
     "lineup_too_small": {
         "except_events": (),
-        "severity": "error",
     },
     "lineup_too_large": {
         "except_events": (),
-        "severity": "error",
     },
     "event_off_court": {
         "except_events": ("o_standard_foul", "d_standard_foul", "elevated_foul"),
-        "severity": "error",
     },
     "activity_after_end": {
         "except_events": (),
-        "severity": "error",
     },
 }

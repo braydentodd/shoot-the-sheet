@@ -12,11 +12,12 @@ import importlib
 import inspect
 import logging
 import warnings
-from typing import Any, Callable, Dict, Union
+from collections.abc import Callable
+from typing import Any
 
 from src.definitions.datasets import DATASETS
 from src.definitions.leagues import LEAGUES
-from src.lib.error_recorder import log_error_simple
+from src.lib.error_recorder import log_error
 from src.lib.rate_limiter import get_rate_limiter
 from src.lib.season_formatter import format_season_param, parse_season_end_year
 from src.lib.source_resolver import (
@@ -65,14 +66,14 @@ def _patch_nba_api_headers() -> None:
 # DATASET CLASS LOADING
 # ============================================================================
 
-_dataset_class_cache: Dict[str, Any] = {}
+_dataset_class_cache: dict[str, Any] = {}
 
 
 # Deduplication set for LOAD-1: only log each missing dataset once per process.
 _missing_dataset_classes: set[str] = set()
 
 
-def load_dataset_class(dataset_name: str) -> Union[Any, None]:
+def load_dataset_class(dataset_name: str) -> Any | None:
     """Dynamically import and cache an nba_api dataset class by name.
 
     Returns ``None`` (with a warning) if the module doesn't exist.
@@ -87,10 +88,12 @@ def load_dataset_class(dataset_name: str) -> Union[Any, None]:
         logger.warning("Could not import dataset module: %s", module_path)
         if dataset_name not in _missing_dataset_classes:
             _missing_dataset_classes.add(dataset_name)
-            log_error_simple(
-                "build_schema",
-                f"Missing nba_api dataset class: module={module_path} "
-                f"dataset={dataset_name} -- ImportError",
+            log_error(
+                phase="build_schema",
+                message=(
+                    f"Missing nba_api dataset class: module={module_path} "
+                    f"dataset={dataset_name} -- ImportError"
+                ),
             )
         return None
 
@@ -107,10 +110,12 @@ def load_dataset_class(dataset_name: str) -> Union[Any, None]:
         logger.warning("No class found in %s", module_path)
         if dataset_name not in _missing_dataset_classes:
             _missing_dataset_classes.add(dataset_name)
-            log_error_simple(
-                "build_schema",
-                f"Missing nba_api dataset class: module={module_path} "
-                f"dataset={dataset_name} -- no class found",
+            log_error(
+                phase="build_schema",
+                message=(
+                    f"Missing nba_api dataset class: module={module_path} "
+                    f"dataset={dataset_name} -- no class found"
+                ),
             )
         return None
 
@@ -125,10 +130,10 @@ def load_dataset_class(dataset_name: str) -> Union[Any, None]:
 
 def create_api_call(
     dataset_class: Any,
-    params: Dict[str, Any],
+    params: dict[str, Any],
     dataset_name: str = "",
-    timeout: Union[int, None] = None,
-    rate_limiter: Union[Any, None] = None,
+    timeout: int | None = None,
+    rate_limiter: Any | None = None,
 ) -> Callable:
     """Build a zero-arg callable that executes an NBA API request.
 
@@ -154,7 +159,7 @@ def create_api_call(
     else:
         call_timeout = timeout or 30
 
-    def _call() -> Dict[str, Any]:
+    def _call() -> dict[str, Any]:
         result = dataset_class(**clean_params, timeout=call_timeout)
         # ScheduleLeagueV2 uses a custom parser that produces data_sets
         # instead of the standard resultSets format.  Convert it so the
@@ -211,8 +216,8 @@ def build_dataset_params(
     season_end_year: int,
     season_type_name: str,
     identity_code: str = "nba_id",
-    extra_params: Union[Dict[str, Any], None] = None,
-) -> Dict[str, Any]:
+    extra_params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Assemble the full parameter dict for an NBA API call.
 
     Merges standard parameters (season, league_id, per_mode, season_type)
@@ -252,7 +257,7 @@ def build_dataset_params(
     # Season parameter — format according to source's token spec
     season_param = wire.get("season_param", "season")
     assert isinstance(season_param, str)
-    params: Dict[str, Any]
+    params: dict[str, Any]
     if season_param == "season_year":
         # Start year (season year) for datasets that need an integer
         start_year = (
@@ -326,8 +331,8 @@ def make_fetcher(
     rate_limiter = get_rate_limiter("nba_api")
 
     def fetch(
-        dataset: str, extra_params: Union[Dict[str, Any], None] = None
-    ) -> Union[Dict, None]:
+        dataset: str, extra_params: dict[str, Any] | None = None
+    ) -> dict[str, Any] | None:
         ds_cfg = DATASETS.get(identity_code, {}).get(dataset, {})
         class_name = ds_cfg.get("source_mapping", {}).get("class_name", dataset)
         DatasetClass = load_dataset_class(class_name)
@@ -361,7 +366,7 @@ def detect_recent_games(
     season_type: str,
     lookback_days: int = 8,
     identity_code: str = "nba_id",
-) -> Union[Dict, None]:
+) -> dict[str, Any] | None:
     """Query the NBA API for games of *season_type* within *lookback_days*.
 
     Returns the raw API result dict (with ``resultSets``) or ``None`` on failure.
@@ -388,7 +393,7 @@ def detect_recent_games(
         league_code,
         season_end_year,
         season_type,
-        "player",
+        identity_code=identity_code,
     )
     params["date_from_nullable"] = start.isoformat()
     params["date_to_nullable"] = end.isoformat()
@@ -410,11 +415,13 @@ def detect_recent_games(
             lookback_days,
             exc,
         )
-        log_error_simple(
-            "detect_season_activity",
-            f"Season detector API call failed: identity={identity_code} "
-            f"league={league_code} dataset={dataset_name} "
-            f"season_type={season_type} -- {exc}",
+        log_error(
+            phase="detect_season_activity",
+            message=(
+                f"Season detector API call failed: identity={identity_code} "
+                f"league={league_code} dataset={dataset_name} "
+                f"season_type={season_type} -- {exc}"
+            ),
             exc_info=exc,
         )
         return None

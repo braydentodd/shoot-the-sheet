@@ -14,7 +14,7 @@ Dataset metadata lives in the unified registry
 how to talk to the source itself.
 """
 
-from typing import Any, Dict, TypedDict
+from typing import Any, TypedDict
 
 
 class ApiConfigDef(TypedDict):
@@ -31,7 +31,7 @@ class ApiConfigDef(TypedDict):
 # API CONFIGURATION
 # ============================================================================
 
-REQUEST_HEADERS: Dict[str, str] = {
+REQUEST_HEADERS: dict[str, str] = {
     "Accept": "application/json, text/plain, */*",
     "Accept-Encoding": "gzip, deflate, br",
     "Accept-Language": "en-US,en;q=0.9",
@@ -72,7 +72,7 @@ API_CONFIG: ApiConfigDef = {
 # API FIELD NAME MAPPINGS
 # ============================================================================
 
-API_FIELD_NAMES: Dict[str, Dict[str, Any]] = {
+API_FIELD_NAMES: dict[str, dict[str, Any]] = {
     # Entity type -> API response field name (for extracting from result sets)
     "entity_fields": {
         "team": "TEAM_ID",

@@ -5,8 +5,6 @@ Constants and mappings for season label formatting across different leagues
 and data sources.
 """
 
-from typing import TypedDict
-
 # ============================================================================
 # VALID VALUE SETS
 # ============================================================================

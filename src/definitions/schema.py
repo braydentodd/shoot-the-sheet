@@ -40,6 +40,7 @@ VALID_PG_TYPES = frozenset(
         "NUMERIC",
         "REAL",
         "DOUBLE PRECISION",
+        "JSONB",
     }
 )
 VALID_FK_ACTIONS = frozenset({"CASCADE", "RESTRICT", "SET NULL", "NO ACTION"})

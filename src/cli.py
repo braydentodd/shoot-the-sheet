@@ -20,7 +20,7 @@ import sys
 
 from src.definitions.leagues import LEAGUES
 from src.lib.console_logger import setup_logging
-from src.lib.error_recorder import log_error_simple
+from src.lib.error_recorder import log_error
 from src.lib.terminal import (
     HelpFormatter,
     make_base_parser,
@@ -131,19 +131,19 @@ def _run_etl(args) -> int:
     except Exception:
         logger.exception("ETL run failed.")
         try:
-            log_error_simple(
-                "main",
-                "ETL run failed at top level -- see traceback above",
+            log_error(
+                phase="main",
+                message="ETL run failed at top level -- see traceback above",
             )
         except (ConnectionError, OSError, RuntimeError) as exc:
-            logger.debug("log_error_simple failed: %s", exc)
+            logger.debug("log_error failed: %s", exc)
         return 1
 
 
 def _run_discovery(args) -> int:
     """Run PBP event discovery."""
     from src.definitions.leagues import LEAGUES
-    from src.lib.pbp_discover import discover
+    from src.lib.pbp_discovery import discover
     from src.lib.postgres import db_connection
     from src.lib.schema_builder import bootstrap_schema
 

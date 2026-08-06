@@ -567,7 +567,8 @@ def _validate_pbp_events() -> list[str]:
 
     errors: list[str] = []
     required = {
-        "indicate_poss", "indicate_on_court", "shot", "points",
+        "indicate_poss", "indicate_on_court",
+        "inherit_secs_from_indicate_poss", "shot", "points",
         "shot_family", "shot_result", "foul_family", "poss_transition",
     }
     valid_conditions = {"always", "live_shot", "jump_ball_changes_possession", None}
@@ -588,7 +589,10 @@ def _validate_pbp_events() -> list[str]:
         extra = set(ev_def.keys()) - required
         if extra:
             errors.append(f"{prefix}: unknown key(s) {sorted(extra)}")
-        for bool_key in ("indicate_poss", "indicate_on_court", "shot"):
+        for bool_key in (
+            "indicate_poss", "indicate_on_court",
+            "inherit_secs_from_indicate_poss", "shot",
+        ):
             if not isinstance(ev_def.get(bool_key), bool):
                 errors.append(f"{prefix}: {bool_key} must be bool")
         if not isinstance(ev_def.get("points"), int):
@@ -610,25 +614,6 @@ def _validate_pbp_events() -> list[str]:
                 errors.append(f"{prefix}: poss_transition.start_team invalid: {trans.get('start_team')!r}")
             if trans.get("condition") not in valid_conditions:
                 errors.append(f"{prefix}: poss_transition.condition invalid: {trans.get('condition')!r}")
-    return errors
-
-
-def _validate_pbp_clock_events() -> list[str]:
-    """Validate ``PBP_CLOCK_EVENTS`` names canonical ``PBP_EVENTS`` keys.
-
-    The clock-completion pass fills missing ``secs`` only for the event
-    types named here, so every name must exist in ``PBP_EVENTS`` -- a
-    typo would silently leave a clock-required field unfillable.
-    """
-    from src.definitions.pbp import PBP_CLOCK_EVENTS, PBP_EVENTS
-
-    errors: list[str] = []
-    if not isinstance(PBP_CLOCK_EVENTS, frozenset):
-        errors.append("PBP_CLOCK_EVENTS: expected frozenset")
-        return errors
-    for name in sorted(PBP_CLOCK_EVENTS):
-        if name not in PBP_EVENTS:
-            errors.append(f"PBP_CLOCK_EVENTS: unknown event {name!r}")
     return errors
 
 
@@ -699,7 +684,7 @@ def _validate_invariants() -> list[str]:
     from src.definitions.pbp import INVARIANTS, PBP_EVENTS
 
     errors: list[str] = []
-    required = {"except_events", "severity"}
+    required = {"except_events"}
 
     for name, inv in INVARIANTS.items():
         prefix = f"INVARIANTS['{name}']"
@@ -712,8 +697,6 @@ def _validate_invariants() -> list[str]:
         extra = set(inv.keys()) - required
         if extra:
             errors.append(f"{prefix}: unknown key(s) {sorted(extra)}")
-        if inv.get("severity") not in ("error", "warn"):
-            errors.append(f"{prefix}: severity invalid: {inv.get('severity')!r}")
         if not isinstance(inv.get("except_events"), tuple):
             errors.append(f"{prefix}: except_events must be a tuple of event names")
         else:
@@ -1015,7 +998,6 @@ def validate_config() -> list[str]:
     errors.extend(_validate_rate_limit_sources())
     errors.extend(_validate_column_checks())
     errors.extend(_validate_pbp_events())
-    errors.extend(_validate_pbp_clock_events())
     errors.extend(_validate_chain_rules())
     errors.extend(_validate_invariants())
     errors.extend(_validate_pbp_result_set_fields())

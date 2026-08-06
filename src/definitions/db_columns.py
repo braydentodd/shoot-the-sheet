@@ -34,12 +34,11 @@ Columns with no external source (system columns, or stats with no provider
 yet) have ``dataset_mapping: None``.
 """
 
-from collections.abc import Mapping
 from typing import Any, Literal, TypedDict, get_args
 
 from src.definitions.datasets import DATASETS, VALID_IDENTITIES
 from src.definitions.leagues import LEAGUES
-from src.definitions.pbp import PBP_EVENTS, PBP_HANDLING_VALUES
+from src.definitions.pbp import PBP_HANDLING_VALUES
 from src.definitions.pipeline import VALID_PHASES
 from src.definitions.schema import SCHEMAS
 
@@ -171,7 +170,7 @@ class Column(TypedDict, total=True):
     )
 
 
-DB_COLUMNS: Mapping[str, Column] = {
+DB_COLUMNS: dict[str, Column] = {
     "active": {
         "check": None,
         "type": "BOOLEAN",
@@ -619,7 +618,6 @@ DB_COLUMNS: Mapping[str, Column] = {
             "season_coverages",
             "game_coverages",
             "pbp_events",
-            "errors",
         ],
         "nullable": True,
         "default": None,
@@ -747,29 +745,21 @@ DB_COLUMNS: Mapping[str, Column] = {
             }
         },
     },
-    "error_id": {
+    "detail": {
         "check": None,
-        "type": "BIGINT",
-        "tables": ["errors"],
-        "nullable": False,
-        "default": "nextval('core.error_id_seq')",
-        "dataset_mapping": None,
-    },
-    "event": {
-        "check": sorted(PBP_EVENTS),
-        "type": "TEXT",
+        "type": "JSONB",
         "tables": ["errors"],
         "nullable": True,
         "default": None,
         "dataset_mapping": None,
     },
 
-    "event_id": {
+    "error_id": {
         "check": None,
-        "type": "TEXT",
+        "type": "BIGINT",
         "tables": ["errors"],
-        "nullable": True,
-        "default": None,
+        "nullable": False,
+        "default": "nextval('core.error_id_seq')",
         "dataset_mapping": None,
     },
     "event_key": {
@@ -807,7 +797,6 @@ DB_COLUMNS: Mapping[str, Column] = {
             "staging.games",
             "staging.player_games",
             "staging.team_games",
-            "errors",
         ],
         "nullable": True,
         "default": None,
@@ -1357,7 +1346,6 @@ DB_COLUMNS: Mapping[str, Column] = {
             "staging.player_games",
             "staging.team_games",
             "pbp_events",
-            "errors",
         ],
         "nullable": True,
         "default": None,
@@ -2644,14 +2632,6 @@ DB_COLUMNS: Mapping[str, Column] = {
                 }
             }
         },
-    },
-    "seq": {
-        "check": None,
-        "type": "INTEGER",
-        "tables": ["errors"],
-        "nullable": True,
-        "default": None,
-        "dataset_mapping": None,
     },
     "standard_fouls": {
         "check": None,

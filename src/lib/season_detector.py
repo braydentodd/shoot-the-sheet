@@ -7,8 +7,9 @@ to decide which season types to refresh for the current season.
 Datasets are discovered via the ``season_detector`` role in
 :data:`src.definitions.datasets.DATASETS`.
 
-Source dispatch: ``_SEASON_DETECTORS`` maps source code → detection function.
-Adding a new source requires one import + one dict entry.
+Source dispatch: a source opts into season detection by exposing
+``detect_recent_games`` on its client module (looked up through the
+source registry); sources without one are assumed active.
 """
 
 import logging
@@ -17,16 +18,26 @@ from typing import Any, List, Optional
 from src.definitions.datasets import DATASETS
 from src.definitions.execution import GAME_LOOKBACK_DAYS
 from src.definitions.leagues import LEAGUES
-from src.sources.nba_api.client import detect_recent_games as _nba_detect_recent
+from src.sources.registry import get_source_modules
 
 logger = logging.getLogger(__name__)
 
 _NO_ACTIVITY: List[str] = []
 
-# Source code → detection function.
-_SEASON_DETECTORS = {
-    "nba_api": _nba_detect_recent,
-}
+
+def _get_season_detector(source: str) -> Optional[Any]:
+    """Return the client module's ``detect_recent_games`` callable, if any.
+
+    Sources opt in by exposing ``detect_recent_games`` on their client
+    module (see ``src.definitions.sources``); dispatch goes through the
+    source registry like every other client entry point.
+    """
+    try:
+        _config_mod, client_mod = get_source_modules(source)
+    except ValueError:
+        return None
+    detector = getattr(client_mod, "detect_recent_games", None)
+    return detector if callable(detector) else None
 
 
 # ============================================================================
@@ -57,7 +68,7 @@ def _check_recent_games(
         return None
 
     source = ds_cfg.get("source")
-    detector = _SEASON_DETECTORS.get(source)
+    detector = _get_season_detector(source)
 
     if detector is None:
         logger.debug("No season detector for source=%r; assuming active", source)

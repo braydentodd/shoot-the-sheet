@@ -52,7 +52,7 @@ from src.lib.coverage_tracker import (
     prune_coverage,
     seed_coverage,
 )
-from src.lib.error_recorder import log_error_simple
+from src.lib.error_recorder import log_error
 from src.lib.executor import ExecutionContext, execute_group
 from src.lib.extract import apply_row_filters
 from src.lib.leagues_resolver import (
@@ -180,11 +180,13 @@ def _run_groups(
             except Exception as exc:  # noqa: BLE001
                 logger.error("Group %s fetch failed: %s", dataset_name, str(exc))
                 failed.append({"dataset": dataset_name, "error": str(exc)})
-                log_error_simple(
-                    phase,
-                    f"Group fetch failed: identity={identity_code} "
-                    f"league={league_code} target={table_name} "
-                    f"dataset={dataset_name} -- {exc}",
+                log_error(
+                    phase=phase,
+                    message=(
+                        f"Group fetch failed: identity={identity_code} "
+                        f"league={league_code} target={table_name} "
+                        f"dataset={dataset_name} -- {exc}"
+                    ),
                     exc_info=exc,
                 )
                 continue
@@ -245,11 +247,13 @@ def _run_groups(
                             "error": str(exc),
                         }
                     )
-                    log_error_simple(
-                        phase,
-                        f"Group target failed: identity={identity_code} "
-                        f"league={league_code} target={target} "
-                        f"dataset={dataset_name} -- {exc}",
+                    log_error(
+                        phase=phase,
+                        message=(
+                            f"Group target failed: identity={identity_code} "
+                            f"league={league_code} target={target} "
+                            f"dataset={dataset_name} -- {exc}"
+                        ),
                         exc_info=exc,
                     )
 
@@ -2078,10 +2082,12 @@ def _run_cluster(cluster: str, league_code: str) -> None:
         # Wrap in try/except to avoid masking the original exception if the
         # DB itself is down (which may have *caused* the crash).
         try:
-            log_error_simple(
-                cluster,
-                f"Cluster aborted: league={league_code} cluster={cluster} "
-                f"-- see traceback above",
+            log_error(
+                phase=cluster,
+                message=(
+                    f"Cluster aborted: league={league_code} cluster={cluster} "
+                    f"-- see traceback above"
+                ),
             )
         except (ConnectionError, OSError, RuntimeError):
             logger.warning(
@@ -2126,10 +2132,12 @@ def _run_phases(
         except Exception as exc:
             logger.exception("Phase %s failed for league %s.", phase, league_code)
             failed.append({"phase": phase, "error": str(exc)})
-            log_error_simple(
-                phase,
-                f"Phase failed: league={league_code} cluster={cluster} "
-                f"phase={phase} -- {exc}",
+            log_error(
+                phase=phase,
+                message=(
+                    f"Phase failed: league={league_code} cluster={cluster} "
+                    f"phase={phase} -- {exc}"
+                ),
                 exc_info=exc,
             )
             # Continue to next phase instead of aborting the entire cluster.
@@ -2488,7 +2496,7 @@ def _maintain_pbp(
     )
     from src.lib.pbp_classifier import EventClassifier, UnclassifiedEventError
     from src.lib.pbp_deriver import derive_game_context_events
-    from src.sources.nba_data.classifier import FieldLookupStrategy
+    from src.sources.nba_data.match_strategy import FieldLookupStrategy
 
     # Get game IDs for this season from staging.games
     game_rows = _load_pbp_games(league_code, season, identity_code)
@@ -2609,9 +2617,11 @@ def _maintain_pbp(
                     phase="maintain_pbp",
                     message=f"Unclassified event in game {ext_game_id}: "
                             f"signature={uc.signature}",
-                    identity=identity_code,
-                    dataset=dataset_name,
-                    ext_game_id=ext_game_id,
+                    detail={
+                        "identity": identity_code,
+                        "dataset": dataset_name,
+                        "ext_game_id": ext_game_id,
+                    },
                 )
             logger.error(
                 "Game %s: %d unclassified event(s). Skipping game. "
@@ -2655,18 +2665,23 @@ def _maintain_pbp(
             log_error(
                 phase="maintain_pbp",
                 message=derr.message,
-                identity=identity_code,
-                dataset=dataset_name,
-                ext_game_id=ext_game_id,
-                event_id=derr.event_id,
-                seq=derr.seq,
-                event=derr.event,
+                detail={
+                    **derr.detail,
+                    "rule": derr.rule,
+                    "identity": identity_code,
+                    "dataset": dataset_name,
+                    "ext_game_id": ext_game_id,
+                    "event_id": derr.event_id,
+                    "seq": derr.seq,
+                    "event": derr.event,
+                    "team_id": derr.team_id,
+                    "player_id": derr.player_id,
+                },
             )
-        error_derive_errors = [e for e in derive_errors if e.severity == "error"]
-        if error_derive_errors:
+        if derive_errors:
             logger.error(
                 "Game %s: %d derivation error(s) -- marked errored for review",
-                ext_game_id, len(error_derive_errors),
+                ext_game_id, len(derive_errors),
             )
 
         # 4. Accumulate team result sets (per scope: self + opponent rows).
@@ -2783,11 +2798,11 @@ def _maintain_pbp(
                     })
                     write_failed = True
 
-        # 7. Record the per-game PBP status.  Errored games (error-severity
-        # derive errors, unclassified events, or write failures) stay in
-        # staging with all of their data; they never merge to intermediate
-        # and survive cleanup until reviewed and re-run.
-        if error_derive_errors or write_failed:
+        # 7. Record the per-game PBP status.  Errored games (derive errors,
+        # unclassified events, or write failures) stay in staging with all
+        # of their data; they never merge to intermediate and survive
+        # cleanup until reviewed and re-run.
+        if derive_errors or write_failed:
             _set_game_status(identity_code, ext_game_id, "error")
         else:
             _set_game_status(identity_code, ext_game_id, "ready")

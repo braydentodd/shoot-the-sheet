@@ -5,7 +5,8 @@ Converts raw nbastats CSV rows into source-agnostic :class:`PBPEvent`
 rows consumed by the derivation engine and accumulator.
 
 Event classification is driven by ``core.pbp_events`` via the
-:class:`~src.lib.pbp_classifier.EventClassifier`.  The classifier
+:class:`~src.lib.pbp_classifier.Classifier` protocol (satisfied by
+:class:`~src.lib.pbp_classifier.EventClassifier`).  The classifier
 replaces the previous hardcoded ``if msgtype == ...`` chain.
 
 Pure functions -- no side effects, no I/O.
@@ -16,7 +17,7 @@ from typing import Any
 
 from src.definitions.pbp import PBP_EVENTS, PBPEvent
 from src.lib.entity_resolver import EntityResolver
-from src.lib.pbp_classifier import EventClassifier, UnclassifiedEventError
+from src.lib.pbp_classifier import Classifier, UnclassifiedEventError
 from src.lib.transform import to_int, to_str
 from src.sources.nba_data.config import (
     COL,
@@ -48,7 +49,7 @@ def normalize_game(
     home_team_id: str,
     away_team_id: str,
     entity_resolver: EntityResolver,
-    classifier: EventClassifier,
+    classifier: Classifier,
     identity: str = "nba_id",
 ) -> list[PBPEvent]:
     """Normalize nbastats CSV rows into standard PBPEvent rows.
@@ -60,7 +61,7 @@ def normalize_game(
         home_team_id: External home team ID.
         away_team_id: External away team ID.
         entity_resolver: Callable for staging-table entity lookup.
-        classifier: EventClassifier loaded from ``core.pbp_events``.
+        classifier: Classifier loaded from ``core.pbp_events``.
         identity: Identity code for the event's ``identity`` field.
 
     Returns:

@@ -9,7 +9,7 @@ outside this module.
 """
 
 import logging
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 from src.definitions.db_columns import DB_COLUMNS
 from src.definitions.schema import SCHEMAS, SEQUENCES
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # Which schemas contain a given table name (built once at import).
-_TABLE_SCHEMAS: Dict[str, List[str]] = {}
+_TABLE_SCHEMAS: dict[str, list[str]] = {}
 for _schema_name, _tables in SCHEMAS.items():
     for _table_name in _tables:
         _TABLE_SCHEMAS.setdefault(_table_name, []).append(_schema_name)
@@ -59,7 +59,7 @@ def _column_in_table(col_meta: Any, qualified_table: str) -> bool:
     return False
 
 
-def _data_columns_for_table(table_name: str) -> List[Tuple[str, Any]]:
+def _data_columns_for_table(table_name: str) -> list[tuple[str, Any]]:
     """Return ``[(col_name, col_meta), ...]`` for every matching DB_COLUMNS entry."""
     return [
         (name, meta)
@@ -69,10 +69,10 @@ def _data_columns_for_table(table_name: str) -> List[Tuple[str, Any]]:
 
 
 def _data_columns_for_tables(
-    table_names: List[str],
-) -> List[Tuple[str, Any]]:
+    table_names: list[str],
+) -> list[tuple[str, Any]]:
     """Return matching DB columns across several tables without duplicates."""
-    ordered: List[Tuple[str, Any]] = []
+    ordered: list[tuple[str, Any]] = []
     seen = set()
     for table_name in table_names:
         for name, meta in _data_columns_for_table(table_name):
@@ -130,7 +130,7 @@ def _column_check(
     return f"CHECK ({expr})"
 
 
-def _foreign_key_ddl(fk: Dict[str, Any]) -> str:
+def _foreign_key_ddl(fk: dict[str, Any]) -> str:
     """Render a ``FOREIGN KEY`` clause."""
     target = f"{fk['ref_schema']}.{fk['ref_table']}"
     return (
@@ -187,8 +187,8 @@ def _insert_row(
     cur,
     schema_name: str,
     table_name: str,
-    values: Dict[str, Any],
-    conflict_columns: List[str],
+    values: dict[str, Any],
+    conflict_columns: list[str],
 ) -> None:
     """Insert a row if missing using only the provided table metadata."""
     if not values:
@@ -219,14 +219,14 @@ def _insert_row(
 
 def _get_expected_columns(
     table_name: str,
-    meta: Dict[str, Any],
-) -> List[Tuple[str, Any]]:
+    meta: dict[str, Any],
+) -> list[tuple[str, Any]]:
     """Return the complete ordered set of (column_name, column_meta) for a table.
 
     Centralises column resolution so that both ``_create_table`` and
     ``_sync_table`` derive their column lists from a single source of truth.
     """
-    expected: List[Tuple[str, Any]] = []
+    expected: list[tuple[str, Any]] = []
     seen: set = set()
 
     for col in meta.get("primary_key") or []:
@@ -251,10 +251,10 @@ def _create_table(
     cur,
     schema_name: str,
     table_name: str,
-    meta: Dict[str, Any],
+    meta: dict[str, Any],
 ) -> int:
     """Unified CREATE TABLE builder driven strictly by registry config."""
-    fragments: List[str] = []
+    fragments: list[str] = []
     pk_cols = set(meta.get("primary_key") or [])
 
     for col_name, col_meta in _get_expected_columns(table_name, meta):
@@ -329,10 +329,10 @@ def _sync_table(
     table_name: str,
     meta: Any,
     schema_name: str,
-) -> List[str]:
+) -> list[str]:
     """Sync table structure against config; purely additive."""
     unqualified = table_name.split(".", 1)[1] if "." in table_name else table_name
-    actions: List[str] = []
+    actions: list[str] = []
 
     if not _table_exists(cur, schema_name, unqualified):
         n = _create_table(cur, schema_name, unqualified, meta)
@@ -407,13 +407,13 @@ def _ensure_sequences(cur, schema_name: str) -> None:
 def ensure_schema(
     schema_name: str,
     conn=None,
-) -> Dict[str, List[str]]:
+) -> dict[str, list[str]]:
     """Build and validate any schema mapped in the TABLES config."""
     own = conn is None
     if own:
         conn = get_db_connection()
 
-    actions: Dict[str, List[str]] = {}
+    actions: dict[str, list[str]] = {}
     try:
         with conn.cursor() as cur:
             cur.execute(f"CREATE SCHEMA IF NOT EXISTS {schema_name}")
@@ -436,7 +436,7 @@ def ensure_schema(
             conn.close()
 
 
-def ensure_league_profile(league_code: str, conn=None) -> Dict[str, List[str]]:
+def ensure_league_profile(league_code: str, conn=None) -> dict[str, list[str]]:
     """Ensure the ``profiles.leagues`` row exists for a single league."""
     own = conn is None
     if own:
@@ -445,7 +445,7 @@ def ensure_league_profile(league_code: str, conn=None) -> Dict[str, List[str]]:
     leagues_meta = get_table("core.leagues")
     leagues_schema = "core"
 
-    actions: Dict[str, List[str]] = {}
+    actions: dict[str, list[str]] = {}
     try:
         with conn.cursor() as cur:
             from src.definitions.leagues import LEAGUES
@@ -455,7 +455,7 @@ def ensure_league_profile(league_code: str, conn=None) -> Dict[str, List[str]]:
 
             cfg = LEAGUES[league_code]
 
-            vals: Dict[str, Any] = {}
+            vals: dict[str, Any] = {}
             for col, col_def in _data_columns_for_table("core.leagues"):
                 if col == "code":
                     vals[col] = league_code
@@ -483,7 +483,7 @@ def ensure_league_profile(league_code: str, conn=None) -> Dict[str, List[str]]:
             conn.close()
 
 
-def _topological_table_order() -> List[Tuple[str, Any]]:
+def _topological_table_order() -> list[tuple[str, Any]]:
     """Return all tables in dependency order based on foreign key references.
 
     Uses Kahn's algorithm. Tables with no outbound FKs come first.
@@ -492,15 +492,15 @@ def _topological_table_order() -> List[Tuple[str, Any]]:
     from collections import deque
 
     # Build lookup from (schema, table) -> qualified name
-    key_by_location: Dict[Tuple[str, str], str] = {}
-    all_qualified: List[str] = []
+    key_by_location: dict[tuple[str, str], str] = {}
+    all_qualified: list[str] = []
     for qual, schema, table, meta in iter_tables():
         key_by_location[(schema, table)] = qual
         all_qualified.append(qual)
 
     # Build dependency graph: qualified_name -> qualified_names it depends on
-    in_degree: Dict[str, int] = {q: 0 for q in all_qualified}
-    dependents: Dict[str, List[str]] = {q: [] for q in all_qualified}
+    in_degree: dict[str, int] = {q: 0 for q in all_qualified}
+    dependents: dict[str, list[str]] = {q: [] for q in all_qualified}
 
     for qual, schema, table, meta in iter_tables():
         for fk in meta.get("foreign_keys") or []:
@@ -515,7 +515,7 @@ def _topological_table_order() -> List[Tuple[str, Any]]:
 
     # Kahn's algorithm
     queue = deque([k for k, d in in_degree.items() if d == 0])
-    ordered: List[Tuple[str, Any]] = []
+    ordered: list[tuple[str, Any]] = []
 
     while queue:
         key = queue.popleft()
@@ -533,7 +533,7 @@ def _topological_table_order() -> List[Tuple[str, Any]]:
     return ordered
 
 
-def ensure_countries(conn=None) -> Dict[str, int]:
+def ensure_countries(conn=None) -> dict[str, int]:
     """Seed ``profiles.countries`` from the COUNTRIES registry.
 
     Inserts new country codes, updates existing ones, and deletes rows
@@ -606,7 +606,7 @@ def ensure_countries(conn=None) -> Dict[str, int]:
 def bootstrap_schema(
     league_code: str,
     conn=None,
-) -> Dict[str, List[str]]:
+) -> dict[str, list[str]]:
     """Unified bootstrap: ensure all schemas and seed the league profile row.
 
     Tables are created in topological order so cross-schema foreign keys
@@ -616,7 +616,7 @@ def bootstrap_schema(
     if own:
         conn = get_db_connection()
 
-    actions: Dict[str, List[str]] = {}
+    actions: dict[str, list[str]] = {}
     try:
         # Validate config before touching the database
         _validate_sequence_coverage()

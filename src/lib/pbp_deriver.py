@@ -16,11 +16,13 @@ Every rule operates on ``seq`` -- never on ``secs``.  The engine
 accumulates ALL errors for a game and returns them (finish-the-game-first).
 
 Before returning, a clock-completion pass fills missing ``secs`` only
-for the clock-required event types in ``PBP_CLOCK_EVENTS`` (period
-boundaries, player in/out markers, possession markers), inheriting the
-nearest previous timed event in the same period.  All derivation rules
-key off ``seq``; ``secs`` is optional per-event metadata consumed only
-by the accumulator's clock-derived fields.
+for events with ``inherit_secs_from_indicate_poss=True`` (period_end,
+player in/out markers, possession markers) -- the events the clock-
+derived result fields read -- copying the nearest previous
+``indicate_poss`` event's clock in the same period (an untimed
+``indicate_poss`` blocks the fill).  All derivation rules key off
+``seq``; ``secs`` is optional per-event metadata consumed only by the
+accumulator's clock-derived fields.
 """
 
 from __future__ import annotations
@@ -36,7 +38,6 @@ from src.definitions.pbp import (
     PossTransition,
 )
 from src.lib.error_recorder import PbpError
-from src.lib.pbp_clock import fill_missing_secs
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,43 @@ _MISS_EVENTS: frozenset[str] = frozenset(
     if ev_def["shot_result"] == "miss"
 )
 _FG_MISS_EVENTS: frozenset[str] = _FG_EVENTS & _MISS_EVENTS
+
+# Events whose missing ``secs`` the clock-completion pass may fill:
+# the clock-derived result fields read exactly these (team ``secs`` <-
+# period_end; player ``secs`` <- player_in/out; ``o_poss_secs`` <-
+# poss_start/end).  Derived from config so the engine never hardcodes
+# the list.
+_CLOCK_INHERIT_EVENTS: frozenset[str] = frozenset(
+    name for name, ev_def in PBP_EVENTS.items()
+    if ev_def["inherit_secs_from_indicate_poss"]
+)
+
+
+def _fill_missing_secs(events: list[PBPEvent]) -> None:
+    """Forward-fill missing ``secs`` for clock-inheriting event types.
+
+    An event with ``inherit_secs_from_indicate_poss=True`` and a missing
+    ``secs`` inherits the clock of the nearest previous ``indicate_poss``
+    event in the same period -- but only when that event is itself timed.
+    An untimed ``indicate_poss`` event blocks the fill (the nearest
+    previous one carries no clock; nothing older is used), and a fill
+    never crosses a period boundary.  Every other event keeps its own
+    parsed ``secs`` (or ``None``): a shot or turnover's clock is never
+    fabricated.  Fully timed and fully untimed games are no-ops.  Mutates
+    the list in place (metadata only; ordering and ``seq`` are untouched).
+    """
+    last_poss_secs: dict[int, int | None] = {}
+    for e in events:
+        ev_def = PBP_EVENTS[e["event"]]
+        if ev_def["indicate_poss"]:
+            last_poss_secs[e["period"]] = e["secs"]
+        elif (
+            e["event"] in _CLOCK_INHERIT_EVENTS
+            and e["secs"] is None
+            and e["period"] in last_poss_secs
+            and last_poss_secs[e["period"]] is not None
+        ):
+            e["secs"] = last_poss_secs[e["period"]]
 
 # ---------------------------------------------------------------------------
 # Public types
@@ -151,10 +189,11 @@ class _DeriveEngine:
         events = self._stage_5_cleanup(events)
 
         self._reindex(events)
-        # Clock-completion pass: forward-fill missing ``secs`` for the
-        # clock-required event types (``PBP_CLOCK_EVENTS``) within each
-        # period; all derivation rules key off ``seq``.
-        fill_missing_secs(events)
+        # Clock-completion pass: forward-fill missing ``secs`` for events
+        # with ``inherit_secs_from_indicate_poss`` from the nearest
+        # previous ``indicate_poss`` event in the period; all derivation
+        # rules key off ``seq``.
+        _fill_missing_secs(events)
         return DeriveResult(events=events, errors=self.errors)
 
     # ==================================================================
@@ -173,12 +212,10 @@ class _DeriveEngine:
         event: PBPEvent | None = None,
         **detail: object,
     ) -> None:
-        severity = INVARIANTS.get(rule, {}).get("severity", "error")
         self.errors.append(
             PbpError(
                 rule=rule,
                 message=message,
-                severity=severity,
                 game_id=self._game_id,
                 event_id=event.get("event_id") if event else None,
                 seq=event.get("seq") if event else None,
