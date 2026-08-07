@@ -2446,7 +2446,7 @@ DB_COLUMNS: dict[str, Column] = {
             }
         },
     },
-    "pot_poss_ending_scoring_opp": {
+    "pot_poss_ending_scoring_opps": {
         "check": None,
         "type": "SMALLINT",
         "tables": ["team_seasons", "player_seasons", "team_games", "player_games"],

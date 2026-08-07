@@ -11,7 +11,7 @@ Conventions:
     DEBUG    per-row / per-call traces (off by default)
 
 Usage:
-    from src.lib.logger_setup import setup_logging, phase_marker
+    from src.lib.console_logger import setup_logging, phase_marker
     setup_logging(verbose=False)
     logger.info(phase_marker('discover'))
 """
@@ -23,7 +23,7 @@ import sys
 from typing import Union
 
 # Fixed-width slots keep multi-process output aligned for human scanning.
-_LEVEL_WIDTH = 7  # ' WARNING' (with leading space) is 8; longest is 'CRITICAL' (8)
+_LEVEL_WIDTH = 8  # longest level name is 'CRITICAL' (8 chars)
 _NAME_WIDTH = 28  # truncated module name
 _DATE_FMT = "%Y-%m-%d %H:%M:%S"
 

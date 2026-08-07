@@ -64,6 +64,27 @@ class MatchStrategy(Protocol):
     def build_event_key(self, signature: dict) -> str: ...
 
 
+class FunctionMatchStrategy:
+    """Adapt a source client module's signature/key builders to MatchStrategy.
+
+    The PBP source contract (``src.definitions.sources``) has every source
+    expose module-level ``build_signature`` / ``build_event_key`` on its
+    client module (the same builders discovery uses).  This adapter wraps
+    them so lib code consumes any source generically -- no source imports
+    in generic engine code.
+    """
+
+    def __init__(self, client_module: Any):
+        self._build_signature = client_module.build_signature
+        self._build_event_key = client_module.build_event_key
+
+    def build_signature(self, row: dict[str, Any]) -> dict:
+        return self._build_signature(row)
+
+    def build_event_key(self, signature: dict) -> str:
+        return self._build_event_key(signature)
+
+
 class UnclassifiedEventError(Exception):
     """Raised when a raw event doesn't match a trusted catalog entry."""
 

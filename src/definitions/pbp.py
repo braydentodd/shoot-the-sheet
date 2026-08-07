@@ -541,6 +541,61 @@ PBP_EVENTS: dict[str, EventDef] = {
 
 
 # ============================================================================
+# EVENT GROUPINGS (canonical vocabulary)
+# ============================================================================
+
+# Shot-family / result views derived from ``PBP_EVENTS`` metadata.  These
+# are the canonical groupings; engines consume them instead of splicing
+# event names (``startswith("fg")`` / ``endswith("_miss")``) or
+# hardcoding literals.
+FG_EVENTS: frozenset[str] = frozenset(
+    name for name, ev_def in PBP_EVENTS.items()
+    if ev_def["shot_family"] == "fg"
+)
+FT_EVENTS: frozenset[str] = frozenset(
+    name for name, ev_def in PBP_EVENTS.items()
+    if ev_def["shot_family"] == "ft"
+)
+MAKE_EVENTS: frozenset[str] = frozenset(
+    name for name, ev_def in PBP_EVENTS.items()
+    if ev_def["shot_result"] == "make"
+)
+MISS_EVENTS: frozenset[str] = frozenset(
+    name for name, ev_def in PBP_EVENTS.items()
+    if ev_def["shot_result"] == "miss"
+)
+FG_MAKE_EVENTS: frozenset[str] = FG_EVENTS & MAKE_EVENTS
+FG_MISS_EVENTS: frozenset[str] = FG_EVENTS & MISS_EVENTS
+
+# Semantic groups not expressible in ``EventDef`` metadata.  Declared here
+# so the event vocabulary lives in config, not scattered through engine
+# code.
+REBOUND_EVENTS: frozenset[str] = frozenset(
+    {"o_reb", "d_reb", "rebound"}
+)
+FG_ASSIST_EVENTS: frozenset[str] = frozenset({"fg2_assist", "fg3_assist"})
+SUBSTITUTION_EVENTS: frozenset[str] = frozenset({"player_in", "player_out"})
+PERIOD_BOUNDARY_EVENTS: frozenset[str] = frozenset({"period_start", "period_end"})
+POSSESSION_MARKER_EVENTS: frozenset[str] = frozenset({"poss_start", "poss_end"})
+
+# Canonical single-event names used by engine branching and derived-event
+# synthesis.
+PERIOD_START_EVENT: str = "period_start"
+PERIOD_END_EVENT: str = "period_end"
+PLAYER_IN_EVENT: str = "player_in"
+PLAYER_OUT_EVENT: str = "player_out"
+POSS_START_EVENT: str = "poss_start"
+POSS_END_EVENT: str = "poss_end"
+JUMP_BALL_WIN_EVENT: str = "jump_ball_win"
+TURNOVER_EVENT: str = "turnover"
+O_REB_EVENT: str = "o_reb"
+D_REB_EVENT: str = "d_reb"
+REBOUND_EVENT: str = "rebound"
+POT_POSS_ENDING_SCORING_OPP_EVENT: str = "pot_poss_ending_scoring_opp"
+BLOCK_EVENT: str = "block"
+
+
+# ============================================================================
 # CATALOG HANDLING VALUES
 # ============================================================================
 
@@ -856,7 +911,9 @@ class ChainRule(TypedDict, total=True):
               - ``"possession_end_event"`` -- an event whose
                 ``poss_transition`` closes the current window
         scope: Search direction relative to the chained event.
-            ``"previous"``/``"next"`` search the event stream;
+            ``"previous"``/``"next"`` search the event stream in one
+            direction; ``"bidirectional"`` searches backward first and
+            falls forward only when the backward search fails;
             ``"sequence"`` means same-source-row association (the
             normalizer already expressed the link via ``chain_id``).
         skip: Event types stepped over while searching (``()`` = none).
@@ -880,7 +937,7 @@ class ChainRule(TypedDict, total=True):
     """
 
     anchor: tuple[str, ...]
-    scope: Literal["previous", "next", "sequence"]
+    scope: Literal["previous", "next", "bidirectional", "sequence"]
     skip: tuple[str, ...]
     max_gap: int
     cross_period: bool
@@ -971,7 +1028,7 @@ CHAIN_RULES: dict[str, ChainRule] = {
     # (stage 2, before it can act as an indicate_poss event).
     "o_reb": {
         "anchor": ("miss",),
-        "scope": "previous",
+        "scope": "bidirectional",
         "skip": (
             "block", "player_in", "player_out",
             "fg2_make", "fg3_make",
@@ -988,7 +1045,7 @@ CHAIN_RULES: dict[str, ChainRule] = {
     },
     "d_reb": {
         "anchor": ("miss",),
-        "scope": "previous",
+        "scope": "bidirectional",
         "skip": (
             "block", "player_in", "player_out",
             "fg2_make", "fg3_make",

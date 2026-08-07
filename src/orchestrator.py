@@ -40,6 +40,7 @@ from src.definitions.datasets import DATASETS, Dataset
 from src.definitions.execution import GAME_LOOKBACK_DAYS
 from src.definitions.leagues import LEAGUES
 from src.definitions.pipeline import PIPELINE
+from src.definitions.schema import SCHEMAS
 from src.definitions.sources import SOURCES
 from src.lib.call_grouper import build_call_groups
 from src.lib.cleanup import (
@@ -1780,18 +1781,12 @@ def _promote_intermediate(
     logger.info(phase_marker("promote_intermediate"))
     total_upserted = 0
 
-    # Only the 9 tables that flow through intermediate
-    promote_tables = [
-        "teams",
-        "players",
-        "leagues_teams",
-        "teams_players",
-        "team_seasons",
-        "player_seasons",
-        "games",
-        "team_games",
-        "player_games",
-    ]
+    # The 9 tables that flow through intermediate -- derived from the
+    # schema registry so the list can never drift from the DDL.  The
+    # registry's declaration order is FK-safe for promotion: profiles
+    # (teams/players) and games precede the game tables, and the season
+    # tables only reference profiles.
+    promote_tables = list(SCHEMAS["intermediate"].keys())
 
     for bare_name in promote_tables:
         intermediate_table = f"intermediate.{bare_name}"
@@ -1800,6 +1795,11 @@ def _promote_intermediate(
         cols = _get_cols_for_table(bare_name)
         if not cols:
             continue
+
+        from src.lib.schema_resolver import get_table
+
+        core_meta = get_table(core_table)
+        conflict_cols = list(core_meta.get("primary_key") or [])
 
         with db_connection() as conn:
             with conn.cursor() as cur:
@@ -1810,25 +1810,10 @@ def _promote_intermediate(
 
                 col_list = ", ".join(quote_col(c) for c in cols)
 
-                # Exclude system columns from overwrite
-                update_cols = [
-                    c
-                    for c in cols
-                    if c
-                    not in (
-                        "sts_id",
-                        "game_id",
-                        "team_id",
-                        "player_id",
-                        "created_at",
-                        "updated_at",
-                    )
-                ]
-
-                from src.lib.schema_resolver import get_table
-
-                core_meta = get_table(core_table)
-                conflict_cols = list(core_meta.get("primary_key") or [])
+                # Never overwrite the identity/PK columns or the system
+                # timestamps.
+                excluded_cols = set(conflict_cols) | {"created_at", "updated_at"}
+                update_cols = [c for c in cols if c not in excluded_cols]
 
                 if conflict_cols and update_cols:
                     conflict_sql = ", ".join(quote_col(c) for c in conflict_cols)
@@ -1965,17 +1950,9 @@ def _clean_intermediate() -> int:
     logger.info(phase_marker("clean_intermediate"))
     total_deleted = 0
 
-    intermediate_tables = [
-        "teams",
-        "players",
-        "leagues_teams",
-        "teams_players",
-        "team_seasons",
-        "player_seasons",
-        "games",
-        "team_games",
-        "player_games",
-    ]
+    # All tables that flow through intermediate -- derived from the schema
+    # registry so the list can never drift from the DDL.
+    intermediate_tables = list(SCHEMAS["intermediate"].keys())
 
     with db_connection() as conn:
         with conn.cursor() as cur:
@@ -2494,9 +2471,12 @@ def _maintain_pbp(
         accumulate_result_set,
         player_on_court_intervals,
     )
-    from src.lib.pbp_classifier import EventClassifier, UnclassifiedEventError
+    from src.lib.pbp_classifier import (
+        EventClassifier,
+        FunctionMatchStrategy,
+        UnclassifiedEventError,
+    )
     from src.lib.pbp_deriver import derive_game_context_events
-    from src.sources.nba_data.match_strategy import FieldLookupStrategy
 
     # Get game IDs for this season from staging.games
     game_rows = _load_pbp_games(league_code, season, identity_code)
@@ -2553,7 +2533,7 @@ def _maintain_pbp(
                 ]
             if catalog_rows:
                 classifier = EventClassifier(
-                    catalog_rows, FieldLookupStrategy(),
+                    catalog_rows, FunctionMatchStrategy(client_mod),
                 )
                 logger.info(
                     "PBP classifier loaded: %d classified, %d unreviewed",
@@ -2666,7 +2646,7 @@ def _maintain_pbp(
                 phase="maintain_pbp",
                 message=derr.message,
                 detail={
-                    **derr.detail,
+                    **(derr.detail or {}),
                     "rule": derr.rule,
                     "identity": identity_code,
                     "dataset": dataset_name,
@@ -2845,7 +2825,11 @@ def _load_pbp_games(
     season: str,
     identity_code: str,
 ) -> list[dict[str, Any]]:
-    """Load game IDs, team IDs, and season types from staging.games for PBP processing."""
+    """Load game IDs, team IDs, and season types from staging.games for PBP processing.
+
+    Home/away team IDs live directly on ``staging.games`` as
+    ``ext_home_team_id`` / ``ext_away_team_id``; no team joins are needed.
+    """
     from src.lib.load import _resolve_league_id
     from src.lib.postgres import db_connection
 
@@ -2853,23 +2837,9 @@ def _load_pbp_games(
         SELECT
             g.ext_id AS ext_game_id,
             g.season_type,
-            ht.ext_id AS home_ext_id,
-            at.ext_id AS away_ext_id
+            g.ext_home_team_id AS home_ext_id,
+            g.ext_away_team_id AS away_ext_id
         FROM staging.games g
-        JOIN staging.leagues_teams ht_league
-            ON ht_league.league_code = g.league_code
-            AND ht_league.identity = g.identity
-        JOIN staging.teams ht
-            ON ht.identity = g.identity
-            AND ht.ext_id = ht_league.ext_team_id
-            AND ht.home_away = 'home'
-        JOIN staging.leagues_teams at_league
-            ON at_league.league_code = g.league_code
-            AND at_league.identity = g.identity
-        JOIN staging.teams at
-            ON at.identity = g.identity
-            AND at.ext_id = at_league.ext_team_id
-            AND at.home_away = 'away'
         WHERE g.league_code = %s
             AND g.season = %s
             AND g.identity = %s

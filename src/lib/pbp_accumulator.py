@@ -21,7 +21,16 @@ definitions (src.definitions.pbp).
 import logging
 from typing import Any
 
-from src.definitions.pbp import PBP_EVENTS, RESULT_SET_FIELDS, PBPEvent
+from src.definitions.pbp import (
+    PBP_EVENTS,
+    PERIOD_END_EVENT,
+    PLAYER_IN_EVENT,
+    PLAYER_OUT_EVENT,
+    POSS_END_EVENT,
+    POSS_START_EVENT,
+    RESULT_SET_FIELDS,
+    PBPEvent,
+)
 from src.lib.math_evaluator import evaluate as eval_math
 
 logger = logging.getLogger(__name__)
@@ -193,19 +202,23 @@ def player_on_court_intervals(
     """
     ins = sorted(
         (e["seq"] for e in events
-         if e["event"] == "player_in" and e.get("player_id") == player_id),
+         if e["event"] == PLAYER_IN_EVENT and e.get("player_id") == player_id),
     )
     outs = sorted(
         (e["seq"] for e in events
-         if e["event"] == "player_out" and e.get("player_id") == player_id),
+         if e["event"] == PLAYER_OUT_EVENT and e.get("player_id") == player_id),
     )
     if not ins and not outs:
         return None
     intervals: list[tuple[int, int]] = []
+    out_idx = 0
+    num_outs = len(outs)
     for start in ins:
-        end = next((o for o in outs if o >= start), None)
-        if end is not None:
-            intervals.append((start, end))
+        while out_idx < num_outs and outs[out_idx] < start:
+            out_idx += 1
+        if out_idx < num_outs:
+            intervals.append((start, outs[out_idx]))
+            out_idx += 1
     return intervals or None
 
 
@@ -239,7 +252,7 @@ def _handle_special(
             # Derive from period_end events (game length), not max
             # team-event timestamp.  None when any period_end is untimed
             # (never report 0 when measurement was impossible).
-            period_ends = [e for e in all_events if e["event"] == "period_end"]
+            period_ends = [e for e in all_events if e["event"] == PERIOD_END_EVENT]
             timed_ends = [e["secs"] for e in period_ends if e["secs"] is not None]
             if not timed_ends or len(timed_ends) != len(period_ends):
                 return None
@@ -251,12 +264,15 @@ def _handle_special(
         # DNP (no on-court intervals) -> no win value for players.
         if scope != "team" and (not player_team_id or not on_court_intervals):
             return None
+        # Fail closed: without the opponent's events a win/loss cannot be
+        # decided -- never report a win from a zero-point comparison.
+        if not opp_entity_id:
+            return None
         team_pts = _sum_points(
             [e for e in all_events if e["team_id"] == team_id]
         )
         opp_pts = _sum_points(
-            [e for e in all_events
-             if opp_entity_id and e["team_id"] == opp_entity_id]
+            [e for e in all_events if e["team_id"] == opp_entity_id]
         )
         return team_pts > opp_pts if team_pts != opp_pts else None
 
@@ -264,7 +280,7 @@ def _handle_special(
         # Started the game = a derived starter player_in in the first period.
         for e in all_events:
             if (
-                e["event"] == "player_in"
+                e["event"] == PLAYER_IN_EVENT
                 and e.get("period") == 1
                 and e.get("source") == "derived:starter"
                 and e.get("player_id") == entity_id
@@ -276,13 +292,13 @@ def _handle_special(
         if scope == "team":
             return sum(
                 1 for e in all_events
-                if e["event"] == "poss_start" and e["team_id"] == entity_id
+                if e["event"] == POSS_START_EVENT and e["team_id"] == entity_id
             )
         if scope == "opp_team":
             if opp_entity_id:
                 return sum(
                     1 for e in all_events
-                    if e["event"] == "poss_start"
+                    if e["event"] == POSS_START_EVENT
                     and e["team_id"] == opp_entity_id
                 )
             return None
@@ -341,10 +357,10 @@ def _pair_windows(
     open_marker: PBPEvent | None = None
     windows: list[tuple[PBPEvent, PBPEvent]] = []
     for e in events:
-        if e["event"] == "poss_start" and e["team_id"] == team_id:
+        if e["event"] == POSS_START_EVENT and e["team_id"] == team_id:
             open_marker = e
         elif (
-            e["event"] == "poss_end"
+            e["event"] == POSS_END_EVENT
             and e["team_id"] == team_id
             and open_marker is not None
         ):

@@ -627,7 +627,7 @@ def _validate_chain_rules() -> list[str]:
         "cross_period", "reanchor", "required", "synthesize", "suppress",
         "superseded_by",
     }
-    valid_scopes = {"previous", "next", "sequence"}
+    valid_scopes = {"previous", "next", "bidirectional", "sequence"}
     valid_synthesize = {
         "none", "team_rebound", "team_turnover", "scoring_opp",
         "poss_marker", "lineup_sweep", "starters",

@@ -50,6 +50,10 @@ def discover(
             else:
                 updated_entries += 1
 
+    # One commit for the whole discovery run: per-row commits would be an
+    # N+1 round-trip pattern and leave many small transaction windows.
+    conn.commit()
+
     classified = _count_classified(conn, identity_code, dataset_name)
     total_catalog = classified + _count_unreviewed(conn, identity_code, dataset_name)
     classified_pct = (classified / total_catalog * 100) if total_catalog else 0
@@ -106,6 +110,11 @@ def _load_games(conn, identity_code, dataset_name, season, game_id):
 
 
 def _upsert_event(conn, identity_code, dataset_name, event_key):
+    """Insert an unreviewed catalog row, or no-op when it already exists.
+
+    Returns "inserted" when a new row was created, "unchanged" otherwise.
+    Commits are the caller's responsibility (one per discovery run).
+    """
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO core.pbp_events (identity, dataset, event_key, handling) "
@@ -114,7 +123,6 @@ def _upsert_event(conn, identity_code, dataset_name, event_key):
             (identity_code, dataset_name, event_key),
         )
         if cur.rowcount:
-            conn.commit()
             return "inserted"
     return "unchanged"
 
